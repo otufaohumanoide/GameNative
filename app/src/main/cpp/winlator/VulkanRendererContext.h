@@ -354,6 +354,12 @@ private:
     std::mutex        dirtyMutex;
     std::condition_variable dirtyCV;
     std::shared_mutex frameMutex;
+    // I2: serializes the filter-chain submit/waits (render thread, recordFilterChainPass) against
+    // reloadPreset (UI/JNI thread, loadLibrashaderPreset). The recorded command buffer references the
+    // chain's Vulkan resources until QueueSubmit completes, so reload must not free the chain while a
+    // submit referencing it is in flight. Always acquire renderMutex/filterSubmitMtx in the same order
+    // (filterSubmitMtx -> librashader.mtx) to avoid deadlock.
+    std::mutex        filterSubmitMtx;
 
     void createInstance();
     void createSurface();
@@ -448,6 +454,11 @@ private:
     VkDeviceMemory  atlasMem = VK_NULL_HANDLE;
     VkImageView     atlasView = VK_NULL_HANDLE;
     VkImageLayout   atlasLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // C1: tracks filterOutputImage's layout across frames. applyFrame requires the output image in
+    // COLOR_ATTACHMENT_OPTIMAL and does not create a barrier for the final pass; the copy engine
+    // leaves it in TRANSFER_SRC_OPTIMAL, so we restore it to CAO each frame. UNDEFINED on first use
+    // / after recreate; reset in createOffscreenTargets/destroyOffscreenTargets.
+    VkImageLayout   filterOutputLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     uint64_t         libraFrameCount = 0;
 
     VkPipeline      blitPipeline = VK_NULL_HANDLE;
@@ -482,7 +493,8 @@ private:
     void presentAtlasToSwapchain(VkCommandBuffer cb, uint32_t imgIdx);
 
     // P2 in-frame readback of the applyFrame output. img is assumed to be in curLayout
-    // (COLOR_ATTACHMENT_OPTIMAL for processedImage, TRANSFER_SRC_OPTIMAL for filterOutputImage).
+    // (COLOR_ATTACHMENT_OPTIMAL for processedImage and for filterOutputImage after the C1 restore;
+    // the default-path readback restores it to COLOR_ATTACHMENT_OPTIMAL to keep the invariant).
     void readbackProcessedInFrame(VkCommandBuffer cb, VkImage img, VkImageLayout curLayout);
     void readbackProcessedP1();
 };

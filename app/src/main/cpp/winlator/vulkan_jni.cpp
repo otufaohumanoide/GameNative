@@ -277,6 +277,7 @@ Java_com_winlator_renderer_VulkanRenderer_nativeLoadLibrashaderPreset(JNIEnv* en
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (!r || !presetPath) return JNI_FALSE;
     const char* path = env->GetStringUTFChars(presetPath, nullptr);
+    if (!path) return JNI_FALSE;
     r->loadLibrashaderPreset(std::string(path));
     env->ReleaseStringUTFChars(presetPath, path);
     return r->isLibrashaderActive() ? JNI_TRUE : JNI_FALSE;
@@ -293,6 +294,7 @@ Java_com_winlator_renderer_VulkanRenderer_nativeSetLibrashaderParam(JNIEnv* env,
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (!r || !name) return;
     const char* n = env->GetStringUTFChars(name, nullptr);
+    if (!n) return;
     r->setLibrashaderParam(std::string(n), (float)value);
     env->ReleaseStringUTFChars(name, n);
 }

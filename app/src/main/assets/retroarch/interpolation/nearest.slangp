@@ -1,5 +1,6 @@
 shaders = "1"
 shader0 = "nearest.slang"
+filter_linear0 = "false"
 wrap_mode0 = "clamp_to_border"
 mipmap_input0 = "false"
 alias0 = ""

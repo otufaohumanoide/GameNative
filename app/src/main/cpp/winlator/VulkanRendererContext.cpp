@@ -87,7 +87,9 @@ VulkanRendererContext::~VulkanRendererContext() {
     }
     deleteQueue.clear();
     cleanupSwapchain(); cleanupCursorTex();
-    
+    // I1: destroyOffscreenTargets -> destroyBlitPipeline frees blitDS from winTexPool, so it must run
+    // BEFORE the descriptor pool is destroyed (freeing descriptor sets from a destroyed pool is UB).
+    destroyOffscreenTargets();
     vk_.DestroySampler(device, sampler, nullptr);
     vk_.DestroyDescriptorPool(device, winTexPool, nullptr);
     vk_.DestroyPipeline(device, pipeline, nullptr);
@@ -102,7 +104,6 @@ VulkanRendererContext::~VulkanRendererContext() {
     if (filterCmdPool != VK_NULL_HANDLE) { vk_.DestroyCommandPool(device, filterCmdPool, nullptr); filterCmdPool = VK_NULL_HANDLE; }
     if (filterFence != VK_NULL_HANDLE) { vk_.DestroyFence(device, filterFence, nullptr); filterFence = VK_NULL_HANDLE; }
     vk_.DestroyCommandPool(device, cmdPool, nullptr);
-    destroyOffscreenTargets();
     vk_.DestroyRenderPass(device, offscreenRenderPass, nullptr);
     vk_.DestroyRenderPass(device, renderPass, nullptr);
     vk_.DestroyDevice(device, nullptr);
@@ -955,6 +956,11 @@ void VulkanRendererContext::renderFrame() {
         bool ok=false;
         try{createSwapchain();createFramebuffers();createCmdBufs();imgInFlight.assign(swapchainImages.size(),VK_NULL_HANDLE);
 ok=true;}catch(...){}
+        // I3: offscreen/filter/atlas targets keep the old extents after a surface resize. All fences
+        // are idle here, so drop the targets; the next libra frame recreates them via
+        // createOffscreenTargets(surfaceWidth, surfaceHeight) at the new size (it destroys first).
+        // Guarded so the non-libra path (offscreenImage never created) is unaffected.
+        if (offscreenImage != VK_NULL_HANDLE) destroyOffscreenTargets();
         if (ok) fbResized.store(false);
         return;
     }
@@ -1138,7 +1144,10 @@ ok=true;}catch(...){}
             VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb present");
             presentAtlasToSwapchain(filterCmdBuf, imgIdx);
-            readbackProcessedInFrame(filterCmdBuf, filterOutputImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            // C1: recordFilterChainPass left filterOutputImage in COLOR_ATTACHMENT_OPTIMAL (restored
+            // after the copy); readbackProcessedInFrame transitions CAO->TSRC, copies, and restores CAO
+            // so the next frame's applyFrame starts from a valid layout.
+            readbackProcessedInFrame(filterCmdBuf, filterOutputImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
 
         if (effectiveCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
@@ -1535,7 +1544,10 @@ void VulkanRendererContext::loadLibrashaderPreset(const std::string& path) {
     if (libraShader.isLoaded()) {
         libraShader.init(instance, physicalDevice, device, graphicsQueue, gipa);
     }
-    libraShader.reloadPreset(path);
+    // I2: serialize against recordFilterChainPass (render thread). reloadPreset frees and recreates the
+    // chain, whose resources may be referenced by an in-flight submitted CB; the same filterSubmitMtx
+    // held across recordFilterChainPass's submit+wait prevents that. Called from the UI/JNI thread.
+    { std::lock_guard<std::mutex> submitLk(filterSubmitMtx); libraShader.reloadPreset(path); }
     libraShaderActive.store(libraShader.isActive());
     RLOG("librashader: preset chain active=%d", (int)libraShader.isActive());
     if (!libraShader.isActive()) RLOG_E("librashader: filter chain create failed: %s", libraShader.getLastError().c_str());
@@ -1554,6 +1566,7 @@ void VulkanRendererContext::enableLibrashader(bool enabled) {
 void VulkanRendererContext::createOffscreenTargets(int w, int h) {
     destroyOffscreenTargets();
     atlasLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    filterOutputLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkImageCreateInfo ii{};
     ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -1772,6 +1785,7 @@ void VulkanRendererContext::destroyOffscreenTargets() {
     if (filterOutputImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, filterOutputImage, nullptr); filterOutputImage = VK_NULL_HANDLE; }
     if (filterOutputMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, filterOutputMem, nullptr); filterOutputMem = VK_NULL_HANDLE; }
     atlasLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    filterOutputLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (processedView != VK_NULL_HANDLE) { vk_.DestroyImageView(device, processedView, nullptr); processedView = VK_NULL_HANDLE; }
     if (processedImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, processedImage, nullptr); processedImage = VK_NULL_HANDLE; }
     if (processedMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, processedMem, nullptr); processedMem = VK_NULL_HANDLE; }
@@ -1886,8 +1900,21 @@ void VulkanRendererContext::blitProcessedToDedicated(VkCommandBuffer cb) {
 // left in GENERAL so a later submission can sample it; atlasLayout tracks its layout.
 void VulkanRendererContext::recordFilterChainPass(VkCommandBuffer cb, uint64_t frameCount, bool clearHistory) {
     if (filterOutputImage == VK_NULL_HANDLE || atlasImage == VK_NULL_HANDLE) return;
+    // I2: the recorded draws reference the chain's resources until QueueSubmit completes, so the whole
+    // applyFrame..WaitForFences span is serialized against loadLibrashaderPreset's reloadPreset (UI/JNI
+    // thread) via filterSubmitMtx. Lock order is always filterSubmitMtx -> librashader.mtx (no inversion).
+    std::lock_guard<std::mutex> submitLk(filterSubmitMtx);
     VkCommandBufferBeginInfo bi{}; bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    vk_.BeginCommandBuffer(cb, &bi);
+    if (vk_.BeginCommandBuffer(cb, &bi) != VK_SUCCESS) throw std::runtime_error("begin filter cb");
+
+    // C1: applyFrame requires the output image in COLOR_ATTACHMENT_OPTIMAL and does NOT create a
+    // barrier for the final pass (librashader.h:1705-1707/1719). Transition filterOutputImage from its
+    // tracked layout (UNDEFINED on frame 0 / after recreate, COLOR_ATTACHMENT_OPTIMAL on later frames)
+    // before applyFrame; the copy leaves it in TRANSFER_SRC_OPTIMAL, so we restore it to CAO below.
+    transferBarrierWide(cb, filterOutputImage,
+        filterOutputLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    filterOutputLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     // applyFrame: offscreenImage -> filterOutputImage
     bool ok = libraShader.applyFrame(cb, frameCount,
@@ -1912,6 +1939,13 @@ void VulkanRendererContext::recordFilterChainPass(VkCommandBuffer cb, uint64_t f
     vk_.CmdCopyImage(cb, filterOutputImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         atlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
 
+    // C1: restore filterOutputImage TSRC -> CAO so the next applyFrame (and the in-frame P2 readback)
+    // start from a valid layout (melonDS VulkanSurfacePresenter.cpp:2384).
+    transferBarrierWide(cb, filterOutputImage,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    filterOutputLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
     // atlas -> GENERAL for later sampling (melonDS 2383)
     VkImageMemoryBarrier b{}; b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -1923,16 +1957,18 @@ void VulkanRendererContext::recordFilterChainPass(VkCommandBuffer cb, uint64_t f
         0, 0, nullptr, 0, nullptr, 1, &b);
     atlasLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    vk_.EndCommandBuffer(cb);
+    if (vk_.EndCommandBuffer(cb) != VK_SUCCESS) throw std::runtime_error("end filter cb");
 
-    // submit-and-wait (melonDS 2228-2243)
-    vk_.ResetFences(device, 1, &filterFence);
+    // submit-and-wait (melonDS 2228-2243); held under filterSubmitMtx so reloadPreset cannot free the
+    // chain while the recorded commands are in flight.
+    if (vk_.ResetFences(device, 1, &filterFence) != VK_SUCCESS) throw std::runtime_error("reset filter fence");
     VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1; si.pCommandBuffers = &cb;
     if (vk_.QueueSubmit(graphicsQueue, 1, &si, filterFence) != VK_SUCCESS) {
         RLOG_E("filter submit failed"); return;
     }
-    vk_.WaitForFences(device, 1, &filterFence, VK_TRUE, UINT64_MAX);
+    if (vk_.WaitForFences(device, 1, &filterFence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+        RLOG_E("filter wait failed");
 }
 
 // Task 6 atlas fix: present the atlas sampled in GENERAL. cb must already be in recording state
@@ -1964,8 +2000,10 @@ void VulkanRendererContext::presentAtlasToSwapchain(VkCommandBuffer cb, uint32_t
 
 // P2 in-frame readback of the applyFrame output. img is assumed to be in curLayout:
 // - processedImage after applyFrame: COLOR_ATTACHMENT_OPTIMAL (probe paths)
-// - filterOutputImage after recordFilterChainPass: TRANSFER_SRC_OPTIMAL (default atlas path)
-// In the TRANSFER_SRC case the image is left in TRANSFER_SRC (applyFrame transitions it next frame).
+// - filterOutputImage after recordFilterChainPass: COLOR_ATTACHMENT_OPTIMAL (default atlas path; C1
+//   restores it after the copy, and this function's CAO branch restores it back to CAO after the copy).
+// In the CAO case the image is left in COLOR_ATTACHMENT_OPTIMAL so applyFrame can be called directly
+// next frame (librashader requires CAO and does not barrier the final pass).
 void VulkanRendererContext::readbackProcessedInFrame(VkCommandBuffer cb, VkImage img, VkImageLayout curLayout) {
     if (img == VK_NULL_HANDLE || processedReadbackBuffer == VK_NULL_HANDLE) return;
     VkImageMemoryBarrier b{};

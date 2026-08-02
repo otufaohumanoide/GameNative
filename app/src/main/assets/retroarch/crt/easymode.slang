@@ -24,5 +24,10 @@ layout(location = 0) out vec4 FragColor;
 layout(binding = 1) uniform sampler2D Source;
 void main()
 {
-   FragColor = texture(Source, vTexCoord);
+   // Scanline effect: darken every other output row so the CRT preset is visibly distinct from the
+   // interpolation presets. textureSize() keeps the shader self-contained (no librashader uniforms).
+   vec4 c = texture(Source, vTexCoord);
+   float row = fract(vTexCoord.y * float(textureSize(Source, 0).y));
+   float scan = 0.75 + 0.25 * step(0.5, row);
+   FragColor = c * scan;
 }
