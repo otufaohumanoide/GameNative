@@ -78,6 +78,9 @@ struct VkTable {
     PFN_vkCmdPipelineBarrier CmdPipelineBarrier;
     PFN_vkCmdCopyImage CmdCopyImage;
     PFN_vkCmdCopyBufferToImage CmdCopyBufferToImage;
+    PFN_vkCmdCopyImageToBuffer CmdCopyImageToBuffer;
+    PFN_vkCmdBlitImage CmdBlitImage;
+    PFN_vkUnmapMemory UnmapMemory;
     PFN_vkCreateSampler CreateSampler;
     PFN_vkDestroySampler DestroySampler;
     PFN_vkCreateSemaphore CreateSemaphore;
@@ -418,6 +421,10 @@ private:
     VkDeviceMemory  processedMem = VK_NULL_HANDLE;
     VkImageView     processedView = VK_NULL_HANDLE;
 
+    VkBuffer         processedReadbackBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory   processedReadbackMem = VK_NULL_HANDLE;
+    uint64_t         libraFrameCount = 0;
+
     VkPipeline      blitPipeline = VK_NULL_HANDLE;
     VkSampler       blitSampler = VK_NULL_HANDLE;
     VkDescriptorSet blitDS = VK_NULL_HANDLE;
@@ -438,4 +445,7 @@ private:
 
     void blitProcessedToSwapchain(VkCommandBuffer cb, uint32_t imgIdx);
     void blitImageToSwapchain(VkCommandBuffer cb, uint32_t imgIdx, VkImageView srcView, VkSampler srcSampler);
+
+    void readbackProcessedInFrame(VkCommandBuffer cb);
+    void readbackProcessedP1();
 };
