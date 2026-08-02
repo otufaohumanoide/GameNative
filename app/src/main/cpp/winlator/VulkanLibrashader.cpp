@@ -35,6 +35,8 @@ bool VulkanLibrashader::loadLibrary() {
         !fnVkFilterChainCreate || !fnVkFilterChainFrame || !fnVkFilterChainFree) {
         lastError = "dlsym: missing required librashader symbols";
         LLOG_E("%s", lastError.c_str());
+        dlclose(handle);
+        handle = nullptr;
         return false;
     }
     if (fnPresetCtxSetAllowRotation) LLOG("librashader: allow_rotation symbol present");
