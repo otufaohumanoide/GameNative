@@ -109,7 +109,10 @@ struct VkTable {
 #include <shared_mutex>
 #include <condition_variable>
 
+#include "VulkanLibrashader.h"
+
 static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+static constexpr int EFFECT_LIBRASHADER = 6;
 
 struct WindowPushConstants {
     float ndcX0, ndcY0, ndcX1, ndcY1;
@@ -178,6 +181,14 @@ public:
     void setEffect(int effectId, float sharpness, int effectMask, float brightness, float contrast, float gamma);
     void setPresentMode(VkPresentModeKHR mode);
     std::vector<int> getSupportedPresentModes() const;
+
+    void initLibrashader();
+    void loadLibrashaderPreset(const std::string& presetPath);
+    void setLibrashaderParam(const std::string& name, float value);
+    void enableLibrashader(bool enabled);
+    bool isLibrashaderLoaded() const { return libraShader.isLoaded(); }
+    bool isLibrashaderActive() const { return libraShaderActive.load(); }
+    const std::string& getLibrashaderError() const { return libraShader.getLastError(); }
 
 private:
     struct WinTex {
@@ -310,6 +321,7 @@ private:
     std::vector<VkFramebuffer> swapchainFBs;
 
     VkRenderPass          renderPass  = VK_NULL_HANDLE;
+    VkRenderPass          offscreenRenderPass  = VK_NULL_HANDLE;
     VkDescriptorSetLayout dsLayout    = VK_NULL_HANDLE;
     VkPipelineLayout      pipeLayout  = VK_NULL_HANDLE;
 
@@ -317,6 +329,10 @@ private:
 
     VkCommandPool                cmdPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> cmdBufs;
+
+    VkCommandPool                filterCmdPool = VK_NULL_HANDLE;
+    VkCommandBuffer              filterCmdBuf = VK_NULL_HANDLE;
+    VkFence                      filterFence = VK_NULL_HANDLE;
 
     std::vector<VkSemaphore> imgAvailSems;
     std::vector<VkSemaphore> renderDoneSems;
@@ -342,6 +358,7 @@ private:
     void createLogicalDevice();
     void createSwapchain();
     void createRenderPass();
+    void createOffscreenRenderPass();
     void createDSLayout();
     void createPipeline(bool blend, VkPipeline& out);
     void createFramebuffers();
@@ -385,4 +402,40 @@ private:
                                VkAccessFlags srcA, VkAccessFlags dstA,
                                VkPipelineStageFlags srcS, VkPipelineStageFlags dstS);
     VkShaderModule  makeShader(const uint32_t* code, size_t sz);
+
+    VulkanLibrashader libraShader;
+    std::atomic<bool> libraShaderEnabled{false};
+    std::atomic<bool> libraShaderActive{false};
+    std::string libraShaderPresetPath;
+    bool libraNeedsHistoryClear = true;
+
+    VkImage         offscreenImage = VK_NULL_HANDLE;
+    VkDeviceMemory  offscreenMem = VK_NULL_HANDLE;
+    VkImageView     offscreenView = VK_NULL_HANDLE;
+    VkFramebuffer   offscreenFB = VK_NULL_HANDLE;
+
+    VkImage         processedImage = VK_NULL_HANDLE;
+    VkDeviceMemory  processedMem = VK_NULL_HANDLE;
+    VkImageView     processedView = VK_NULL_HANDLE;
+
+    VkPipeline      blitPipeline = VK_NULL_HANDLE;
+    VkSampler       blitSampler = VK_NULL_HANDLE;
+    VkDescriptorSet blitDS = VK_NULL_HANDLE;
+
+    void createOffscreenTargets(int w, int h);
+    void destroyOffscreenTargets();
+    void createBlitPipeline();
+    void destroyBlitPipeline();
+
+    void recordCompositorPass(VkCommandBuffer cb,
+        const std::vector<DrawEntry>& draws,
+        std::vector<VkImageMemoryBarrier>& ahbTransitions,
+        std::vector<VkImageMemoryBarrier>& preUpload,
+        std::vector<VkImageMemoryBarrier>& postUpload,
+        VkBuffer cursorUpload, bool hasCursorUpload,
+        float ox, float oy, float sx, float sy, float cw, float ch,
+        short curW, short curH);
+
+    void blitProcessedToSwapchain(VkCommandBuffer cb, uint32_t imgIdx);
+    void blitImageToSwapchain(VkCommandBuffer cb, uint32_t imgIdx, VkImageView srcView, VkSampler srcSampler);
 };

@@ -264,6 +264,46 @@ Java_com_winlator_renderer_VulkanRenderer_nativeSetEffect(
     );
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_winlator_renderer_VulkanRenderer_nativeInitLibrashader(JNIEnv*, jobject, jlong handle) {
+    auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
+    if (!r) return JNI_FALSE;
+    r->initLibrashader();
+    return r->isLibrashaderLoaded() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_winlator_renderer_VulkanRenderer_nativeLoadLibrashaderPreset(JNIEnv* env, jobject, jlong handle, jstring presetPath) {
+    auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
+    if (!r || !presetPath) return JNI_FALSE;
+    const char* path = env->GetStringUTFChars(presetPath, nullptr);
+    r->loadLibrashaderPreset(std::string(path));
+    env->ReleaseStringUTFChars(presetPath, path);
+    return r->isLibrashaderActive() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_winlator_renderer_VulkanRenderer_nativeEnableLibrashader(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+    auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
+    if (r) r->enableLibrashader(enabled == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_winlator_renderer_VulkanRenderer_nativeSetLibrashaderParam(JNIEnv* env, jobject, jlong handle, jstring name, jfloat value) {
+    auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
+    if (!r || !name) return;
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    r->setLibrashaderParam(std::string(n), (float)value);
+    env->ReleaseStringUTFChars(name, n);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_winlator_renderer_VulkanRenderer_nativeGetLibrashaderError(JNIEnv* env, jobject, jlong handle) {
+    auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
+    if (!r) return env->NewStringUTF("");
+    return env->NewStringUTF(r->getLibrashaderError().c_str());
+}
+
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_winlator_renderer_VulkanRenderer_nativeGetSupportedPresentModes(JNIEnv* env, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);

@@ -10,14 +10,33 @@
 #include "window_vert.h"
 #include "window_frag.h"
 
+static bool gLibraTestBlitOffscreen = []() {
+    const char* v = getenv("GAMENATIVE_LIBRA_TEST_BLIT");
+    if (!v || v[0] == '\0') return false;
+    if (v[0] == '0' || strcmp(v, "false") == 0) return false;
+    return true;
+}();
+
 VulkanRendererContext::VulkanRendererContext(ANativeWindow* win, int cW, int cH, void* aHandle)
     : window(win), surfaceWidth(cW), surfaceHeight(cH), containerWidth(cW), containerHeight(cH),
       adrenotoolsHandle(aHandle)
 {
     createInstance(); createSurface(); pickPhysicalDevice(); createLogicalDevice();
-    createSwapchain(); createRenderPass(); createDSLayout();
+    createSwapchain(); createRenderPass(); createOffscreenRenderPass(); createDSLayout();
     createPipeline(true, pipeline);
-    createFramebuffers(); createCmdPool(); createSampler();
+    libraShader.loadLibrary();
+    createFramebuffers(); createCmdPool();
+    {
+        VkCommandPoolCreateInfo cpci{}; cpci.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        cpci.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; cpci.queueFamilyIndex=graphicsQueueFamilyIndex;
+        VkFenceCreateInfo fi{}; fi.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        if (vk_.CreateCommandPool(device,&cpci,nullptr,&filterCmdPool)!=VK_SUCCESS ||
+            vk_.CreateFence(device,&fi,nullptr,&filterFence)!=VK_SUCCESS) throw std::runtime_error("filter sync");
+        VkCommandBufferAllocateInfo ai{}; ai.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        ai.commandPool=filterCmdPool; ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount=1;
+        if (vk_.AllocateCommandBuffers(device,&ai,&filterCmdBuf)!=VK_SUCCESS) throw std::runtime_error("filter cmdbuf");
+    }
+    createSampler();
     createWinTexPool(); createCursorDS(); createCmdBufs(); createSyncObjects();
     isRunning = true;
     renderThread = std::thread(&VulkanRendererContext::renderLoop, this);
@@ -27,6 +46,8 @@ VulkanRendererContext::~VulkanRendererContext() {
     isRunning = false; dirtyCV.notify_all();
     if (renderThread.joinable()) renderThread.join();
     std::lock_guard<std::mutex> lk(renderMutex);
+    libraShader.destroyFilterChain();
+    libraShader.unloadLibrary();
     vk_.DeviceWaitIdle(device);
     for (auto& [id, wt] : texMap) destroyWinTex(wt);
     texMap.clear();
@@ -51,7 +72,12 @@ VulkanRendererContext::~VulkanRendererContext() {
         vk_.DestroySemaphore(device, imgAvailSems[i], nullptr);
         vk_.DestroyFence(device, inFlightFences[i], nullptr);
     }
+    if (filterCmdBuf != VK_NULL_HANDLE) { vk_.FreeCommandBuffers(device, filterCmdPool, 1, &filterCmdBuf); filterCmdBuf = VK_NULL_HANDLE; }
+    if (filterCmdPool != VK_NULL_HANDLE) { vk_.DestroyCommandPool(device, filterCmdPool, nullptr); filterCmdPool = VK_NULL_HANDLE; }
+    if (filterFence != VK_NULL_HANDLE) { vk_.DestroyFence(device, filterFence, nullptr); filterFence = VK_NULL_HANDLE; }
     vk_.DestroyCommandPool(device, cmdPool, nullptr);
+    destroyOffscreenTargets();
+    vk_.DestroyRenderPass(device, offscreenRenderPass, nullptr);
     vk_.DestroyRenderPass(device, renderPass, nullptr);
     vk_.DestroyDevice(device, nullptr);
     vk_.DestroySurfaceKHR(instance, surface, nullptr);
@@ -317,6 +343,24 @@ void VulkanRendererContext::createRenderPass() {
     ci.attachmentCount=1; ci.pAttachments=&att; ci.subpassCount=1; ci.pSubpasses=&sub;
     ci.dependencyCount=1; ci.pDependencies=&dep;
     if (vk_.CreateRenderPass(device,&ci,nullptr,&renderPass)!=VK_SUCCESS) throw std::runtime_error("renderpass");
+}
+
+void VulkanRendererContext::createOffscreenRenderPass() {
+    VkAttachmentDescription att{}; att.format=swapchainFmt; att.samples=VK_SAMPLE_COUNT_1_BIT;
+    att.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR; att.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+    att.stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE; att.stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED; att.finalLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkAttachmentReference ref{0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{}; sub.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount=1; sub.pColorAttachments=&ref;
+    VkSubpassDependency dep{}; dep.srcSubpass=VK_SUBPASS_EXTERNAL; dep.dstSubpass=0;
+    dep.srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT; dep.srcAccessMask=0;
+    dep.dstStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    VkRenderPassCreateInfo ci{}; ci.sType=VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    ci.attachmentCount=1; ci.pAttachments=&att; ci.subpassCount=1; ci.pSubpasses=&sub;
+    ci.dependencyCount=1; ci.pDependencies=&dep;
+    if (vk_.CreateRenderPass(device,&ci,nullptr,&offscreenRenderPass)!=VK_SUCCESS) throw std::runtime_error("offscreen renderpass");
 }
 
 void VulkanRendererContext::createDSLayout() {
@@ -903,6 +947,8 @@ ok=true;}catch(...){}
     float ox,oy,sx,sy,cw,ch;
     short ptrX,ptrY,curHotX,curHotY,curW,curH; bool curVis;
     VkBuffer curUpload=VK_NULL_HANDLE; bool hasCurUpload=false;
+    bool libraPath = libraShaderActive.load() && libraShaderEnabled.load();
+    bool clearHistoryThisFrame = false;
 
     {
         std::lock_guard<std::mutex> lk(renderMutex);
@@ -943,6 +989,11 @@ ok=true;}catch(...){}
             frameDraws.push_back(de);
         }
 
+        if (libraPath) {
+            clearHistoryThisFrame = libraNeedsHistoryClear;
+            libraNeedsHistoryClear = false;
+        }
+
         if (isCursorImageDirty.load() && cursorImg!=VK_NULL_HANDLE && !cursorPixels.empty()) {
             VkDeviceSize csz=(VkDeviceSize)cursorTexW*cursorTexH*4;
             ensureCursorStaging(csz);
@@ -957,16 +1008,97 @@ ok=true;}catch(...){}
         memcpy(cursorStgP, cursorPixels.data(), cursorUploadSize);
 
     bool effectiveCurVis = curVis && !scanoutActive.load();
-    recordCmdBuf(cmdBufs[currentFrame],imgIdx,frameDraws,
-        frameAhbTransitions,framePreUpload,framePostUpload,
-        curUpload,hasCurUpload,
-        ox,oy,sx,sy,cw,ch,ptrX,ptrY,curHotX,curHotY,curW,curH,effectiveCurVis);
+
+    if (libraPath) {
+        if (offscreenImage == VK_NULL_HANDLE || offscreenView == VK_NULL_HANDLE) {
+            createOffscreenTargets(surfaceWidth, surfaceHeight);
+        }
+        static uint64_t libraFrameCount = 0;
+
+        recordCompositorPass(cmdBufs[currentFrame], frameDraws,
+            frameAhbTransitions, framePreUpload, framePostUpload,
+            curUpload, hasCurUpload,
+            ox, oy, sx, sy, cw, ch, curW, curH);
+
+        vk_.ResetFences(device,1,&filterFence);
+        VkSubmitInfo si1{}; si1.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si1.commandBufferCount=1; si1.pCommandBuffers=&cmdBufs[currentFrame];
+        if (vk_.QueueSubmit(graphicsQueue,1,&si1,filterFence)!=VK_SUCCESS) {
+            vk_.DestroyFence(device,filterFence,nullptr);
+            VkFenceCreateInfo ffi{}; ffi.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO; ffi.flags=VK_FENCE_CREATE_SIGNALED_BIT;
+            vk_.CreateFence(device,&ffi,nullptr,&filterFence);
+            return;
+        }
+        vk_.WaitForFences(device,1,&filterFence,VK_TRUE,UINT64_MAX);
+
+        vk_.ResetCommandBuffer(filterCmdBuf,0);
+        VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
+
+        if (gLibraTestBlitOffscreen) {
+            RLOG("librashader: TEST MODE blitting offscreen directly");
+            blitImageToSwapchain(filterCmdBuf, imgIdx, offscreenView, blitSampler);
+        } else {
+            bool libraOk = libraShader.applyFrame(filterCmdBuf, libraFrameCount++,
+                offscreenImage, VK_FORMAT_R8G8B8A8_UNORM,
+                (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+                processedImage, VK_FORMAT_R8G8B8A8_UNORM,
+                (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+                VkExtent2D{(uint32_t)surfaceWidth, (uint32_t)surfaceHeight},
+                clearHistoryThisFrame);
+            if (!libraOk) RLOG_E("librashader: applyFrame failed: %s", libraShader.getLastError().c_str());
+
+            transition(filterCmdBuf, processedImage,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+            blitProcessedToSwapchain(filterCmdBuf, imgIdx);
+        }
+
+        if (effectiveCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
+            VkViewport ovp{0,0,(float)swapchainExt.width,(float)swapchainExt.height,0,1};
+            VkRect2D osc{{0,0},swapchainExt};
+            VkRenderPassBeginInfo rpi2{}; rpi2.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rpi2.renderPass=renderPass; rpi2.framebuffer=swapchainFBs[imgIdx];
+            rpi2.renderArea={{0,0},swapchainExt}; rpi2.clearValueCount=0;
+            vk_.CmdBeginRenderPass(filterCmdBuf,&rpi2,VK_SUBPASS_CONTENTS_INLINE);
+            vk_.CmdSetViewport(filterCmdBuf,0,1,&ovp);
+            vk_.CmdSetScissor(filterCmdBuf,0,1,&osc);
+            vk_.CmdBindDescriptorSets(filterCmdBuf,VK_PIPELINE_BIND_POINT_GRAPHICS,
+                pipeLayout,0,1,&cursorDS,0,nullptr);
+            float cx=(float)std::max(0,(int)ptrX-curHotX), cy=(float)std::max(0,(int)ptrY-curHotY);
+            WindowPushConstants cpc{};
+            cpc.ndcX0=(ox+cx*sx)/cw*2.f-1.f; cpc.ndcY0=(oy+cy*sy)/ch*2.f-1.f;
+            cpc.ndcX1=(ox+(cx+curW)*sx)/cw*2.f-1.f; cpc.ndcY1=(oy+(cy+curH)*sy)/ch*2.f-1.f;
+            cpc.useTexAlpha=1;
+            cpc.effectId=0; cpc.sharpness=0.f;
+            cpc.resW=(float)std::max(1,(int)curW); cpc.resH=(float)std::max(1,(int)curH);
+            cpc.effectMask=0; cpc.brightness=0.f; cpc.contrast=0.f; cpc.gamma=1.f;
+            cpc.outW=(float)std::max(1,(int)curW); cpc.outH=(float)std::max(1,(int)curH);
+            vk_.CmdPushConstants(filterCmdBuf,pipeLayout,
+                VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(cpc),&cpc);
+            vk_.CmdDraw(filterCmdBuf,4,1,0,0);
+            vk_.CmdEndRenderPass(filterCmdBuf);
+        }
+
+        if (vk_.EndCommandBuffer(filterCmdBuf)!=VK_SUCCESS) {
+            RLOG_E("renderFrame: filter EndCommandBuffer failed");
+            throw std::runtime_error("end filter cb");
+        }
+    } else {
+        recordCmdBuf(cmdBufs[currentFrame], imgIdx, frameDraws,
+            frameAhbTransitions, framePreUpload, framePostUpload,
+            curUpload, hasCurUpload,
+            ox, oy, sx, sy, cw, ch, ptrX, ptrY, curHotX, curHotY, curW, curH, effectiveCurVis);
+    }
 
     VkSemaphore wSem[]={imgAvailSems[currentFrame]}, sSem[]={renderDoneSems[currentFrame]};
     VkPipelineStageFlags wStage[]={VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    VkCommandBuffer submitBuf = libraPath ? filterCmdBuf : cmdBufs[currentFrame];
     VkSubmitInfo si{}; si.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.waitSemaphoreCount=1; si.pWaitSemaphores=wSem; si.pWaitDstStageMask=wStage;
-    si.commandBufferCount=1; si.pCommandBuffers=&cmdBufs[currentFrame];
+    si.commandBufferCount=1; si.pCommandBuffers=&submitBuf;
     si.signalSemaphoreCount=1; si.pSignalSemaphores=sSem;
 
     vk_.ResetFences(device,1,&inFlightFences[currentFrame]);
@@ -1273,6 +1405,401 @@ std::vector<int> VulkanRendererContext::getSupportedPresentModes() const {
     std::vector<int> out;
     for (auto pm:availablePresentModes) out.push_back((int)pm);
     return out;
+}
+
+void VulkanRendererContext::initLibrashader() {
+    if (!libraShader.isLoaded()) {
+        libraShader.loadLibrary();
+        libraShader.init(instance, physicalDevice, device, graphicsQueue, gipa);
+    }
+}
+
+void VulkanRendererContext::loadLibrashaderPreset(const std::string& path) {
+    RLOG("librashader: loading preset: %s", path.c_str());
+    libraShaderPresetPath = path;
+    if (libraShader.isLoaded()) {
+        libraShader.init(instance, physicalDevice, device, graphicsQueue, gipa);
+    }
+    libraShader.reloadPreset(path);
+    libraShaderActive.store(libraShader.isActive());
+    RLOG("librashader: preset chain active=%d", (int)libraShader.isActive());
+    if (!libraShader.isActive()) RLOG_E("librashader: filter chain create failed: %s", libraShader.getLastError().c_str());
+    { std::lock_guard<std::mutex> lk(renderMutex); libraNeedsHistoryClear = true; }
+}
+
+void VulkanRendererContext::setLibrashaderParam(const std::string& name, float value) {
+    libraShader.setParam(name, value);
+}
+
+void VulkanRendererContext::enableLibrashader(bool enabled) {
+    libraShaderEnabled.store(enabled);
+    libraShaderActive.store(enabled && libraShader.isActive());
+}
+
+void VulkanRendererContext::createOffscreenTargets(int w, int h) {
+    destroyOffscreenTargets();
+
+    VkImageCreateInfo ii{};
+    ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.extent = {(uint32_t)w, (uint32_t)h, 1};
+    ii.mipLevels = 1;
+    ii.arrayLayers = 1;
+    ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vk_.CreateImage(device, &ii, nullptr, &offscreenImage) != VK_SUCCESS) {
+        RLOG_E("createOffscreenTargets: CreateImage failed");
+        return;
+    }
+
+    VkMemoryRequirements req;
+    vk_.GetImageMemoryRequirements(device, offscreenImage, &req);
+    VkMemoryAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = findMemType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vk_.AllocateMemory(device, &ai, nullptr, &offscreenMem) != VK_SUCCESS) {
+        vk_.DestroyImage(device, offscreenImage, nullptr);
+        offscreenImage = VK_NULL_HANDLE;
+        RLOG_E("createOffscreenTargets: AllocateMemory failed");
+        return;
+    }
+    vk_.BindImageMemory(device, offscreenImage, offscreenMem, 0);
+
+    VkImageViewCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vi.image = offscreenImage;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (vk_.CreateImageView(device, &vi, nullptr, &offscreenView) != VK_SUCCESS) {
+        vk_.FreeMemory(device, offscreenMem, nullptr);
+        vk_.DestroyImage(device, offscreenImage, nullptr);
+        offscreenImage = VK_NULL_HANDLE;
+        offscreenMem = VK_NULL_HANDLE;
+        RLOG_E("createOffscreenTargets: ImageView failed");
+        return;
+    }
+
+    VkFramebufferCreateInfo fbi{};
+    fbi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbi.renderPass = offscreenRenderPass;
+    fbi.attachmentCount = 1;
+    fbi.pAttachments = &offscreenView;
+    fbi.width = (uint32_t)w;
+    fbi.height = (uint32_t)h;
+    fbi.layers = 1;
+    if (vk_.CreateFramebuffer(device, &fbi, nullptr, &offscreenFB) != VK_SUCCESS) {
+        vk_.DestroyImageView(device, offscreenView, nullptr);
+        vk_.FreeMemory(device, offscreenMem, nullptr);
+        vk_.DestroyImage(device, offscreenImage, nullptr);
+        offscreenView = VK_NULL_HANDLE;
+        offscreenImage = VK_NULL_HANDLE;
+        offscreenMem = VK_NULL_HANDLE;
+        offscreenFB = VK_NULL_HANDLE;
+        RLOG_E("createOffscreenTargets: Framebuffer failed");
+        return;
+    }
+
+    ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    if (vk_.CreateImage(device, &ii, nullptr, &processedImage) != VK_SUCCESS) {
+        RLOG_E("createOffscreenTargets: processedImage CreateImage failed");
+        destroyOffscreenTargets();
+        return;
+    }
+
+    vk_.GetImageMemoryRequirements(device, processedImage, &req);
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = findMemType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vk_.AllocateMemory(device, &ai, nullptr, &processedMem) != VK_SUCCESS) {
+        vk_.DestroyImage(device, processedImage, nullptr);
+        processedImage = VK_NULL_HANDLE;
+        destroyOffscreenTargets();
+        return;
+    }
+    vk_.BindImageMemory(device, processedImage, processedMem, 0);
+
+    vi.image = processedImage;
+    if (vk_.CreateImageView(device, &vi, nullptr, &processedView) != VK_SUCCESS) {
+        vk_.FreeMemory(device, processedMem, nullptr);
+        vk_.DestroyImage(device, processedImage, nullptr);
+        processedImage = VK_NULL_HANDLE;
+        processedMem = VK_NULL_HANDLE;
+        destroyOffscreenTargets();
+        return;
+    }
+
+    createBlitPipeline();
+    RLOG("createOffscreenTargets: %dx%d created successfully", w, h);
+}
+
+void VulkanRendererContext::destroyOffscreenTargets() {
+    destroyBlitPipeline();
+    if (processedView != VK_NULL_HANDLE) { vk_.DestroyImageView(device, processedView, nullptr); processedView = VK_NULL_HANDLE; }
+    if (processedImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, processedImage, nullptr); processedImage = VK_NULL_HANDLE; }
+    if (processedMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, processedMem, nullptr); processedMem = VK_NULL_HANDLE; }
+    if (offscreenFB != VK_NULL_HANDLE) { vk_.DestroyFramebuffer(device, offscreenFB, nullptr); offscreenFB = VK_NULL_HANDLE; }
+    if (offscreenView != VK_NULL_HANDLE) { vk_.DestroyImageView(device, offscreenView, nullptr); offscreenView = VK_NULL_HANDLE; }
+    if (offscreenImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, offscreenImage, nullptr); offscreenImage = VK_NULL_HANDLE; }
+    if (offscreenMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, offscreenMem, nullptr); offscreenMem = VK_NULL_HANDLE; }
+}
+
+void VulkanRendererContext::createBlitPipeline() {
+    VkSamplerCreateInfo sci{};
+    sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sci.magFilter = VK_FILTER_NEAREST;
+    sci.minFilter = VK_FILTER_NEAREST;
+    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sci.minLod = 0.f; sci.maxLod = 0.f;
+    if (vk_.CreateSampler(device, &sci, nullptr, &blitSampler) != VK_SUCCESS) {
+        RLOG_E("createBlitPipeline: sampler failed");
+        return;
+    }
+
+    VkDescriptorSetAllocateInfo dsai{};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = winTexPool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &dsLayout;
+    VkResult res = vk_.AllocateDescriptorSets(device, &dsai, &blitDS);
+    if (res != VK_SUCCESS) {
+        RLOG_E("createBlitPipeline: descriptor allocation failed: %d", (int)res);
+        vk_.DestroySampler(device, blitSampler, nullptr);
+        blitSampler = VK_NULL_HANDLE;
+        return;
+    }
+    RLOG("createBlitPipeline: done");
+}
+
+void VulkanRendererContext::destroyBlitPipeline() {
+    if (blitDS != VK_NULL_HANDLE) {
+        vk_.FreeDescriptorSets(device, winTexPool, 1, &blitDS);
+        blitDS = VK_NULL_HANDLE;
+    }
+    if (blitSampler != VK_NULL_HANDLE) {
+        vk_.DestroySampler(device, blitSampler, nullptr);
+        blitSampler = VK_NULL_HANDLE;
+    }
+}
+
+void VulkanRendererContext::blitProcessedToSwapchain(VkCommandBuffer cb, uint32_t imgIdx) {
+    blitImageToSwapchain(cb, imgIdx, processedView, blitSampler);
+}
+
+void VulkanRendererContext::blitImageToSwapchain(VkCommandBuffer cb, uint32_t imgIdx,
+                                                 VkImageView srcView, VkSampler srcSampler) {
+    VkRenderPassBeginInfo rpi{};
+    rpi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpi.renderPass = renderPass;
+    rpi.framebuffer = swapchainFBs[imgIdx];
+    rpi.renderArea = {{0, 0}, swapchainExt};
+    VkClearValue clr = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    rpi.clearValueCount = 1;
+    rpi.pClearValues = &clr;
+    vk_.CmdBeginRenderPass(cb, &rpi, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport vp{0, 0, (float)swapchainExt.width, (float)swapchainExt.height, 0, 1};
+    vk_.CmdSetViewport(cb, 0, 1, &vp);
+    VkRect2D sc{{0, 0}, swapchainExt};
+    vk_.CmdSetScissor(cb, 0, 1, &sc);
+
+    VkDescriptorImageInfo dii{};
+    dii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    dii.imageView = srcView;
+    dii.sampler = srcSampler;
+    VkWriteDescriptorSet wr{};
+    wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    wr.dstSet = blitDS;
+    wr.dstBinding = 0;
+    wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wr.descriptorCount = 1;
+    wr.pImageInfo = &dii;
+    vk_.UpdateDescriptorSets(device, 1, &wr, 0, nullptr);
+
+    vk_.CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vk_.CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        pipeLayout, 0, 1, &blitDS, 0, nullptr);
+
+    WindowPushConstants pc{};
+    pc.ndcX0 = -1.0f; pc.ndcY0 = -1.0f;
+    pc.ndcX1 =  1.0f; pc.ndcY1 =  1.0f;
+    pc.useTexAlpha = 0;
+    pc.effectId = 0;
+    pc.sharpness = 0.0f;
+    pc.resW = (float)swapchainExt.width;
+    pc.resH = (float)swapchainExt.height;
+    pc.effectMask = 0;
+    pc.brightness = 0.0f;
+    pc.contrast = 0.0f;
+    pc.gamma = 1.0f;
+    pc.outW = (float)swapchainExt.width;
+    pc.outH = (float)swapchainExt.height;
+    vk_.CmdPushConstants(cb, pipeLayout,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+        0, sizeof(pc), &pc);
+    vk_.CmdDraw(cb, 4, 1, 0, 0);
+
+    vk_.CmdEndRenderPass(cb);
+}
+
+void VulkanRendererContext::recordCompositorPass(VkCommandBuffer cb,
+    const std::vector<DrawEntry>& draws,
+    std::vector<VkImageMemoryBarrier>& ahbTransitions,
+    std::vector<VkImageMemoryBarrier>& preUpload,
+    std::vector<VkImageMemoryBarrier>& postUpload,
+    VkBuffer cursorUpload, bool hasCursorUpload,
+    float ox, float oy, float sx, float sy, float cw, float ch,
+    short curW, short curH)
+{
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vk_.BeginCommandBuffer(cb, &bi) != VK_SUCCESS) throw std::runtime_error("begin cb");
+
+    ahbTransitions.clear(); preUpload.clear(); postUpload.clear();
+
+    for (auto& d : draws) {
+        if (d.img == VK_NULL_HANDLE) continue;
+        if (d.isAHB && d.needsTransition) {
+            VkImageMemoryBarrier b{}; b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = d.img; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            b.srcAccessMask = 0; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            ahbTransitions.push_back(b);
+        } else if (!d.isAHB && (d.needsTransition || d.upload != VK_NULL_HANDLE)) {
+            VkImageMemoryBarrier b{}; b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = d.img; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            b.srcAccessMask = 0; b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            preUpload.push_back(b);
+            b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            postUpload.push_back(b);
+        }
+    }
+
+    if (!ahbTransitions.empty())
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, (uint32_t)ahbTransitions.size(), ahbTransitions.data());
+    if (!preUpload.empty())
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, (uint32_t)preUpload.size(), preUpload.data());
+
+    for (auto& d : draws) {
+        if (d.isAHB || d.upload == VK_NULL_HANDLE || d.img == VK_NULL_HANDLE) continue;
+        VkBufferImageCopy r{}; r.bufferOffset = 0; r.bufferRowLength = 0; r.bufferImageHeight = 0;
+        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        r.imageExtent = {(uint32_t)d.w, (uint32_t)d.h, 1};
+        vk_.CmdCopyBufferToImage(cb, d.upload, d.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+    }
+
+    bool hasCursorCopy = hasCursorUpload && cursorImg != VK_NULL_HANDLE && cursorUpload != VK_NULL_HANDLE;
+    if (hasCursorCopy) {
+        VkImageMemoryBarrier b{}; b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = cursorImg; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT; b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &b);
+        VkBufferImageCopy r{}; r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        r.imageExtent = {(uint32_t)curW, (uint32_t)curH, 1};
+        vk_.CmdCopyBufferToImage(cb, cursorUpload, cursorImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        postUpload.push_back(b);
+    }
+
+    if (!postUpload.empty())
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, (uint32_t)postUpload.size(), postUpload.data());
+
+    {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        barrier.image = offscreenImage;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    VkRenderPassBeginInfo rpi{};
+    rpi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpi.renderPass = offscreenRenderPass;
+    rpi.framebuffer = offscreenFB;
+    rpi.renderArea = {{0, 0}, {(uint32_t)surfaceWidth, (uint32_t)surfaceHeight}};
+    VkClearValue clr = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    rpi.clearValueCount = 1;
+    rpi.pClearValues = &clr;
+    vk_.CmdBeginRenderPass(cb, &rpi, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport vp{0, 0, (float)surfaceWidth, (float)surfaceHeight, 0, 1};
+    vk_.CmdSetViewport(cb, 0, 1, &vp);
+    VkRect2D sc{{0, 0}, {(uint32_t)surfaceWidth, (uint32_t)surfaceHeight}};
+    vk_.CmdSetScissor(cb, 0, 1, &sc);
+
+    vk_.CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    for (auto& d : draws) {
+        if (d.ds == VK_NULL_HANDLE) continue;
+        vk_.CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            pipeLayout, 0, 1, &d.ds, 0, nullptr);
+        WindowPushConstants pc{};
+        pc.ndcX0 = (ox + (float)d.x * sx) / cw * 2.0f - 1.0f;
+        pc.ndcY0 = (oy + (float)d.y * sy) / ch * 2.0f - 1.0f;
+        pc.ndcX1 = (ox + (float)(d.x + d.w) * sx) / cw * 2.0f - 1.0f;
+        pc.ndcY1 = (oy + (float)(d.y + d.h) * sy) / ch * 2.0f - 1.0f;
+        pc.useTexAlpha = 0;
+        pc.effectId = 0;
+        pc.sharpness = 0.0f;
+        pc.resW = (float)std::max(1, d.w);
+        pc.resH = (float)std::max(1, d.h);
+        pc.effectMask = 0;
+        pc.brightness = 0.0f;
+        pc.contrast = 0.0f;
+        pc.gamma = 1.0f;
+        pc.outW = std::max(1.0f, (float)d.w * sx / cw * (float)surfaceWidth);
+        pc.outH = std::max(1.0f, (float)d.h * sy / ch * (float)surfaceHeight);
+        vk_.CmdPushConstants(cb, pipeLayout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0, sizeof(pc), &pc);
+        vk_.CmdDraw(cb, 4, 1, 0, 0);
+    }
+    vk_.CmdEndRenderPass(cb);
+
+    {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        barrier.image = processedImage;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    VkResult endStatus = vk_.EndCommandBuffer(cb);
+    if (endStatus != VK_SUCCESS) {
+        RLOG_E("recordCompositorPass: EndCommandBuffer failed: %d", (int)endStatus);
+        throw std::runtime_error("end cb");
+    }
 }
 
 #pragma GCC diagnostic pop

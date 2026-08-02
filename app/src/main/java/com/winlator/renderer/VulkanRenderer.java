@@ -21,6 +21,7 @@ import com.winlator.xserver.XLock;
 import com.winlator.xserver.XServer;
 
 import java.util.ArrayList;
+import java.util.Map;
 
 public class VulkanRenderer implements WindowManager.OnWindowModificationListener,
                                        Pointer.OnPointerMotionListener,
@@ -33,6 +34,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
     public static final int EFFECT_CRT = 3;
     public static final int EFFECT_HDR = 4;
     public static final int EFFECT_NATURAL = 5;
+    public static final int EFFECT_LIBRASHADER = 6;
     public static final int SCALE_FIT = 0;
     public static final int SCALE_STRETCH = 1;
     public static final int SCALE_FILL = 2;
@@ -131,6 +133,12 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
     private native void nativeSetEffect(long handle, int effectId, float sharpness,
         int effectMask, float brightness, float contrast, float gamma);
 
+    private native boolean nativeInitLibrashader(long handle);
+    private native boolean nativeLoadLibrashaderPreset(long handle, String presetPath);
+    private native void    nativeEnableLibrashader(long handle, boolean enabled);
+    private native void    nativeSetLibrashaderParam(long handle, String name, float value);
+    private native String  nativeGetLibrashaderError(long handle);
+
     private static volatile boolean gpuImageChecked = false;
 
     private long did(Drawable d) {
@@ -174,6 +182,18 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
                     nativeSetSwapRB(nativeHandle, pendingSwapRB);
                     nativeSetEffect(nativeHandle, pendingEffectId, pendingSharpness,
                         pendingEffectMask, pendingBrightness, pendingContrast, pendingGamma);
+                    if (pendingLibraShaderEnabled && !pendingLibraShaderPresetPath.isEmpty()) {
+                        boolean libraLoaded = nativeInitLibrashader(nativeHandle);
+                        if (libraLoaded) {
+                            boolean ok = nativeLoadLibrashaderPreset(nativeHandle, pendingLibraShaderPresetPath);
+                            if (ok) {
+                                for (java.util.Map.Entry<String, Float> e : pendingLibraShaderParams.entrySet()) {
+                                    nativeSetLibrashaderParam(nativeHandle, e.getKey(), e.getValue());
+                                }
+                                nativeEnableLibrashader(nativeHandle, true);
+                            }
+                        }
+                    }
                     updateTransform();
                     nativeSetCursorVisible(nativeHandle, cursorVisible);
                     if (nativeMode && !effectsRequireCompositor) {
@@ -747,7 +767,8 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
     // compositor (window.frag). Scanout bypasses the shader, so these can only
     // take visible effect when content is routed through the textured-quad path.
     private boolean computeEffectsRequireCompositor() {
-        return pendingEffectId != EFFECT_NONE
+        return pendingLibraShaderEnabled
+            || pendingEffectId != EFFECT_NONE
             || pendingEffectMask != 0
             || pendingBrightness != 0.0f
             || pendingContrast != 0.0f
@@ -805,6 +826,9 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
     private float   pendingBrightness     = 0.0f;
     private float   pendingContrast       = 0.0f;
     private float   pendingGamma          = 1.0f;
+    private boolean pendingLibraShaderEnabled = false;
+    private String  pendingLibraShaderPresetPath = "";
+    private final java.util.Map<String, Float> pendingLibraShaderParams = new java.util.HashMap<>();
     // When any screen effect / filter / color adjustment is active we must route
     // fullscreen content through the compositor (window.frag) instead of the
     // zero-copy scanout fast-path, because scanout bypasses the shader entirely.
@@ -838,6 +862,71 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
                 android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
             .apply();
     }
+    public void setRetroArchShaderEnabled(boolean enabled) {
+        pendingLibraShaderEnabled = enabled;
+        synchronized (lock) {
+            if (nativeHandle != 0) {
+                if (enabled && !pendingLibraShaderPresetPath.isEmpty()) {
+                    boolean ok = nativeLoadLibrashaderPreset(nativeHandle, pendingLibraShaderPresetPath);
+                    if (!ok) {
+                        String err = nativeGetLibrashaderError(nativeHandle);
+                        android.util.Log.e("VulkanRenderer", "librashader: preset load failed: " + err);
+                        return;
+                    }
+                    for (java.util.Map.Entry<String, Float> e : pendingLibraShaderParams.entrySet()) {
+                        nativeSetLibrashaderParam(nativeHandle, e.getKey(), e.getValue());
+                    }
+                }
+                nativeEnableLibrashader(nativeHandle, enabled);
+                if (enabled) {
+                    setEffect(EFFECT_NONE, 0f);
+                }
+            }
+        }
+        if (nativeMode) {
+            if (enabled) tearDownScanout();
+            else if (!effectsRequireCompositor) establishScanout();
+        }
+    }
+
+    public boolean loadRetroArchShaderPreset(String presetPath) {
+        pendingLibraShaderPresetPath = presetPath;
+        synchronized (lock) {
+            if (nativeHandle != 0) {
+                if (pendingLibraShaderEnabled) {
+                    boolean ok = nativeLoadLibrashaderPreset(nativeHandle, presetPath);
+                    if (!ok) {
+                        android.util.Log.e("VulkanRenderer",
+                            "librashader: preset load failed: " + nativeGetLibrashaderError(nativeHandle));
+                    }
+                    return ok;
+                }
+            }
+        }
+        return true;
+    }
+
+    public void setRetroArchShaderParam(String name, float value) {
+        pendingLibraShaderParams.put(name, value);
+        synchronized (lock) {
+            if (nativeHandle != 0) {
+                nativeSetLibrashaderParam(nativeHandle, name, value);
+            }
+        }
+    }
+
+    public Map<String, Float> getRetroArchShaderParams() {
+        return new java.util.HashMap<>(pendingLibraShaderParams);
+    }
+
+    public boolean isRetroArchShaderEnabled() {
+        return pendingLibraShaderEnabled;
+    }
+
+    public String getRetroArchShaderPresetPath() {
+        return pendingLibraShaderPresetPath;
+    }
+
     private static class RenderableWindow {
         public final Drawable content; public int rootX, rootY;
         public RenderableWindow(Drawable c, int x, int y) { content=c; rootX=x; rootY=y; }

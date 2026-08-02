@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.HorizontalDivider
@@ -57,6 +58,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +74,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.gamenative.R
+import app.gamenative.ui.component.dialog.categoryOf
+import app.gamenative.ui.component.dialog.ensureBundledShaders
+import app.gamenative.ui.component.dialog.friendlyName
+import app.gamenative.ui.component.dialog.loadShaderConfig
+import app.gamenative.ui.component.dialog.persistShaderConfig
 import app.gamenative.ui.theme.PluviaTheme
 import app.gamenative.ui.util.ScreenEffectsConfig
 import app.gamenative.ui.util.adaptivePanelWidth
@@ -81,8 +88,13 @@ import app.gamenative.ui.util.persistScreenEffectsConfig
 import app.gamenative.utils.BrightnessManager
 import com.winlator.container.Container
 import com.winlator.renderer.GLRenderer
+import com.winlator.renderer.RetroArchShaderConfig
+import com.winlator.renderer.ShaderImporter
 import com.winlator.renderer.VulkanRenderer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -526,6 +538,79 @@ fun ScreenEffectsTabContent(
         container?.saveData()
     }
 
+    val context = LocalContext.current
+    val importer = remember { ShaderImporter(context) }
+    val shaderScope = rememberCoroutineScope()
+
+    val initialShaderConfig = remember(renderer, container) { loadShaderConfig(container) }
+    var shaderEnabled by remember(renderer, container) {
+        mutableStateOf(initialShaderConfig.enabled)
+    }
+    var shaderPresetPath by remember(renderer, container) {
+        mutableStateOf(initialShaderConfig.presetPath)
+    }
+    var shaderPresetName by remember(renderer, container) {
+        mutableStateOf(initialShaderConfig.presetName)
+    }
+    var shaderRelativePath by remember(renderer, container) {
+        mutableStateOf(initialShaderConfig.relativePath)
+    }
+    var shaderOptions by remember(renderer, container) {
+        mutableStateOf<List<Map.Entry<String, String>>>(emptyList())
+    }
+
+    LaunchedEffect(Unit) {
+        val presets = withContext(Dispatchers.IO) {
+            ensureBundledShaders(context)
+            importer.listBundledPresets()
+        }
+        shaderOptions = presets
+    }
+
+    fun persistShaderState(enabled: Boolean, path: String, name: String, relative: String) {
+        persistShaderConfig(container, RetroArchShaderConfig(enabled, path, name, "", relative))
+        container?.saveData()
+    }
+
+    fun disableShaders() {
+        shaderEnabled = false
+        renderer.setRetroArchShaderEnabled(false)
+        persistShaderState(false, "", "", "")
+    }
+
+    fun toggleShaders() {
+        if (shaderEnabled) {
+            disableShaders()
+        } else {
+            shaderEnabled = true
+            if (shaderRelativePath.isNotEmpty() && shaderPresetPath.isNotEmpty()) {
+                renderer.loadRetroArchShaderPreset(shaderPresetPath)
+                renderer.setRetroArchShaderEnabled(true)
+                persistShaderState(true, shaderPresetPath, shaderPresetName, shaderRelativePath)
+            } else {
+                renderer.setRetroArchShaderEnabled(true)
+                persistShaderState(true, "", "", "")
+            }
+        }
+    }
+
+    fun applyShaderPreset(entry: Map.Entry<String, String>) {
+        shaderScope.launch(Dispatchers.IO) {
+            val result = importer.importBundledPreset(entry.key)
+            withContext(Dispatchers.Main) {
+                if (result.success) {
+                    shaderPresetPath = result.presetPath
+                    shaderPresetName = entry.value
+                    shaderRelativePath = entry.key
+                    shaderEnabled = true
+                    renderer.loadRetroArchShaderPreset(result.presetPath)
+                    renderer.setRetroArchShaderEnabled(true)
+                    persistShaderState(true, result.presetPath, entry.value, entry.key)
+                }
+            }
+        }
+    }
+
     fun resetEffects() {
         scalingMode = ScreenEffectsConfig.SCALING_MODE_NONE
         fsrSharpnessLevel = ScreenEffectsConfig.FSR_DEFAULT_LEVEL
@@ -681,6 +766,51 @@ fun ScreenEffectsTabContent(
             accentColor = PluviaTheme.colors.accentPurple,
             onClick = ::resetEffects,
         )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 8.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+        )
+
+        ScreenEffectToggleRow(
+            title = "RetroArch Shaders",
+            subtitle = when {
+                shaderEnabled && shaderPresetName.isNotEmpty() -> shaderPresetName
+                shaderEnabled -> "Pick a preset below"
+                else -> "Off"
+            },
+            enabled = shaderEnabled,
+            onToggle = { toggleShaders() },
+        )
+
+        if (shaderEnabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            ShaderPresetRow(
+                title = "No filter",
+                subtitle = null,
+                selected = shaderRelativePath.isEmpty(),
+                onClick = { disableShaders() },
+            )
+            if (shaderOptions.isEmpty()) {
+                Text(
+                    text = "Loading bundled presets...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            } else {
+                shaderOptions.forEach { entry ->
+                    ShaderPresetRow(
+                        title = friendlyName(entry.key),
+                        subtitle = categoryOf(entry.key),
+                        selected = shaderEnabled && entry.key == shaderRelativePath,
+                        onClick = { applyShaderPreset(entry) },
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
     }
@@ -1272,6 +1402,63 @@ private fun ScreenEffectToggleRow(
 
         Box(contentAlignment = Alignment.CenterEnd) {
             ScreenEffectSwitch(enabled = enabled, accentColor = accentColor)
+        }
+    }
+}
+
+@Composable
+private fun ShaderPresetRow(
+    title: String,
+    subtitle: String?,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val accentColor = PluviaTheme.colors.accentCyan
+
+    Row(
+        modifier = Modifier
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                if (selected) {
+                    accentColor.copy(alpha = 0.15f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+                },
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (selected) accentColor else MaterialTheme.colorScheme.onSurface,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        if (selected) {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                tint = accentColor,
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
 }
