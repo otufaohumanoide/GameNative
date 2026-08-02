@@ -437,6 +437,17 @@ private:
     VkImageView     diagDstView = VK_NULL_HANDLE;
     VkBuffer        diagReadbackBuffer = VK_NULL_HANDLE;
     VkDeviceMemory  diagReadbackMem = VK_NULL_HANDLE;
+
+    // Task 6 atlas fix (melonDS topology): filterOutputImage is the applyFrame target; the copy
+    // engine moves it to the dedicated atlasImage (presented sampled in GENERAL). atlasLayout tracks
+    // atlasImage's layout across frames; reset to UNDEFINED on recreate.
+    VkImage         filterOutputImage = VK_NULL_HANDLE;
+    VkDeviceMemory  filterOutputMem = VK_NULL_HANDLE;
+    VkImageView     filterOutputView = VK_NULL_HANDLE;
+    VkImage         atlasImage = VK_NULL_HANDLE;
+    VkDeviceMemory  atlasMem = VK_NULL_HANDLE;
+    VkImageView     atlasView = VK_NULL_HANDLE;
+    VkImageLayout   atlasLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     uint64_t         libraFrameCount = 0;
 
     VkPipeline      blitPipeline = VK_NULL_HANDLE;
@@ -464,6 +475,14 @@ private:
     // transfer barrier, read back diagDstImage (READBACK-D), leave both images in presentable state.
     void blitProcessedToDedicated(VkCommandBuffer cb);
 
-    void readbackProcessedInFrame(VkCommandBuffer cb);
+    // Task 6 atlas fix: applyFrame writes filterOutputImage, the copy engine moves it to atlasImage
+    // in the same CB, then submit-and-wait. presentAtlasToSwapchain records (CB must be already
+    // begun) the GENERAL->GENERAL barrier + atlas sampler blit into the swapchain.
+    void recordFilterChainPass(VkCommandBuffer cb, uint64_t frameCount, bool clearHistory);
+    void presentAtlasToSwapchain(VkCommandBuffer cb, uint32_t imgIdx);
+
+    // P2 in-frame readback of the applyFrame output. img is assumed to be in curLayout
+    // (COLOR_ATTACHMENT_OPTIMAL for processedImage, TRANSFER_SRC_OPTIMAL for filterOutputImage).
+    void readbackProcessedInFrame(VkCommandBuffer cb, VkImage img, VkImageLayout curLayout);
     void readbackProcessedP1();
 };

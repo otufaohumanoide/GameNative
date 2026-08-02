@@ -1074,13 +1074,16 @@ ok=true;}catch(...){}
         vk_.WaitForFences(device,1,&filterFence,VK_TRUE,UINT64_MAX);
 
         vk_.ResetCommandBuffer(filterCmdBuf,0);
-        VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
 
         if (gLibraTestBlitOffscreen) {
             RLOG("librashader: TEST MODE blitting offscreen directly");
+            VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
             blitImageToSwapchain(filterCmdBuf, imgIdx, offscreenView, blitSampler);
-        } else {
+        } else if (gLibraProbeGeneralPresent || gLibraProbeTransferWide) {
+            // P3/P4-PROBE paths (unchanged intent): applyFrame -> processedImage, present in GENERAL.
+            VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
             bool libraOk = libraShader.applyFrame(filterCmdBuf, libraFrameCount++,
                 offscreenImage, VK_FORMAT_R8G8B8A8_UNORM,
                 (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
@@ -1090,7 +1093,7 @@ ok=true;}catch(...){}
                 clearHistoryThisFrame);
             if (!libraOk) RLOG_E("librashader: applyFrame failed: %s", libraShader.getLastError().c_str());
 
-            readbackProcessedInFrame(filterCmdBuf);
+            readbackProcessedInFrame(filterCmdBuf, processedImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
             // P3-PROBE: temporary diagnostic (off by default, env GAMENATIVE_LIBRA_PROBE_GENERAL=1).
             // Samples processedImage in GENERAL instead of SHADER_READ_ONLY_OPTIMAL to test B-H2.
@@ -1118,19 +1121,24 @@ ok=true;}catch(...){}
             if (gLibraProbeTransferWide) {
                 blitProcessedToDedicated(filterCmdBuf);
                 blitImageToSwapchainLayout(filterCmdBuf, imgIdx, diagDstView, blitSampler, VK_IMAGE_LAYOUT_GENERAL);
-            } else if (gLibraProbeGeneralPresent) {
+            } else {
                 transition(filterCmdBuf, processedImage,
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
                     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
                 blitImageToSwapchainLayout(filterCmdBuf, imgIdx, processedView, blitSampler, VK_IMAGE_LAYOUT_GENERAL);
-            } else {
-                transition(filterCmdBuf, processedImage,
-                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-                blitProcessedToSwapchain(filterCmdBuf, imgIdx);
             }
+        } else {
+            // DEFAULT path (Task 6): melonDS atlas topology. applyFrame writes filterOutputImage, the
+            // copy engine moves it to the DEDICATED atlasImage in the SAME CB, submit-and-wait
+            // (recordFilterChainPass begins/ends/submits filterCmdBuf). Then re-begin the SAME CB for
+            // the atlas present (sampled in GENERAL) + the in-frame P2 readback of filterOutputImage;
+            // the existing final submit+present below drives the swapchain (single submit, Option A).
+            recordFilterChainPass(filterCmdBuf, libraFrameCount++, clearHistoryThisFrame);
+            VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb present");
+            presentAtlasToSwapchain(filterCmdBuf, imgIdx);
+            readbackProcessedInFrame(filterCmdBuf, filterOutputImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         }
 
         if (effectiveCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
@@ -1545,6 +1553,7 @@ void VulkanRendererContext::enableLibrashader(bool enabled) {
 
 void VulkanRendererContext::createOffscreenTargets(int w, int h) {
     destroyOffscreenTargets();
+    atlasLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkImageCreateInfo ii{};
     ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -1671,6 +1680,66 @@ void VulkanRendererContext::createOffscreenTargets(int w, int h) {
         return;
     }
 
+    // Task 6 atlas fix: filterOutputImage (applyFrame target) and atlasImage (copy destination).
+    // R8G8B8A8_UNORM, OPTIMAL, usage TRANSFER_SRC|TRANSFER_DST|COLOR_ATTACHMENT|SAMPLED, matching
+    // melonDS createRetroArchImage (VulkanSurfacePresenter.cpp:1980-2038).
+    auto createAtlasTarget = [&](VkImage& img, VkDeviceMemory& mem, VkImageView& view,
+                                 const char* name) -> bool {
+        VkImageCreateInfo tii{};
+        tii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        tii.imageType = VK_IMAGE_TYPE_2D;
+        tii.extent = {(uint32_t)w, (uint32_t)h, 1};
+        tii.mipLevels = 1;
+        tii.arrayLayers = 1;
+        tii.format = VK_FORMAT_R8G8B8A8_UNORM;
+        tii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        tii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        tii.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+            | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        tii.samples = VK_SAMPLE_COUNT_1_BIT;
+        tii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (vk_.CreateImage(device, &tii, nullptr, &img) != VK_SUCCESS) {
+            RLOG_E("createOffscreenTargets: %s CreateImage failed", name);
+            return false;
+        }
+        VkMemoryRequirements treq;
+        vk_.GetImageMemoryRequirements(device, img, &treq);
+        VkMemoryAllocateInfo tai{};
+        tai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        tai.allocationSize = treq.size;
+        tai.memoryTypeIndex = findMemType(treq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (vk_.AllocateMemory(device, &tai, nullptr, &mem) != VK_SUCCESS) {
+            vk_.DestroyImage(device, img, nullptr);
+            img = VK_NULL_HANDLE;
+            RLOG_E("createOffscreenTargets: %s AllocateMemory failed", name);
+            return false;
+        }
+        vk_.BindImageMemory(device, img, mem, 0);
+        VkImageViewCreateInfo tvi{};
+        tvi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        tvi.image = img;
+        tvi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        tvi.format = VK_FORMAT_R8G8B8A8_UNORM;
+        tvi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        if (vk_.CreateImageView(device, &tvi, nullptr, &view) != VK_SUCCESS) {
+            vk_.FreeMemory(device, mem, nullptr);
+            mem = VK_NULL_HANDLE;
+            vk_.DestroyImage(device, img, nullptr);
+            img = VK_NULL_HANDLE;
+            RLOG_E("createOffscreenTargets: %s ImageView failed", name);
+            return false;
+        }
+        return true;
+    };
+    if (!createAtlasTarget(filterOutputImage, filterOutputMem, filterOutputView, "filterOutputImage")) {
+        destroyOffscreenTargets();
+        return;
+    }
+    if (!createAtlasTarget(atlasImage, atlasMem, atlasView, "atlasImage")) {
+        destroyOffscreenTargets();
+        return;
+    }
+
     try {
         VkDeviceSize rbSize = (VkDeviceSize)w * h * 4;
         createBuffer(rbSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -1696,6 +1765,13 @@ void VulkanRendererContext::destroyOffscreenTargets() {
     if (diagDstView != VK_NULL_HANDLE) { vk_.DestroyImageView(device, diagDstView, nullptr); diagDstView = VK_NULL_HANDLE; }
     if (diagDstImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, diagDstImage, nullptr); diagDstImage = VK_NULL_HANDLE; }
     if (diagDstMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, diagDstMem, nullptr); diagDstMem = VK_NULL_HANDLE; }
+    if (atlasView != VK_NULL_HANDLE) { vk_.DestroyImageView(device, atlasView, nullptr); atlasView = VK_NULL_HANDLE; }
+    if (atlasImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, atlasImage, nullptr); atlasImage = VK_NULL_HANDLE; }
+    if (atlasMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, atlasMem, nullptr); atlasMem = VK_NULL_HANDLE; }
+    if (filterOutputView != VK_NULL_HANDLE) { vk_.DestroyImageView(device, filterOutputView, nullptr); filterOutputView = VK_NULL_HANDLE; }
+    if (filterOutputImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, filterOutputImage, nullptr); filterOutputImage = VK_NULL_HANDLE; }
+    if (filterOutputMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, filterOutputMem, nullptr); filterOutputMem = VK_NULL_HANDLE; }
+    atlasLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (processedView != VK_NULL_HANDLE) { vk_.DestroyImageView(device, processedView, nullptr); processedView = VK_NULL_HANDLE; }
     if (processedImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, processedImage, nullptr); processedImage = VK_NULL_HANDLE; }
     if (processedMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, processedMem, nullptr); processedMem = VK_NULL_HANDLE; }
@@ -1804,31 +1880,135 @@ void VulkanRendererContext::blitProcessedToDedicated(VkCommandBuffer cb) {
         VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 }
 
-void VulkanRendererContext::readbackProcessedInFrame(VkCommandBuffer cb) {
-    if (processedImage == VK_NULL_HANDLE || processedReadbackBuffer == VK_NULL_HANDLE) return;
+// Task 6 atlas fix (melonDS topology): filter chain writes the DEDICATED filterOutputImage, the copy
+// engine (vkCmdCopyImage, primary path) moves it to the DEDICATED atlasImage in the SAME command
+// buffer as applyFrame, then submit-and-wait (VulkanSurfacePresenter.cpp:2228-2243). atlasImage is
+// left in GENERAL so a later submission can sample it; atlasLayout tracks its layout.
+void VulkanRendererContext::recordFilterChainPass(VkCommandBuffer cb, uint64_t frameCount, bool clearHistory) {
+    if (filterOutputImage == VK_NULL_HANDLE || atlasImage == VK_NULL_HANDLE) return;
+    VkCommandBufferBeginInfo bi{}; bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    vk_.BeginCommandBuffer(cb, &bi);
+
+    // applyFrame: offscreenImage -> filterOutputImage
+    bool ok = libraShader.applyFrame(cb, frameCount,
+        offscreenImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+        filterOutputImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+        VkExtent2D{(uint32_t)surfaceWidth, (uint32_t)surfaceHeight}, clearHistory);
+    if (!ok) RLOG_E("librashader: applyFrame failed: %s", libraShader.getLastError().c_str());
+
+    // PRIMARY PATH: copy engine filterOutput -> atlas (same CB, melonDS 2353-2383)
+    transferBarrierWide(cb, filterOutputImage,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    transferBarrierWide(cb, atlasImage,
+        atlasLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkImageCopy ic{};
+    ic.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    ic.srcOffset = {0, 0, 0};
+    ic.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    ic.dstOffset = {0, 0, 0};
+    ic.extent = {(uint32_t)surfaceWidth, (uint32_t)surfaceHeight, 1};
+    vk_.CmdCopyImage(cb, filterOutputImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        atlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
+
+    // atlas -> GENERAL for later sampling (melonDS 2383)
+    VkImageMemoryBarrier b{}; b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = atlasImage;
+    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &b);
+    atlasLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    vk_.EndCommandBuffer(cb);
+
+    // submit-and-wait (melonDS 2228-2243)
+    vk_.ResetFences(device, 1, &filterFence);
+    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &cb;
+    if (vk_.QueueSubmit(graphicsQueue, 1, &si, filterFence) != VK_SUCCESS) {
+        RLOG_E("filter submit failed"); return;
+    }
+    vk_.WaitForFences(device, 1, &filterFence, VK_TRUE, UINT64_MAX);
+}
+
+// Task 6 atlas fix: present the atlas sampled in GENERAL. cb must already be in recording state
+// (Option A: recorded into the SAME filterCmdBuf that the final submit presents, after re-begin).
+// GENERAL->GENERAL barrier matches melonDS VulkanSurfacePresenter.cpp:3094-3142.
+void VulkanRendererContext::presentAtlasToSwapchain(VkCommandBuffer cb, uint32_t imgIdx) {
+    if (atlasImage == VK_NULL_HANDLE || atlasView == VK_NULL_HANDLE) return;
+    {
+        static bool sAtlasPresentLogged = false;
+        if (!sAtlasPresentLogged) {
+            RLOG("ATLAS-PRESENT: presenting atlas in GENERAL (melonDS topology)");
+            sAtlasPresentLogged = true;
+        }
+    }
+
+    VkImageMemoryBarrier b{}; b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.oldLayout = VK_IMAGE_LAYOUT_GENERAL; b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = atlasImage;
+    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &b);
+
+    // blit of the atlas in GENERAL (dii.imageLayout = VK_IMAGE_LAYOUT_GENERAL)
+    blitImageToSwapchainLayout(cb, imgIdx, atlasView, blitSampler, VK_IMAGE_LAYOUT_GENERAL);
+}
+
+// P2 in-frame readback of the applyFrame output. img is assumed to be in curLayout:
+// - processedImage after applyFrame: COLOR_ATTACHMENT_OPTIMAL (probe paths)
+// - filterOutputImage after recordFilterChainPass: TRANSFER_SRC_OPTIMAL (default atlas path)
+// In the TRANSFER_SRC case the image is left in TRANSFER_SRC (applyFrame transitions it next frame).
+void VulkanRendererContext::readbackProcessedInFrame(VkCommandBuffer cb, VkImage img, VkImageLayout curLayout) {
+    if (img == VK_NULL_HANDLE || processedReadbackBuffer == VK_NULL_HANDLE) return;
     VkImageMemoryBarrier b{};
     b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = processedImage;
+    b.image = img;
     b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    if (curLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &b);
+    } else {
+        b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    }
     VkBufferImageCopy r{};
     r.bufferOffset = 0; r.bufferRowLength = 0; r.bufferImageHeight = 0;
     r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     r.imageExtent = {(uint32_t)surfaceWidth, (uint32_t)surfaceHeight, 1};
-    vk_.CmdCopyImageToBuffer(cb, processedImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    vk_.CmdCopyImageToBuffer(cb, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         processedReadbackBuffer, 1, &r);
-    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    b.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    if (curLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &b);
+    } else {
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    }
 }
 
 void VulkanRendererContext::readbackProcessedP1() {
