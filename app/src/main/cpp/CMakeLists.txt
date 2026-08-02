@@ -55,7 +55,9 @@ add_library(vulkan_renderer SHARED
             ${CMAKE_CURRENT_BINARY_DIR}/window_vert.h
             ${CMAKE_CURRENT_BINARY_DIR}/window_frag.h)
 
-target_include_directories(vulkan_renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(vulkan_renderer PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../build/generated/librashader/include)
 
 target_compile_options(vulkan_renderer PRIVATE
                        -Wall -Wextra -fvisibility=hidden -std=c++17)
