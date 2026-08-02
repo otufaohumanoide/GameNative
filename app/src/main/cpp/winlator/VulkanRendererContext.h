@@ -404,6 +404,11 @@ private:
                                VkImageLayout oldL, VkImageLayout newL,
                                VkAccessFlags srcA, VkAccessFlags dstA,
                                VkPipelineStageFlags srcS, VkPipelineStageFlags dstS);
+    // melonDS wide-barrier recipe (VulkanSurfacePresenter.cpp:2258/2270): srcAccess =
+    // MEMORY_WRITE|TRANSFER_WRITE|COLOR_ATTACHMENT_WRITE, srcStage = ALL_COMMANDS.
+    void            transferBarrierWide(VkCommandBuffer cb, VkImage img,
+                                        VkImageLayout oldLayout, VkImageLayout newLayout,
+                                        VkAccessFlags dstAccess, VkPipelineStageFlags dstStage);
     VkShaderModule  makeShader(const uint32_t* code, size_t sz);
 
     VulkanLibrashader libraShader;
@@ -423,6 +428,15 @@ private:
 
     VkBuffer         processedReadbackBuffer = VK_NULL_HANDLE;
     VkDeviceMemory   processedReadbackMem = VK_NULL_HANDLE;
+
+    // P4-PROBE (temporary): dedicated diagnostic destination image. melonDS blits the filter
+    // output into an intermediate image (atlasOutput) and only later presents it; diagDstImage is
+    // that dedicated destination for the P4 probe (never the swapchain). Reused by Task 6 (atlas).
+    VkImage         diagDstImage = VK_NULL_HANDLE;
+    VkDeviceMemory  diagDstMem = VK_NULL_HANDLE;
+    VkImageView     diagDstView = VK_NULL_HANDLE;
+    VkBuffer        diagReadbackBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory  diagReadbackMem = VK_NULL_HANDLE;
     uint64_t         libraFrameCount = 0;
 
     VkPipeline      blitPipeline = VK_NULL_HANDLE;
@@ -446,6 +460,9 @@ private:
     void blitProcessedToSwapchain(VkCommandBuffer cb, uint32_t imgIdx);
     void blitImageToSwapchain(VkCommandBuffer cb, uint32_t imgIdx, VkImageView srcView, VkSampler srcSampler);
     void blitImageToSwapchainLayout(VkCommandBuffer cb, uint32_t imgIdx, VkImageView srcView, VkSampler srcSampler, VkImageLayout imageLayout);
+    // P4-PROBE (temporary): blit processedImage -> dedicated diagDstImage with the melonDS wide
+    // transfer barrier, read back diagDstImage (READBACK-D), leave both images in presentable state.
+    void blitProcessedToDedicated(VkCommandBuffer cb);
 
     void readbackProcessedInFrame(VkCommandBuffer cb);
     void readbackProcessedP1();

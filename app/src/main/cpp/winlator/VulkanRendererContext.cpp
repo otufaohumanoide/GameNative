@@ -28,6 +28,21 @@ static bool gLibraProbeGeneralPresent = []() {
     return true;
 }();
 
+// P4-PROBE (temporary diagnostic, off by default): blits processedImage into a DEDICATED
+// diagDstImage using the melonDS transfer-wide barrier recipe (srcAccess =
+// MEMORY_WRITE|TRANSFER_WRITE|COLOR_ATTACHMENT_WRITE, srcStage = ALL_COMMANDS — melonDS
+// VulkanSurfacePresenter.cpp:2258/2270). This tests the TRANSFER path (3.8 tested the SAMPLER
+// path; this is a different parameter combination), and blits to a dedicated image — never the
+// swapchain. Enable with env GAMENATIVE_LIBRA_PROBE_TRANSFER_WIDE=1.
+// REVERT this probe after measuring on-device. transferBarrierWide/diagDstImage are reused by
+// the Task 6 atlas fix.
+static bool gLibraProbeTransferWide = []() {
+    const char* v = getenv("GAMENATIVE_LIBRA_PROBE_TRANSFER_WIDE");
+    if (!v || v[0] == '\0') return false;
+    if (v[0] == '0' || strcmp(v, "false") == 0) return false;
+    return true;
+}();
+
 VulkanRendererContext::VulkanRendererContext(ANativeWindow* win, int cW, int cH, void* aHandle)
     : window(win), surfaceWidth(cW), surfaceHeight(cH), containerWidth(cW), containerHeight(cH),
       adrenotoolsHandle(aHandle)
@@ -542,6 +557,20 @@ void VulkanRendererContext::transition(VkCommandBuffer cb, VkImage img,
     b.oldLayout=ol; b.newLayout=nl; b.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
     b.image=img; b.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1}; b.srcAccessMask=sa; b.dstAccessMask=da;
     vk_.CmdPipelineBarrier(cb,ss,ds,0,0,nullptr,0,nullptr,1,&b);
+}
+
+// melonDS transfer-wide barrier (VulkanSurfacePresenter.cpp:2258/2270): fixed wide srcAccess and
+// srcStage=ALL_COMMANDS. Used by the P4 probe and by the Task 6 atlas fix.
+void VulkanRendererContext::transferBarrierWide(VkCommandBuffer cb, VkImage img,
+    VkImageLayout oldLayout, VkImageLayout newLayout, VkAccessFlags dstAccess, VkPipelineStageFlags dstStage)
+{
+    VkImageMemoryBarrier b{}; b.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.oldLayout=oldLayout; b.newLayout=newLayout;
+    b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    b.image=img; b.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    b.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT|VK_ACCESS_TRANSFER_WRITE_BIT|VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    b.dstAccessMask=dstAccess;
+    vk_.CmdPipelineBarrier(cb,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,dstStage,0,0,nullptr,0,nullptr,1,&b);
 }
 
 bool VulkanRendererContext::createWinTexResources(WinTex& wt, int w, int h) {
@@ -1073,7 +1102,23 @@ ok=true;}catch(...){}
                     sLibraProbeLogged = true;
                 }
             }
-            if (gLibraProbeGeneralPresent) {
+            // P4-PROBE: temporary diagnostic (off by default, env GAMENATIVE_LIBRA_PROBE_TRANSFER_WIDE=1).
+            // Blits processedImage -> DEDICATED diagDstImage with the melonDS transfer-wide barrier
+            // (srcAccess = MEMORY_WRITE|TRANSFER_WRITE|COLOR_ATTACHMENT_WRITE, srcStage = ALL_COMMANDS),
+            // readbacks diagDstImage (READBACK-D), and presents diagDstImage sampled in GENERAL.
+            // The swapchain is only ever the present target via the sampler blit (imageUsage unchanged).
+            // Revert after on-device measurement; transferBarrierWide/diagDstImage stay for Task 6.
+            {
+                static bool sLibraProbeTransferLogged = false;
+                if (!sLibraProbeTransferLogged) {
+                    RLOG(gLibraProbeTransferWide ? "P4-PROBE TRANSFER-WIDE present" : "P4-PROBE TRANSFER-WIDE INACTIVE");
+                    sLibraProbeTransferLogged = true;
+                }
+            }
+            if (gLibraProbeTransferWide) {
+                blitProcessedToDedicated(filterCmdBuf);
+                blitImageToSwapchainLayout(filterCmdBuf, imgIdx, diagDstView, blitSampler, VK_IMAGE_LAYOUT_GENERAL);
+            } else if (gLibraProbeGeneralPresent) {
                 transition(filterCmdBuf, processedImage,
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
                     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
@@ -1148,6 +1193,15 @@ ok=true;}catch(...){}
             vk_.UnmapMemory(device,processedReadbackMem);
             RLOG("READBACK-P-INFRAME frame=%llu px=%08x",
                 (unsigned long long)libraFrameCount, px);
+        }
+    }
+    // P4-PROBE: read the dedicated diagDstImage readback (filled in-CB by blitProcessedToDedicated).
+    if (gLibraProbeTransferWide && diagReadbackBuffer != VK_NULL_HANDLE) {
+        void* rb = nullptr;
+        if (vk_.MapMemory(device,diagReadbackMem,0,4,0,&rb)==VK_SUCCESS && rb) {
+            uint32_t px = 0; memcpy(&px, rb, 4);
+            vk_.UnmapMemory(device,diagReadbackMem);
+            RLOG("READBACK-D px=%08x frame=%llu", px, (unsigned long long)libraFrameCount);
         }
     }
     VkSwapchainKHR scs[]={swapchain};
@@ -1586,11 +1640,45 @@ void VulkanRendererContext::createOffscreenTargets(int w, int h) {
         return;
     }
 
+    // P4-PROBE (temporary): dedicated diagnostic destination image (R8G8B8A8_UNORM, same dims as
+    // processedImage). melonDS blits the filter output into an intermediate atlas and only later
+    // presents it; this mirrors that pattern without ever touching the swapchain imageUsage.
+    // TRANSFER_SRC is required for the in-CB readback copy (vkCmdCopyImageToBuffer).
+    ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (vk_.CreateImage(device, &ii, nullptr, &diagDstImage) != VK_SUCCESS) {
+        RLOG_E("createOffscreenTargets: diagDstImage CreateImage failed");
+        destroyOffscreenTargets();
+        return;
+    }
+    vk_.GetImageMemoryRequirements(device, diagDstImage, &req);
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = findMemType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vk_.AllocateMemory(device, &ai, nullptr, &diagDstMem) != VK_SUCCESS) {
+        vk_.DestroyImage(device, diagDstImage, nullptr);
+        diagDstImage = VK_NULL_HANDLE;
+        destroyOffscreenTargets();
+        return;
+    }
+    vk_.BindImageMemory(device, diagDstImage, diagDstMem, 0);
+
+    vi.image = diagDstImage;
+    if (vk_.CreateImageView(device, &vi, nullptr, &diagDstView) != VK_SUCCESS) {
+        vk_.FreeMemory(device, diagDstMem, nullptr);
+        vk_.DestroyImage(device, diagDstImage, nullptr);
+        diagDstImage = VK_NULL_HANDLE;
+        diagDstMem = VK_NULL_HANDLE;
+        destroyOffscreenTargets();
+        return;
+    }
+
     try {
         VkDeviceSize rbSize = (VkDeviceSize)w * h * 4;
         createBuffer(rbSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             processedReadbackBuffer, processedReadbackMem);
+        createBuffer(rbSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            diagReadbackBuffer, diagReadbackMem);
     } catch (...) {
         RLOG_E("createOffscreenTargets: processedReadbackBuffer create failed");
     }
@@ -1603,6 +1691,11 @@ void VulkanRendererContext::destroyOffscreenTargets() {
     destroyBlitPipeline();
     if (processedReadbackBuffer != VK_NULL_HANDLE) { vk_.DestroyBuffer(device, processedReadbackBuffer, nullptr); processedReadbackBuffer = VK_NULL_HANDLE; }
     if (processedReadbackMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, processedReadbackMem, nullptr); processedReadbackMem = VK_NULL_HANDLE; }
+    if (diagReadbackBuffer != VK_NULL_HANDLE) { vk_.DestroyBuffer(device, diagReadbackBuffer, nullptr); diagReadbackBuffer = VK_NULL_HANDLE; }
+    if (diagReadbackMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, diagReadbackMem, nullptr); diagReadbackMem = VK_NULL_HANDLE; }
+    if (diagDstView != VK_NULL_HANDLE) { vk_.DestroyImageView(device, diagDstView, nullptr); diagDstView = VK_NULL_HANDLE; }
+    if (diagDstImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, diagDstImage, nullptr); diagDstImage = VK_NULL_HANDLE; }
+    if (diagDstMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, diagDstMem, nullptr); diagDstMem = VK_NULL_HANDLE; }
     if (processedView != VK_NULL_HANDLE) { vk_.DestroyImageView(device, processedView, nullptr); processedView = VK_NULL_HANDLE; }
     if (processedImage != VK_NULL_HANDLE) { vk_.DestroyImage(device, processedImage, nullptr); processedImage = VK_NULL_HANDLE; }
     if (processedMem != VK_NULL_HANDLE) { vk_.FreeMemory(device, processedMem, nullptr); processedMem = VK_NULL_HANDLE; }
@@ -1655,6 +1748,60 @@ void VulkanRendererContext::destroyBlitPipeline() {
 
 void VulkanRendererContext::blitProcessedToSwapchain(VkCommandBuffer cb, uint32_t imgIdx) {
     blitImageToSwapchain(cb, imgIdx, processedView, blitSampler);
+}
+
+// P4-PROBE (temporary): blit processedImage into the DEDICATED diagDstImage using the melonDS
+// transfer-wide barrier recipe (srcAccess = MEMORY_WRITE|TRANSFER_WRITE|COLOR_ATTACHMENT_WRITE,
+// srcStage = ALL_COMMANDS — VulkanSurfacePresenter.cpp:2258/2270), then copy diagDstImage to the
+// host-visible diagReadbackBuffer (READBACK-D, read after the frame's fence wait). The swapchain is
+// never a transfer target; it is only ever presented via the sampler blit. processedImage is left in
+// SHADER_READ_ONLY_OPTIMAL (same end state as the normal path) so readbackProcessedP1 stays valid;
+// diagDstImage is left in GENERAL for the present sampler blit.
+void VulkanRendererContext::blitProcessedToDedicated(VkCommandBuffer cb) {
+    if (processedImage == VK_NULL_HANDLE || diagDstImage == VK_NULL_HANDLE) return;
+    transferBarrierWide(cb, processedImage,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    transferBarrierWide(cb, diagDstImage,
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+    VkImageBlit blit{};
+    blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    blit.srcOffsets[0] = { 0, 0, 0 };
+    blit.srcOffsets[1] = { (int32_t)surfaceWidth, (int32_t)surfaceHeight, 1 };
+    blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    blit.dstOffsets[0] = { 0, 0, 0 };
+    blit.dstOffsets[1] = { (int32_t)surfaceWidth, (int32_t)surfaceHeight, 1 };
+    vk_.CmdBlitImage(cb, processedImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        diagDstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+
+    // leave diagDstImage in GENERAL for the present sampler blit (melonDS samples atlasOutput in GENERAL)
+    transferBarrierWide(cb, diagDstImage,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+        VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+    // readback diagDstImage -> dedicated host-visible buffer; logged as READBACK-D after the fence wait
+    if (diagReadbackBuffer != VK_NULL_HANDLE) {
+        transferBarrierWide(cb, diagDstImage,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        VkBufferImageCopy r{};
+        r.bufferOffset = 0; r.bufferRowLength = 0; r.bufferImageHeight = 0;
+        r.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        r.imageExtent = { (uint32_t)surfaceWidth, (uint32_t)surfaceHeight, 1 };
+        vk_.CmdCopyImageToBuffer(cb, diagDstImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            diagReadbackBuffer, 1, &r);
+        // restore diagDstImage to GENERAL for the present sampler blit
+        transferBarrierWide(cb, diagDstImage,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+            VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    }
+
+    // restore processedImage to SHADER_READ_ONLY_OPTIMAL (normal-path end state)
+    transferBarrierWide(cb, processedImage,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 }
 
 void VulkanRendererContext::readbackProcessedInFrame(VkCommandBuffer cb) {
