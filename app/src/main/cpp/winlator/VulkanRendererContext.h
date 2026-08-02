@@ -445,6 +445,7 @@ private:
 
     void blitProcessedToSwapchain(VkCommandBuffer cb, uint32_t imgIdx);
     void blitImageToSwapchain(VkCommandBuffer cb, uint32_t imgIdx, VkImageView srcView, VkSampler srcSampler);
+    void blitImageToSwapchainLayout(VkCommandBuffer cb, uint32_t imgIdx, VkImageView srcView, VkSampler srcSampler, VkImageLayout imageLayout);
 
     void readbackProcessedInFrame(VkCommandBuffer cb);
     void readbackProcessedP1();

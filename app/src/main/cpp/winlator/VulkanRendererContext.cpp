@@ -17,6 +17,17 @@ static bool gLibraTestBlitOffscreen = []() {
     return true;
 }();
 
+// P3-PROBE (temporary diagnostic, off by default): samples processedImage in GENERAL layout
+// instead of SHADER_READ_ONLY_OPTIMAL to test hypothesis B-H2 (GENERAL is the tolerated sample
+// layout on Adreno; melonDS samples 100% in GENERAL). Enable with env GAMENATIVE_LIBRA_PROBE_GENERAL=1.
+// REVERT this probe after measuring on-device. The blitImageToSwapchainLayout refactor is permanent.
+static bool gLibraProbeGeneralPresent = []() {
+    const char* v = getenv("GAMENATIVE_LIBRA_PROBE_GENERAL");
+    if (!v || v[0] == '\0') return false;
+    if (v[0] == '0' || strcmp(v, "false") == 0) return false;
+    return true;
+}();
+
 VulkanRendererContext::VulkanRendererContext(ANativeWindow* win, int cW, int cH, void* aHandle)
     : window(win), surfaceWidth(cW), surfaceHeight(cH), containerWidth(cW), containerHeight(cH),
       adrenotoolsHandle(aHandle)
@@ -1052,12 +1063,29 @@ ok=true;}catch(...){}
 
             readbackProcessedInFrame(filterCmdBuf);
 
-            transition(filterCmdBuf, processedImage,
-                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-
-            blitProcessedToSwapchain(filterCmdBuf, imgIdx);
+            // P3-PROBE: temporary diagnostic (off by default, env GAMENATIVE_LIBRA_PROBE_GENERAL=1).
+            // Samples processedImage in GENERAL instead of SHADER_READ_ONLY_OPTIMAL to test B-H2.
+            // Revert after on-device measurement; blitImageToSwapchainLayout stays.
+            {
+                static bool sLibraProbeLogged = false;
+                if (!sLibraProbeLogged) {
+                    RLOG(gLibraProbeGeneralPresent ? "P3-PROBE GENERAL present" : "P3-PROBE INACTIVE");
+                    sLibraProbeLogged = true;
+                }
+            }
+            if (gLibraProbeGeneralPresent) {
+                transition(filterCmdBuf, processedImage,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                blitImageToSwapchainLayout(filterCmdBuf, imgIdx, processedView, blitSampler, VK_IMAGE_LAYOUT_GENERAL);
+            } else {
+                transition(filterCmdBuf, processedImage,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                blitProcessedToSwapchain(filterCmdBuf, imgIdx);
+            }
         }
 
         if (effectiveCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
@@ -1688,6 +1716,12 @@ void VulkanRendererContext::readbackProcessedP1() {
 
 void VulkanRendererContext::blitImageToSwapchain(VkCommandBuffer cb, uint32_t imgIdx,
                                                  VkImageView srcView, VkSampler srcSampler) {
+    blitImageToSwapchainLayout(cb, imgIdx, srcView, srcSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+void VulkanRendererContext::blitImageToSwapchainLayout(VkCommandBuffer cb, uint32_t imgIdx,
+    VkImageView srcView, VkSampler srcSampler, VkImageLayout imageLayout)
+{
     VkRenderPassBeginInfo rpi{};
     rpi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rpi.renderPass = renderPass;
@@ -1704,7 +1738,7 @@ void VulkanRendererContext::blitImageToSwapchain(VkCommandBuffer cb, uint32_t im
     vk_.CmdSetScissor(cb, 0, 1, &sc);
 
     VkDescriptorImageInfo dii{};
-    dii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    dii.imageLayout = imageLayout;
     dii.imageView = srcView;
     dii.sampler = srcSampler;
     VkWriteDescriptorSet wr{};
