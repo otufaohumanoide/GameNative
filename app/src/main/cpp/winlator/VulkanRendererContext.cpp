@@ -1043,6 +1043,41 @@ ok=true;}catch(...){}
     float ox,oy,sx,sy,cw,ch;
     short ptrX,ptrY,curHotX,curHotY,curW,curH; bool curVis;
     VkBuffer curUpload=VK_NULL_HANDLE; bool hasCurUpload=false;
+    // Preset requests (JNI deferred loads + the debug.gamenative.preset test hook) are applied
+    // HERE on the render thread, BEFORE the libraPath check: the FIRST load must run while
+    // libraShaderActive is still false (processing inside `if (libraPath)` deadlocked forever).
+    // Running reloads on the render thread also prevents UI-thread queue races (driver crash).
+    {
+        std::string presetToLoad;
+        {
+            std::lock_guard<std::mutex> lk(presetReqMtx);
+            if (hasPendingPreset) { presetToLoad = pendingPresetPath; hasPendingPreset = false; }
+        }
+        static std::string sLastPresetOverride;
+        char pbuf[512] = {0};
+        if (__system_property_get("debug.gamenative.preset", pbuf) > 0 && pbuf[0] != '\0') {
+            if (sLastPresetOverride != pbuf) {
+                sLastPresetOverride = pbuf;
+                presetToLoad = pbuf;
+                RLOG("librashader: runtime preset override -> %s", pbuf);
+            }
+        } else if (!sLastPresetOverride.empty()) {
+            sLastPresetOverride.clear();
+        }
+        if (!presetToLoad.empty()) {
+            RLOG("librashader: loading preset: %s", presetToLoad.c_str());
+            libraShaderPresetPath = presetToLoad;
+            if (libraShader.isLoaded()) {
+                libraShader.init(instance, physicalDevice, device, graphicsQueue, gipa);
+            }
+            libraShader.reloadPreset(presetToLoad);
+            libraShaderActive.store(libraShader.isActive());
+            RLOG("librashader: preset chain active=%d", (int)libraShader.isActive());
+            if (!libraShader.isActive()) RLOG_E("librashader: filter chain create failed: %s", libraShader.getLastError().c_str());
+            libraNeedsHistoryClear = true;
+        }
+    }
+
     bool libraPath = libraShaderActive.load() && libraShaderEnabled.load();
     VkCommandBuffer presentCB = VK_NULL_HANDLE;
     bool cursorDrawnInPass = false;
@@ -1727,19 +1762,18 @@ void VulkanRendererContext::initLibrashader() {
 }
 
 void VulkanRendererContext::loadLibrashaderPreset(const std::string& path) {
-    RLOG("librashader: loading preset: %s", path.c_str());
-    libraShaderPresetPath = path;
-    if (libraShader.isLoaded()) {
-        libraShader.init(instance, physicalDevice, device, graphicsQueue, gipa);
-    }
-    // I2: serialize against recordFilterChainPass (render thread). reloadPreset frees and recreates the
-    // chain, whose resources may be referenced by an in-flight submitted CB; the same filterSubmitMtx
-    // held across recordFilterChainPass's submit+wait prevents that. Called from the UI/JNI thread.
-    { std::lock_guard<std::mutex> submitLk(filterSubmitMtx); libraShader.reloadPreset(path); }
-    libraShaderActive.store(libraShader.isActive());
-    RLOG("librashader: preset chain active=%d", (int)libraShader.isActive());
-    if (!libraShader.isActive()) RLOG_E("librashader: filter chain create failed: %s", libraShader.getLastError().c_str());
-    { std::lock_guard<std::mutex> lk(renderMutex); libraNeedsHistoryClear = true; }
+    // Deferred: reloadPreset() runs queue work (filter chain create does submits/waitIdle) and must
+    // not race with the render thread's in-flight frame recording — a UI-thread reload while the
+    // render thread was recording crashed the Adreno driver in vkEndCommandBuffer. The render
+    // thread applies the request at the top of the next libra frame.
+    requestLibrashaderPreset(path);
+}
+
+void VulkanRendererContext::requestLibrashaderPreset(const std::string& path) {
+    std::lock_guard<std::mutex> lk(presetReqMtx);
+    pendingPresetPath = path;
+    hasPendingPreset = true;
+    RLOG("librashader: preset load requested (deferred to render thread): %s", path.c_str());
 }
 
 void VulkanRendererContext::setLibrashaderParam(const std::string& name, float value) {

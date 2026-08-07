@@ -280,7 +280,9 @@ Java_com_winlator_renderer_VulkanRenderer_nativeLoadLibrashaderPreset(JNIEnv* en
     if (!path) return JNI_FALSE;
     r->loadLibrashaderPreset(std::string(path));
     env->ReleaseStringUTFChars(presetPath, path);
-    return r->isLibrashaderActive() ? JNI_TRUE : JNI_FALSE;
+    // Deferred: the chain loads on the render thread; report the request as accepted so the
+    // Java flow proceeds to set params + enable (the render thread logs real failures).
+    return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT void JNICALL

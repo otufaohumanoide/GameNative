@@ -187,6 +187,12 @@ public:
 
     void initLibrashader();
     void loadLibrashaderPreset(const std::string& presetPath);
+    // Deferred preset load: stores the request; the RENDER thread applies it (reloadPreset does
+    // queue work that must not race with in-flight frame recording on the render thread).
+    void requestLibrashaderPreset(const std::string& presetPath);
+    std::mutex presetReqMtx;
+    std::string pendingPresetPath;
+    bool hasPendingPreset = false;
     void setLibrashaderParam(const std::string& name, float value);
     void enableLibrashader(bool enabled);
     bool isLibrashaderLoaded() const { return libraShader.isLoaded(); }
