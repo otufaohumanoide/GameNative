@@ -108,6 +108,7 @@ import app.gamenative.service.gog.GOGService
 import app.gamenative.ui.component.dialog.loadShaderConfig
 import app.gamenative.ui.component.QuickMenu
 import app.gamenative.ui.component.QuickMenuAction
+import app.gamenative.ui.component.SteamInviteState
 import app.gamenative.ui.component.parseBooleanExtra
 import app.gamenative.utils.BionicFgManager
 import app.gamenative.ui.component.parsePositiveFpsLimit
@@ -2645,10 +2646,14 @@ fun XServerScreen(
             onLsfgMultiplierChanged = ::applyLsfgMultiplier,
             onLsfgFlowScaleChanged = ::applyLsfgFlowScale,
             onLsfgPerformanceModeChanged = ::applyLsfgPerformanceMode,
+            onRequestOpen = { showQuickMenu = true },
             onAnimationComplete = { isMenuVisible ->
                 if (isMenuVisible) {
-                    pauseForOverlayIfAllowed()
+                    // An invite dialog the game asked for must not suspend it -- the game has to
+                    // keep running to receive the peer that's joining.
+                    if (!SteamInviteState.openedForGameRequest) pauseForOverlayIfAllowed()
                 } else {
+                    SteamInviteState.openedForGameRequest = false
                     if (shouldForceResumeOnMenuClose) {
                         forceResumeIfSuspended()
                         shouldForceResumeOnMenuClose = false
@@ -3687,6 +3692,16 @@ private fun setupXEnvironment(
         envVars.remove("DXVK_FRAME_RATE")
         envVars.remove("VKD3D_FRAME_RATE")
         if (!envVars.has("WINEESYNC")) envVars.put("WINEESYNC", "1")
+
+        val ffpGameDir = runCatching {
+            Container.drivesIterator(container.drives).asSequence()
+                .firstOrNull { it[0] == "A" }?.let { File(it[1]).canonicalFile.path }
+        }.getOrNull() ?: ""
+        if (ffpGameDir.startsWith("/storage/")) {
+            envVars.put("FFP_ENABLE", "1")
+            envVars.put("FFP_MARKERS", "/steamapps/common/;/dosdevices/a:")
+        }
+
         val graphicsDriverConfig = KeyValueSet(container.getGraphicsDriverConfig())
         if (graphicsDriverConfig.get("version").lowercase(Locale.getDefault()).contains("gen8")) {
             var tuDebug = envVars.get("TU_DEBUG")

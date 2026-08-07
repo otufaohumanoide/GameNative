@@ -2010,6 +2010,10 @@
     <string name="featured_badge">Gesponsert</string>
     <string name="featured_action_wishlist">Wunschliste</string>
     <string name="featured_action_wishlist_on">Auf %1$s auf die Wunschliste</string>
+    <string name="featured_action_wishlisted">Auf der Wunschliste</string>
+    <string name="featured_action_get_demo">Demo holen</string>
+    <string name="featured_action_in_library">In der Bibliothek</string>
+    <string name="featured_action_failed">In der App nicht möglich – Store-Seite wird geöffnet</string>
     <string name="featured_action_preorder">Vorbestellen</string>
     <string name="featured_action_preorder_on">Auf %1$s vorbestellen</string>
     <string name="featured_action_buy">Kaufen</string>
@@ -2107,4 +2111,14 @@
     <string name="bfg_model_desc">Clear ist schärfer, aber aufwendiger</string>
     <string name="bfg_model_standard">Standard</string>
     <string name="bfg_model_clear">Clear</string>
+    <string name="steam_invite_tab_title">Einladen</string>
+    <string name="steam_invite_header">%1$d Freunde</string>
+    <string name="steam_invite_joinable">In diesem Spiel — zum Beitreten tippen</string>
+    <string name="steam_invite_unavailable">Steam-Client nicht bereit</string>
+    <string name="steam_invite_failed">Einladung fehlgeschlagen — dein Spiel ist in keiner beitretbaren Sitzung</string>
+    <string name="steam_join_failed">Beitritt nicht möglich — die Sitzung wurde möglicherweise geschlossen</string>
+    <string name="steam_invite_sent">Einladung gesendet</string>
+    <string name="steam_invite_joined">In deinem Spiel</string>
+    <string name="steam_invite_online">Online</string>
+    <string name="steam_invite_offline">Offline</string>
 </resources>
