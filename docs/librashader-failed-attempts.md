@@ -276,3 +276,31 @@ shaders) actually present on screen`.
 - A lição principal: **os docs antigos (seções 1-8) foram enganados por um deadlock**: o
   `EndCommandBuffer` duplo / CB não finalizado fazia o render loop travar e a tela congelar
   preta — os "sampler failures" atribuídos a layout/GENERAL eram artefatos do deadlock.
+
+---
+
+## 10. Shaders libretro + loop de teste automatizado (2026-08-07)
+
+**Resultado:** 131 presets do https://github.com/libretro/slang-shaders embarcados no APK
+(assets/retroarch), substituindo os 5 originais. Default: `film/technicolor` (transformação de
+cor forte; verificado no device: média da tela sobe de ~34/23/23 (baseline) para ~64/56/54 com
+103/128 amostras com conteúdo). 16 de 17 presets amostrados compilam e renderizam no Mi 11
+(apenas `misc/glass` falha ao compilar).
+
+### Infraestrutura de teste (cibernética / caixa-preta)
+
+- **Atuador:** `adb shell setprop debug.gamenative.preset <abs/path.slangp>` → a chain do
+  librashader recarrega em runtime na render thread (sem reiniciar o jogo; ~6s por shader).
+- **Sensores:** `screencap` + estatísticas de pixels (numpy), logcat (`preset chain active`,
+  `filter chain create failed`, `READBACK-OFF`), liveness (`pidof`, contagem de frames).
+- **Controlador:** `tools/shader-test-loop/shader_test_loop.py` — itera a lista de presets,
+  classifica (BRIGHT/VISIBLE/BLACK/CHAIN_FAIL/CRASH) e grava CSV.
+- **Controle positivo:** `misc/invert` (negativo — tela claramente brilhante quando ativo).
+
+### Fix adicional: deferred preset reload
+
+O reload da chain feito pela thread da UI (chain create faz submit/waitIdle na queue) corria
+contra a gravação de frames da render thread → SIGSEGV no driver (vkEndCommandBuffer). Todos os
+reloads agora são aplicados na render thread (pedidos JNI viram pendência + hook de runtime),
+o que também eliminou o deadlock do primeiro load (o processamento estava dentro de
+`if (libraPath)`, mas o primeiro load precisa rodar com active=false).
