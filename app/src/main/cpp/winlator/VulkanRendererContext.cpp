@@ -7,8 +7,36 @@
 #include <algorithm>
 #include <inttypes.h>
 #include <dlfcn.h>
+#include <sys/system_properties.h>
 #include "window_vert.h"
 #include "window_frag.h"
+
+// Runtime-toggleable diagnostic: instead of only reading the env var at startup, also check the
+// debug.gamenative.libradiag system property on EVERY call, so adb can switch presentation modes
+// live (no app restart / rebuild):
+//   0/absent -> normal librashader atlas path
+//   1        -> READBACK-OFF grid diagnostics (already on by default)
+//   2        -> TEST MODE A: recordCmdBuf (game AHB -> swapchain) into filterCmdBuf. Proves the
+//               swapchain present path works (game visible).
+//   4        -> TEST MODE B: blit offscreenImage (the filter INPUT, in CAO after the compositor)
+//               to the swapchain via an explicit CAO->SRO transition. Proves the offscreen
+//               sampler read works after the 3.5 layout fix.
+//   5        -> TEST MODE C: present filterOutputImage (applyFrame OUTPUT, in CAO) directly to
+//               the swapchain via explicit CAO->SRO. Proves the filter output can be presented
+//               without the atlas.
+static int libraDiagMode() {
+    char buf[8] = {0};
+    if (__system_property_get("debug.gamenative.libradiag", buf) > 0) {
+        return atoi(buf);
+    }
+    const char* v = getenv("GAMENATIVE_LIBRA_TEST_BLIT");
+    if (v && v[0] != '\0' && v[0] != '0') return 2;
+    return 0;
+}
+static bool libraDiagTestBlit() {
+    int m = libraDiagMode();
+    return m == 2 || m == 4 || m == 5;
+}
 
 static bool gLibraTestBlitOffscreen = []() {
     const char* v = getenv("GAMENATIVE_LIBRA_TEST_BLIT");
@@ -49,7 +77,8 @@ VulkanRendererContext::VulkanRendererContext(ANativeWindow* win, int cW, int cH,
 {
     createInstance(); createSurface(); pickPhysicalDevice(); createLogicalDevice();
     createSwapchain(); createRenderPass(); createOffscreenRenderPass(); createDSLayout();
-    createPipeline(true, pipeline);
+    createPipeline(true, pipeline, renderPass);
+    createPipeline(true, offscreenPipeline, offscreenRenderPass);
     libraShader.loadLibrary();
     createFramebuffers(); createCmdPool();
     {
@@ -59,8 +88,10 @@ VulkanRendererContext::VulkanRendererContext(ANativeWindow* win, int cW, int cH,
         if (vk_.CreateCommandPool(device,&cpci,nullptr,&filterCmdPool)!=VK_SUCCESS ||
             vk_.CreateFence(device,&fi,nullptr,&filterFence)!=VK_SUCCESS) throw std::runtime_error("filter sync");
         VkCommandBufferAllocateInfo ai{}; ai.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        ai.commandPool=filterCmdPool; ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount=1;
-        if (vk_.AllocateCommandBuffers(device,&ai,&filterCmdBuf)!=VK_SUCCESS) throw std::runtime_error("filter cmdbuf");
+        ai.commandPool=filterCmdPool; ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount=2;
+        VkCommandBuffer cbs[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+        if (vk_.AllocateCommandBuffers(device,&ai,cbs)!=VK_SUCCESS) throw std::runtime_error("filter cmdbuf");
+        filterCmdBuf = cbs[0]; presentCmdBuf = cbs[1];
     }
     createSampler();
     createWinTexPool(); createCursorDS(); createCmdBufs(); createSyncObjects();
@@ -93,6 +124,7 @@ VulkanRendererContext::~VulkanRendererContext() {
     vk_.DestroySampler(device, sampler, nullptr);
     vk_.DestroyDescriptorPool(device, winTexPool, nullptr);
     vk_.DestroyPipeline(device, pipeline, nullptr);
+    vk_.DestroyPipeline(device, offscreenPipeline, nullptr);
     vk_.DestroyPipelineLayout(device, pipeLayout, nullptr);
     vk_.DestroyDescriptorSetLayout(device, dsLayout, nullptr);
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -100,7 +132,11 @@ VulkanRendererContext::~VulkanRendererContext() {
         vk_.DestroySemaphore(device, imgAvailSems[i], nullptr);
         vk_.DestroyFence(device, inFlightFences[i], nullptr);
     }
-    if (filterCmdBuf != VK_NULL_HANDLE) { vk_.FreeCommandBuffers(device, filterCmdPool, 1, &filterCmdBuf); filterCmdBuf = VK_NULL_HANDLE; }
+    if (filterCmdBuf != VK_NULL_HANDLE) {
+        VkCommandBuffer cbs[2] = {filterCmdBuf, presentCmdBuf};
+        vk_.FreeCommandBuffers(device, filterCmdPool, 2, cbs);
+        filterCmdBuf = VK_NULL_HANDLE; presentCmdBuf = VK_NULL_HANDLE;
+    }
     if (filterCmdPool != VK_NULL_HANDLE) { vk_.DestroyCommandPool(device, filterCmdPool, nullptr); filterCmdPool = VK_NULL_HANDLE; }
     if (filterFence != VK_NULL_HANDLE) { vk_.DestroyFence(device, filterFence, nullptr); filterFence = VK_NULL_HANDLE; }
     vk_.DestroyCommandPool(device, cmdPool, nullptr);
@@ -379,7 +415,12 @@ void VulkanRendererContext::createOffscreenRenderPass() {
     VkAttachmentDescription att{}; att.format=swapchainFmt; att.samples=VK_SAMPLE_COUNT_1_BIT;
     att.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR; att.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
     att.stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE; att.stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    att.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED; att.finalLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    // 3.5 fix (was lost when the WIP blob was restored): keep the offscreen attachment in
+    // COLOR_ATTACHMENT_OPTIMAL after the render pass and let the CALLER do the explicit
+    // CAO->SHADER_READ_ONLY_OPTIMAL transition before each sampler read. The automatic
+    // finalLayout transition to SRO left the image unreadable by the sampler on Adreno
+    // (transfer reads worked, sampler blits returned black).
+    att.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED; att.finalLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     VkAttachmentReference ref{0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkSubpassDescription sub{}; sub.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS;
     sub.colorAttachmentCount=1; sub.pColorAttachments=&ref;
@@ -409,7 +450,7 @@ VkShaderModule VulkanRendererContext::makeShader(const uint32_t* code, size_t sz
     return m;
 }
 
-void VulkanRendererContext::createPipeline(bool blend, VkPipeline& out) {
+void VulkanRendererContext::createPipeline(bool blend, VkPipeline& out, VkRenderPass rp) {
     if (pipeLayout==VK_NULL_HANDLE) {
         VkPushConstantRange pc{}; pc.stageFlags=VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT;
         pc.size=sizeof(WindowPushConstants);
@@ -435,7 +476,7 @@ void VulkanRendererContext::createPipeline(bool blend, VkPipeline& out) {
     VkGraphicsPipelineCreateInfo pi{}; pi.sType=VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pi.stageCount=2; pi.pStages=stages; pi.pVertexInputState=&vi; pi.pInputAssemblyState=&ia;
     pi.pViewportState=&vp; pi.pRasterizationState=&rast; pi.pMultisampleState=&ms;
-    pi.pColorBlendState=&cb; pi.pDynamicState=&ds; pi.layout=pipeLayout; pi.renderPass=renderPass; pi.subpass=0;
+    pi.pColorBlendState=&cb; pi.pDynamicState=&ds; pi.layout=pipeLayout; pi.renderPass=rp; pi.subpass=0;
     if (vk_.CreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&pi,nullptr,&out)!=VK_SUCCESS) throw std::runtime_error("pipeline");
     vk_.DestroyShaderModule(device,frag,nullptr); vk_.DestroyShaderModule(device,vert,nullptr);
 }
@@ -616,20 +657,26 @@ bool VulkanRendererContext::importAHBToWinTex(WinTex& wt, AHardwareBuffer* ahb) 
     AHardwareBuffer_Desc desc{};
     AHardwareBuffer_describe(ahb,&desc);
 
-    VkExternalFormatANDROID ef{};
-    ef.sType=VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID;
-    ef.externalFormat=swapRB ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_B8G8R8A8_UNORM;
+    // Use the driver-reported Vulkan format for this AHB when available (e.g. BGRA_8888 ->
+    // VK_FORMAT_B8G8R8A8_UNORM). Only when the format is opaque (VK_FORMAT_UNDEFINED) do we
+    // need VkExternalFormatANDROID + VK_FORMAT_UNDEFINED; the previous code passed a VkFormat
+    // enum value as the "external format" together with a real format, which is invalid usage
+    // and made the Adreno driver sample the imported image as black (0,0,0,0).
+    VkFormat ahbFmt = fmtP.format;
+    if (ahbFmt == VK_FORMAT_UNDEFINED)
+        ahbFmt = swapRB ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_B8G8R8A8_UNORM;
+    RLOG("importAHBToWinTex: %dx%d desc.format=%u props.format=%d externalFormat=%llu swapRB=%d using=%d",
+        (int)desc.width, (int)desc.height, (unsigned)desc.format, (int)fmtP.format,
+        (unsigned long long)fmtP.externalFormat, (int)swapRB, (int)ahbFmt);
 
     VkExternalMemoryImageCreateInfo emi{};
     emi.sType=VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
     emi.handleTypes=VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
-    ef.pNext=const_cast<void*>(emi.pNext);
-    emi.pNext=&ef;
 
     VkImageCreateInfo ii{};
     ii.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ii.pNext=&emi; ii.imageType=VK_IMAGE_TYPE_2D;
-    ii.format=swapRB ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_B8G8R8A8_UNORM;
+    ii.format=ahbFmt;
     ii.extent={desc.width,desc.height,1};
     ii.mipLevels=1; ii.arrayLayers=1; ii.samples=VK_SAMPLE_COUNT_1_BIT;
     ii.tiling=VK_IMAGE_TILING_OPTIMAL; ii.usage=VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -656,14 +703,10 @@ bool VulkanRendererContext::importAHBToWinTex(WinTex& wt, AHardwareBuffer* ahb) 
     }
     vk_.BindImageMemory(device,wt.img,wt.mem,0);
 
-    VkExternalFormatANDROID vef{};
-    vef.sType=VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID;
-    vef.externalFormat=swapRB ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_B8G8R8A8_UNORM;
-
     VkImageViewCreateInfo vi{};
     vi.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vi.pNext=&vef; vi.image=wt.img; vi.viewType=VK_IMAGE_VIEW_TYPE_2D;
-    vi.format=swapRB ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_B8G8R8A8_UNORM;
+    vi.image=wt.img; vi.viewType=VK_IMAGE_VIEW_TYPE_2D;
+    vi.format=ahbFmt;
     vi.components={VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,
                    VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY};
     vi.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
@@ -683,6 +726,10 @@ bool VulkanRendererContext::importAHBToWinTex(WinTex& wt, AHardwareBuffer* ahb) 
     }
     if (dsRes!=VK_SUCCESS){ destroyWinTex(wt); return false; }
 
+    // Sampled in SHADER_READ_ONLY_OPTIMAL (verified working on Adreno: the compositor's
+    // swapchain path draws the same AHB fine in SRO). The driver-reported format above is
+    // what fixes the import (the old code passed a VkFormat enum value as the external
+    // format, which is invalid usage).
     VkDescriptorImageInfo dii{};
     dii.imageLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     dii.imageView=wt.view; dii.sampler=sampler;
@@ -997,6 +1044,8 @@ ok=true;}catch(...){}
     short ptrX,ptrY,curHotX,curHotY,curW,curH; bool curVis;
     VkBuffer curUpload=VK_NULL_HANDLE; bool hasCurUpload=false;
     bool libraPath = libraShaderActive.load() && libraShaderEnabled.load();
+    VkCommandBuffer presentCB = VK_NULL_HANDLE;
+    bool cursorDrawnInPass = false;
     bool clearHistoryThisFrame = false;
 
     {
@@ -1059,9 +1108,16 @@ ok=true;}catch(...){}
     bool effectiveCurVis = curVis && !scanoutActive.load();
 
     if (libraPath) {
+        presentCB = filterCmdBuf;  // default; the atlas path switches to presentCmdBuf
         if (offscreenImage == VK_NULL_HANDLE || offscreenView == VK_NULL_HANDLE) {
             createOffscreenTargets(surfaceWidth, surfaceHeight);
         }
+        // DIAG: log how many draws the compositor will record into offscreen.
+        // If 0, the native renderList was not repopulated after tearDownScanout.
+        static uint64_t sLibraDiagCount = 0;
+        if ((sLibraDiagCount++ & 0x3F) == 0)
+            RLOG("librashader: libraPath draws=%zu renderList=%zu scanoutActive=%d",
+                frameDraws.size(), renderList.size(), (int)scanoutActive.load());
 
         recordCompositorPass(cmdBufs[currentFrame], frameDraws,
             frameAhbTransitions, framePreUpload, framePostUpload,
@@ -1079,17 +1135,92 @@ ok=true;}catch(...){}
         }
         vk_.WaitForFences(device,1,&filterFence,VK_TRUE,UINT64_MAX);
 
+        // DIAG: confirm the filter's INPUT (offscreenImage) contains the game.
+        readbackOffscreenDiag();
+        {
+            void* rb = nullptr;
+            static uint64_t sReadbackOffLog = 0;
+            const bool doLog = ((sReadbackOffLog++ & 0x3F) == 0);
+            if (vk_.MapMemory(device, processedReadbackMem, 0, 26 * 4, 0, &rb) == VK_SUCCESS && rb) {
+                uint32_t grid[25];
+                memcpy(grid, rb, 25 * 4);
+                uint32_t center = 0; memcpy(&center, (char*)rb + 25 * 4, 4);
+                vk_.UnmapMemory(device, processedReadbackMem);
+                if (doLog) {
+                    RLOG("READBACK-OFF-GRID frame=%llu", (unsigned long long)libraFrameCount);
+                    for (int r = 0; r < 5; ++r) {
+                        RLOG("  row%d: %08x %08x %08x %08x %08x", r,
+                            grid[r*5+0], grid[r*5+1], grid[r*5+2], grid[r*5+3], grid[r*5+4]);
+                    }
+                }
+                RLOG("READBACK-OFF frame=%llu center=%08x tl=%08x mid=%08x bl=%08x",
+                    (unsigned long long)libraFrameCount, center,
+                    grid[0], grid[12], grid[22]);
+            }
+        }
+
         vk_.ResetCommandBuffer(filterCmdBuf,0);
 
-        if (gLibraTestBlitOffscreen) {
-            RLOG("librashader: TEST MODE blitting offscreen directly");
-            VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
-            blitImageToSwapchain(filterCmdBuf, imgIdx, offscreenView, blitSampler);
+        if (libraDiagTestBlit()) {
+            int dm = libraDiagMode();
+            if (dm == 4) {
+                // TEST MODE B: blit offscreen (filter INPUT, CAO after compositor) -> swapchain.
+                RLOG("librashader: TEST MODE B offscreen->swapchain (CAO->SRO explicit)");
+                VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
+                // melonDS-wide barrier (srcAccess=MEMORY_WRITE|TRANSFER_WRITE|COLOR_ATTACHMENT_WRITE,
+                // srcStage=ALL_COMMANDS) — the narrow COLOR_ATTACHMENT_OUTPUT transition may not
+                // resolve GMEM->memory on Adreno for the sampler path.
+                transferBarrierWide(filterCmdBuf, offscreenImage,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                blitImageToSwapchain(filterCmdBuf, imgIdx, offscreenView, sampler);
+                if (vk_.EndCommandBuffer(filterCmdBuf)!=VK_SUCCESS) throw std::runtime_error("end filter cb");
+            } else if (dm == 5) {
+                // TEST MODE C: present filterOutputImage (applyFrame OUTPUT, CAO) directly.
+                // Runs applyFrame into filterOutputImage, then CAO->SRO + blit to the swapchain.
+                RLOG("librashader: TEST MODE C filterOutput->swapchain (no atlas)");
+                VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
+                transferBarrierWide(filterCmdBuf, filterOutputImage,
+                    filterOutputLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+                filterOutputLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                transferBarrierWide(filterCmdBuf, offscreenImage,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                bool ok = libraShader.applyFrame(filterCmdBuf, libraFrameCount++,
+                    offscreenImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+                    filterOutputImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+                    VkExtent2D{(uint32_t)surfaceWidth, (uint32_t)surfaceHeight}, clearHistoryThisFrame);
+                if (!ok) RLOG_E("librashader: applyFrame failed: %s", libraShader.getLastError().c_str());
+                transition(filterCmdBuf, filterOutputImage,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                blitImageToSwapchain(filterCmdBuf, imgIdx, filterOutputView, blitSampler);
+                // restore filterOutputImage to CAO so the tracked layout stays valid next frame
+                transferBarrierWide(filterCmdBuf, filterOutputImage,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+                if (vk_.EndCommandBuffer(filterCmdBuf)!=VK_SUCCESS) throw std::runtime_error("end filter cb");
+            } else {
+                // TEST MODE A: record EXACTLY what the proven-working brightness path records
+                // (recordCmdBuf: AHB -> swapchain), but into filterCmdBuf.
+                RLOG("librashader: TEST MODE A recordCmdBuf into filterCmdBuf (draws=%zu)", frameDraws.size());
+                recordCmdBuf(filterCmdBuf, imgIdx, frameDraws,
+                    frameAhbTransitions, framePreUpload, framePostUpload,
+                    curUpload, hasCurUpload,
+                    ox, oy, sx, sy, cw, ch, ptrX, ptrY, curHotX, curHotY, curW, curH, effectiveCurVis);
+            }
         } else if (gLibraProbeGeneralPresent || gLibraProbeTransferWide) {
             // P3/P4-PROBE paths (unchanged intent): applyFrame -> processedImage, present in GENERAL.
             VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
+            // 3.5: explicit CAO->SRO for the librashader input (see recordFilterChainPass).
+            transferBarrierWide(filterCmdBuf, offscreenImage,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
             bool libraOk = libraShader.applyFrame(filterCmdBuf, libraFrameCount++,
                 offscreenImage, VK_FORMAT_R8G8B8A8_UNORM,
                 (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
@@ -1135,31 +1266,104 @@ ok=true;}catch(...){}
                 blitImageToSwapchainLayout(filterCmdBuf, imgIdx, processedView, blitSampler, VK_IMAGE_LAYOUT_GENERAL);
             }
         } else {
-            // DEFAULT path (Task 6): melonDS atlas topology. applyFrame writes filterOutputImage, the
-            // copy engine moves it to the DEDICATED atlasImage in the SAME CB, submit-and-wait
-            // (recordFilterChainPass begins/ends/submits filterCmdBuf). Then re-begin the SAME CB for
-            // the atlas present (sampled in GENERAL) + the in-frame P2 readback of filterOutputImage;
-            // the existing final submit+present below drives the swapchain (single submit, Option A).
-            recordFilterChainPass(filterCmdBuf, libraFrameCount++, clearHistoryThisFrame);
+            // DEFAULT path: EXACTLY the TEST MODE C structure that provably presents the filter
+            // output on screen (applyFrame + present blit in the SAME command buffer, narrow
+            // CAO->SRO transition, NEAREST blit sampler, no in-CB readback).
             VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb present");
-            presentAtlasToSwapchain(filterCmdBuf, imgIdx);
-            // C1: recordFilterChainPass left filterOutputImage in COLOR_ATTACHMENT_OPTIMAL (restored
-            // after the copy); readbackProcessedInFrame transitions CAO->TSRC, copies, and restores CAO
-            // so the next frame's applyFrame starts from a valid layout.
-            readbackProcessedInFrame(filterCmdBuf, filterOutputImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
+            transferBarrierWide(filterCmdBuf, filterOutputImage,
+                filterOutputLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            filterOutputLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            transferBarrierWide(filterCmdBuf, offscreenImage,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            bool ok = libraShader.applyFrame(filterCmdBuf, libraFrameCount++,
+                offscreenImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+                filterOutputImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+                VkExtent2D{(uint32_t)surfaceWidth, (uint32_t)surfaceHeight}, clearHistoryThisFrame);
+            if (!ok) RLOG_E("librashader: applyFrame failed: %s", libraShader.getLastError().c_str());
+            // narrow CAO->SRO (same as TEST MODE C)
+            transition(filterCmdBuf, filterOutputImage,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            // Present the filter output + draw the cursor INSIDE the same render pass. The old
+            // separate cursor pass used the CLEAR-load swapchain render pass, which wiped the
+            // presented frame to black whenever the cursor was visible.
+            {
+                VkRenderPassBeginInfo rpi{};
+                rpi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                rpi.renderPass = renderPass;
+                rpi.framebuffer = swapchainFBs[imgIdx];
+                rpi.renderArea = {{0, 0}, swapchainExt};
+                VkClearValue clr = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+                rpi.clearValueCount = 1; rpi.pClearValues = &clr;
+                vk_.CmdBeginRenderPass(filterCmdBuf, &rpi, VK_SUBPASS_CONTENTS_INLINE);
+                VkViewport vp{0, 0, (float)swapchainExt.width, (float)swapchainExt.height, 0, 1};
+                vk_.CmdSetViewport(filterCmdBuf, 0, 1, &vp);
+                VkRect2D sc{{0, 0}, swapchainExt};
+                vk_.CmdSetScissor(filterCmdBuf, 0, 1, &sc);
+                VkDescriptorImageInfo dii{};
+                dii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                dii.imageView = filterOutputView;
+                dii.sampler = blitSampler;
+                VkWriteDescriptorSet wr{};
+                wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                wr.dstSet = blitDS; wr.dstBinding = 0;
+                wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                wr.descriptorCount = 1; wr.pImageInfo = &dii;
+                vk_.UpdateDescriptorSets(device, 1, &wr, 0, nullptr);
+                vk_.CmdBindPipeline(filterCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                vk_.CmdBindDescriptorSets(filterCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    pipeLayout, 0, 1, &blitDS, 0, nullptr);
+                WindowPushConstants pc{};
+                pc.ndcX0 = -1.0f; pc.ndcY0 = -1.0f;
+                pc.ndcX1 =  1.0f; pc.ndcY1 =  1.0f;
+                pc.useTexAlpha = 0; pc.effectId = 0; pc.sharpness = 0.0f;
+                pc.resW = (float)swapchainExt.width; pc.resH = (float)swapchainExt.height;
+                pc.effectMask = 0; pc.brightness = 0.0f; pc.contrast = 0.0f; pc.gamma = 1.0f;
+                pc.outW = (float)swapchainExt.width; pc.outH = (float)swapchainExt.height;
+                vk_.CmdPushConstants(filterCmdBuf, pipeLayout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+                vk_.CmdDraw(filterCmdBuf, 4, 1, 0, 0);
+                // cursor inside the same pass (no clear)
+                if (effectiveCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
+                    vk_.CmdBindDescriptorSets(filterCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        pipeLayout, 0, 1, &cursorDS, 0, nullptr);
+                    float cx=(float)std::max(0,(int)ptrX-curHotX), cy=(float)std::max(0,(int)ptrY-curHotY);
+                    WindowPushConstants cpc{};
+                    cpc.ndcX0=(ox+cx*sx)/cw*2.f-1.f; cpc.ndcY0=(oy+cy*sy)/ch*2.f-1.f;
+                    cpc.ndcX1=(ox+(cx+curW)*sx)/cw*2.f-1.f; cpc.ndcY1=(oy+(cy+curH)*sy)/ch*2.f-1.f;
+                    cpc.useTexAlpha=1;
+                    cpc.effectId=0; cpc.sharpness=0.f;
+                    cpc.resW=(float)std::max(1,(int)curW); cpc.resH=(float)std::max(1,(int)curH);
+                    cpc.effectMask=0; cpc.brightness=0.f; cpc.contrast=0.f; cpc.gamma=1.f;
+                    cpc.outW=(float)std::max(1,(int)curW); cpc.outH=(float)std::max(1,(int)curH);
+                    vk_.CmdPushConstants(filterCmdBuf, pipeLayout,
+                        VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(cpc),&cpc);
+                    vk_.CmdDraw(filterCmdBuf,4,1,0,0);
+                }
+                vk_.CmdEndRenderPass(filterCmdBuf);
+            }
+            // restore filterOutputImage to CAO so the tracked layout stays valid next frame
+            transferBarrierWide(filterCmdBuf, filterOutputImage,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            presentCB = filterCmdBuf;
+            cursorDrawnInPass = true;
         }
 
-        if (effectiveCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
+        if (!cursorDrawnInPass && !libraDiagTestBlit() && effectiveCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
             VkViewport ovp{0,0,(float)swapchainExt.width,(float)swapchainExt.height,0,1};
             VkRect2D osc{{0,0},swapchainExt};
             VkRenderPassBeginInfo rpi2{}; rpi2.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             rpi2.renderPass=renderPass; rpi2.framebuffer=swapchainFBs[imgIdx];
             rpi2.renderArea={{0,0},swapchainExt}; rpi2.clearValueCount=0;
-            vk_.CmdBeginRenderPass(filterCmdBuf,&rpi2,VK_SUBPASS_CONTENTS_INLINE);
-            vk_.CmdSetViewport(filterCmdBuf,0,1,&ovp);
-            vk_.CmdSetScissor(filterCmdBuf,0,1,&osc);
-            vk_.CmdBindDescriptorSets(filterCmdBuf,VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vk_.CmdBeginRenderPass(presentCB,&rpi2,VK_SUBPASS_CONTENTS_INLINE);
+            vk_.CmdSetViewport(presentCB,0,1,&ovp);
+            vk_.CmdSetScissor(presentCB,0,1,&osc);
+            vk_.CmdBindDescriptorSets(presentCB,VK_PIPELINE_BIND_POINT_GRAPHICS,
                 pipeLayout,0,1,&cursorDS,0,nullptr);
             float cx=(float)std::max(0,(int)ptrX-curHotX), cy=(float)std::max(0,(int)ptrY-curHotY);
             WindowPushConstants cpc{};
@@ -1170,15 +1374,17 @@ ok=true;}catch(...){}
             cpc.resW=(float)std::max(1,(int)curW); cpc.resH=(float)std::max(1,(int)curH);
             cpc.effectMask=0; cpc.brightness=0.f; cpc.contrast=0.f; cpc.gamma=1.f;
             cpc.outW=(float)std::max(1,(int)curW); cpc.outH=(float)std::max(1,(int)curH);
-            vk_.CmdPushConstants(filterCmdBuf,pipeLayout,
+            vk_.CmdPushConstants(presentCB,pipeLayout,
                 VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(cpc),&cpc);
-            vk_.CmdDraw(filterCmdBuf,4,1,0,0);
-            vk_.CmdEndRenderPass(filterCmdBuf);
+            vk_.CmdDraw(presentCB,4,1,0,0);
+            vk_.CmdEndRenderPass(presentCB);
         }
 
-        if (vk_.EndCommandBuffer(filterCmdBuf)!=VK_SUCCESS) {
-            RLOG_E("renderFrame: filter EndCommandBuffer failed");
-            throw std::runtime_error("end filter cb");
+        // TEST MODE: recordCmdBuf / TEST B / TEST C already began+ended their CB; a second
+        // EndCommandBuffer crashes the Adreno driver (qglinternal::vkEndCommandBuffer null deref).
+        if (!libraDiagTestBlit() && vk_.EndCommandBuffer(presentCB)!=VK_SUCCESS) {
+            RLOG_E("renderFrame: present EndCommandBuffer failed");
+            throw std::runtime_error("end present cb");
         }
     } else {
         recordCmdBuf(cmdBufs[currentFrame], imgIdx, frameDraws,
@@ -1189,7 +1395,7 @@ ok=true;}catch(...){}
 
     VkSemaphore wSem[]={imgAvailSems[currentFrame]}, sSem[]={renderDoneSems[currentFrame]};
     VkPipelineStageFlags wStage[]={VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    VkCommandBuffer submitBuf = libraPath ? filterCmdBuf : cmdBufs[currentFrame];
+    VkCommandBuffer submitBuf = libraPath ? presentCB : cmdBufs[currentFrame];
     VkSubmitInfo si{}; si.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.waitSemaphoreCount=1; si.pWaitSemaphores=wSem; si.pWaitDstStageMask=wStage;
     si.commandBufferCount=1; si.pCommandBuffers=&submitBuf;
@@ -1202,16 +1408,9 @@ ok=true;}catch(...){}
         vk_.CreateFence(device,&fi,nullptr,&inFlightFences[currentFrame]);
         return;
     }
-    if (libraPath && !gLibraTestBlitOffscreen && processedReadbackBuffer != VK_NULL_HANDLE) {
-        vk_.WaitForFences(device,1,&inFlightFences[currentFrame],VK_TRUE,UINT64_MAX);
-        void* rb = nullptr;
-        if (vk_.MapMemory(device,processedReadbackMem,0,4,0,&rb)==VK_SUCCESS && rb) {
-            uint32_t px = 0; memcpy(&px, rb, 4);
-            vk_.UnmapMemory(device,processedReadbackMem);
-            RLOG("READBACK-P-INFRAME frame=%llu px=%08x",
-                (unsigned long long)libraFrameCount, px);
-        }
-    }
+    // (READBACK-P-INFRAME / READBACK-P diagnostics removed: the default path no longer
+    // writes the filter output into the readback buffer; READBACK-OFF grid remains.)
+
     // P4-PROBE: read the dedicated diagDstImage readback (filled in-CB by blitProcessedToDedicated).
     if (gLibraProbeTransferWide && diagReadbackBuffer != VK_NULL_HANDLE) {
         void* rb = nullptr;
@@ -1226,17 +1425,6 @@ ok=true;}catch(...){}
     pi.waitSemaphoreCount=1; pi.pWaitSemaphores=sSem; pi.swapchainCount=1; pi.pSwapchains=scs; pi.pImageIndices=&imgIdx;
     res=vk_.QueuePresentKHR(graphicsQueue,&pi);
     if (res==VK_ERROR_OUT_OF_DATE_KHR||res==VK_ERROR_SURFACE_LOST_KHR) fbResized.store(true);
-    if (libraPath && !gLibraTestBlitOffscreen && processedReadbackBuffer != VK_NULL_HANDLE) {
-        readbackProcessedP1();
-        void* rb = nullptr;
-        if (vk_.MapMemory(device,processedReadbackMem,0,4,0,&rb)==VK_SUCCESS && rb) {
-            uint32_t px = 0; memcpy(&px, rb, 4);
-            vk_.UnmapMemory(device,processedReadbackMem);
-            RLOG("READBACK-P frame=%llu pos=before_applyFrame oldLayout=%d px=%08x",
-                (unsigned long long)libraFrameCount,
-                (int)VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, px);
-        }
-    }
     currentFrame=(currentFrame+1)%MAX_FRAMES_IN_FLIGHT;
 }
 
@@ -1916,6 +2104,14 @@ void VulkanRendererContext::recordFilterChainPass(VkCommandBuffer cb, uint64_t f
         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
     filterOutputLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+    // 3.5: librashader requires the INPUT (offscreenImage) in SHADER_READ_ONLY_OPTIMAL
+    // (filter_chain.rs:285-286); the compositor leaves it in COLOR_ATTACHMENT_OPTIMAL, so
+    // transition explicitly before applyFrame (the automatic finalLayout transition to SRO
+    // left it unreadable by the sampler on Adreno).
+    transferBarrierWide(cb, offscreenImage,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
     // applyFrame: offscreenImage -> filterOutputImage
     bool ok = libraShader.applyFrame(cb, frameCount,
         offscreenImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
@@ -1946,16 +2142,18 @@ void VulkanRendererContext::recordFilterChainPass(VkCommandBuffer cb, uint64_t f
         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
     filterOutputLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    // atlas -> GENERAL for later sampling (melonDS 2383)
+    // atlas -> SHADER_READ_ONLY_OPTIMAL for later sampling. On this Adreno the sampler only
+    // reads images left in SRO (GENERAL sampling returned black); melonDS's GENERAL choice
+    // was inferred from the wrong symptom (the black was a command-buffer deadlock).
     VkImageMemoryBarrier b{}; b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.image = atlasImage;
     b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &b);
-    atlasLayout = VK_IMAGE_LAYOUT_GENERAL;
+    atlasLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     if (vk_.EndCommandBuffer(cb) != VK_SUCCESS) throw std::runtime_error("end filter cb");
 
@@ -1979,13 +2177,15 @@ void VulkanRendererContext::presentAtlasToSwapchain(VkCommandBuffer cb, uint32_t
     {
         static bool sAtlasPresentLogged = false;
         if (!sAtlasPresentLogged) {
-            RLOG("ATLAS-PRESENT: presenting atlas in GENERAL (melonDS topology)");
+            RLOG("ATLAS-PRESENT: presenting atlas in SHADER_READ_ONLY_OPTIMAL (sampler works in SRO)");
             sAtlasPresentLogged = true;
         }
     }
 
+    // SRO->SRO barrier for memory visibility of the transfer copy (matches the offscreen path
+    // that is proven to sample correctly on this Adreno).
     VkImageMemoryBarrier b{}; b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    b.oldLayout = VK_IMAGE_LAYOUT_GENERAL; b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    b.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.image = atlasImage;
     b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -1994,8 +2194,8 @@ void VulkanRendererContext::presentAtlasToSwapchain(VkCommandBuffer cb, uint32_t
     vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &b);
 
-    // blit of the atlas in GENERAL (dii.imageLayout = VK_IMAGE_LAYOUT_GENERAL)
-    blitImageToSwapchainLayout(cb, imgIdx, atlasView, blitSampler, VK_IMAGE_LAYOUT_GENERAL);
+    // blit of the atlas in SRO with the LINEAR sampler (same combo as the working offscreen path)
+    blitImageToSwapchainLayout(cb, imgIdx, atlasView, sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 // P2 in-frame readback of the applyFrame output. img is assumed to be in curLayout:
@@ -2076,6 +2276,64 @@ void VulkanRendererContext::readbackProcessedP1() {
     b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    endOneTime(cb);
+}
+
+// DIAG: read back the offscreenImage (the librashader filter's INPUT) into the
+// processed readback buffer so the log can show whether the game actually reaches
+// the compositor. offscreen is left in SHADER_READ_ONLY_OPTIMAL by the compositor.
+void VulkanRendererContext::readbackOffscreenDiag() {
+    // Diagnostic only: sample the filter INPUT (offscreen) once every 64 frames.
+    static uint64_t sOffDiagCount = 0;
+    if ((sOffDiagCount++ & 0x3F) != 0) return;
+    if (offscreenImage == VK_NULL_HANDLE || processedReadbackBuffer == VK_NULL_HANDLE) return;
+    VkCommandBuffer cb = beginOneTime();
+    if (cb == VK_NULL_HANDLE) return;
+    // melonDS-wide barrier recipe: srcAccess = MEMORY_WRITE|TRANSFER_WRITE|COLOR_ATTACHMENT_WRITE,
+    // srcStage = ALL_COMMANDS, so the transition synchronizes whatever the compositor's render
+    // pass wrote (color attachment) before the transfer read. offscreen is left in
+    // COLOR_ATTACHMENT_OPTIMAL by the compositor (3.5 fix).
+    transferBarrierWide(cb, offscreenImage,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    // 5x5 grid of samples so we can see WHERE content is (letterbox vs game area) instead
+    // of guessing from 3 points. Buffer layout: rows 0..4, cols 0..4, pixel (r,c) at
+    // offset (r*5+c)*4; plus a final sample at the very center for the legacy log.
+    uint32_t cw = (uint32_t)std::max(1, surfaceWidth);
+    uint32_t ch = (uint32_t)std::max(1, surfaceHeight);
+    static uint32_t sGridLogThrottle = 0;
+    const bool logGrid = ((sGridLogThrottle++ & 0x3F) == 0);
+    int32_t xs[5] = {0, (int32_t)(cw/4), (int32_t)(cw/2), (int32_t)(3*cw/4), (int32_t)(cw-1)};
+    int32_t ys[5] = {0, (int32_t)(ch/4), (int32_t)(ch/2), (int32_t)(3*ch/4), (int32_t)(ch-1)};
+    uint32_t nSamples = 0;
+    for (int r = 0; r < 5; ++r) {
+        for (int c = 0; c < 5; ++c) {
+            VkBufferImageCopy cp{};
+            cp.bufferOffset = (VkDeviceSize)nSamples * 4;
+            cp.bufferRowLength = 0; cp.bufferImageHeight = 0;
+            cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            cp.imageOffset = { xs[c], ys[r], 0 };
+            cp.imageExtent = {1, 1, 1};
+            vk_.CmdCopyImageToBuffer(cb, offscreenImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                processedReadbackBuffer, 1, &cp);
+            nSamples++;
+        }
+    }
+    // center pixel at offset 25*4 for the compact legacy log
+    {
+        VkBufferImageCopy cp{};
+        cp.bufferOffset = (VkDeviceSize)25 * 4;
+        cp.bufferRowLength = 0; cp.bufferImageHeight = 0;
+        cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        cp.imageOffset = { (int32_t)(cw/2), (int32_t)(ch/2), 0 };
+        cp.imageExtent = {1, 1, 1};
+        vk_.CmdCopyImageToBuffer(cb, offscreenImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            processedReadbackBuffer, 1, &cp);
+    }
+    if (logGrid) sGridLogThrottle = sGridLogThrottle; // (throttle handled above)
+    transferBarrierWide(cb, offscreenImage,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
     endOneTime(cb);
 }
 
@@ -2244,9 +2502,18 @@ void VulkanRendererContext::recordCompositorPass(VkCommandBuffer cb,
     VkRect2D sc{{0, 0}, {(uint32_t)surfaceWidth, (uint32_t)surfaceHeight}};
     vk_.CmdSetScissor(cb, 0, 1, &sc);
 
-    vk_.CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vk_.CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipeline != VK_NULL_HANDLE ? offscreenPipeline : pipeline);
+    static uint64_t sCompositorDrawLog = 0;
+    if ((sCompositorDrawLog++ & 0x3F) == 0)
+        RLOG("librashader: recordCompositorPass draws=%zu (offscreen %dx%d)",
+            draws.size(), surfaceWidth, surfaceHeight);
     for (auto& d : draws) {
         if (d.ds == VK_NULL_HANDLE) continue;
+        static uint64_t sDrawDetailLog = 0;
+        if ((sDrawDetailLog++ & 0x3F) == 0)
+            RLOG("librashader: draw img=%p ds=%p isAHB=%d x=%d y=%d w=%d h=%d ox=%f oy=%f sx=%f sy=%f cw=%f ch=%f",
+                (void*)d.img, (void*)d.ds, (int)d.isAHB, d.x, d.y, d.w, d.h,
+                ox, oy, sx, sy, cw, ch);
         vk_.CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
             pipeLayout, 0, 1, &d.ds, 0, nullptr);
         WindowPushConstants pc{};

@@ -105,6 +105,7 @@ import app.gamenative.service.AchievementWatcher
 import app.gamenative.service.SteamService
 import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
+import app.gamenative.ui.component.dialog.loadShaderConfig
 import app.gamenative.ui.component.QuickMenu
 import app.gamenative.ui.component.QuickMenuAction
 import app.gamenative.ui.component.parseBooleanExtra
@@ -353,6 +354,14 @@ fun XServerScreen(
     onWindowUnmapped: ((Window) -> Unit)? = null,
     onGameLaunchError: ((String) -> Unit)? = null,
 ) {
+    // Defensive: on cold start the XServer route can compose before the launch state settles
+    // (launchedAppId still blank), and ContainerUtils.getContainer(context, "") throws.
+    // Early-return (no composable call in this branch: a Box() here tripped the DEX verifier
+    // on this device's ART). The next recomposition with a real appId proceeds normally.
+    if (appId.isBlank()) {
+        Timber.w("XServerScreen: blank appId, deferring (launch state not settled yet)")
+        return
+    }
     Timber.i("Starting up XServerScreen")
     val context = LocalContext.current
     val view = LocalView.current
@@ -619,7 +628,18 @@ fun XServerScreen(
     LaunchedEffect(xServerView?.renderer) {
         val screenEffectsConfig = loadScreenEffectsConfig(container)
         when (val renderer = xServerView?.renderer) {
-            is VulkanRenderer -> applyScreenEffectsConfig(renderer, screenEffectsConfig)
+            is VulkanRenderer -> {
+                applyScreenEffectsConfig(renderer, screenEffectsConfig)
+                // Apply the persisted RetroArch (librashader) shader state at startup.
+                // Without this the shader stays "selected" in the menu but is never
+                // sent to the renderer, so the game opens with the shader off until
+                // the user toggles it in the effects panel.
+                val shaderConfig = loadShaderConfig(container)
+                if (shaderConfig.enabled && shaderConfig.presetPath.isNotEmpty()) {
+                    renderer.loadRetroArchShaderPreset(shaderConfig.presetPath)
+                    renderer.setRetroArchShaderEnabled(true)
+                }
+            }
             is GLRenderer -> applyScreenEffectsConfig(renderer, screenEffectsConfig)
         }
     }

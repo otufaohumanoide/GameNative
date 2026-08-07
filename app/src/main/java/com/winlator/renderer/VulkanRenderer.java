@@ -760,6 +760,12 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
         if (nativeMode && wasRequireCompositor != effectsRequireCompositor) {
             if (effectsRequireCompositor) tearDownScanout();
             else establishScanout();
+            // The scanout fast-path cleared the native render list (renderFrame
+            // calls renderList.clear() while scanout is active). Repopulate it so
+            // the compositor actually draws the game into the offscreen image when
+            // a shader/effect is enabled. Without this the offscreen stays cleared
+            // (black) and the librashader filter reads black.
+            queueSceneUpdate();
         }
     }
 

@@ -329,12 +329,14 @@ private:
     VkPipelineLayout      pipeLayout  = VK_NULL_HANDLE;
 
     VkPipeline            pipeline    = VK_NULL_HANDLE;
+    VkPipeline            offscreenPipeline = VK_NULL_HANDLE;
 
     VkCommandPool                cmdPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> cmdBufs;
 
     VkCommandPool                filterCmdPool = VK_NULL_HANDLE;
     VkCommandBuffer              filterCmdBuf = VK_NULL_HANDLE;
+    VkCommandBuffer              presentCmdBuf = VK_NULL_HANDLE;
     VkFence                      filterFence = VK_NULL_HANDLE;
 
     std::vector<VkSemaphore> imgAvailSems;
@@ -369,7 +371,7 @@ private:
     void createRenderPass();
     void createOffscreenRenderPass();
     void createDSLayout();
-    void createPipeline(bool blend, VkPipeline& out);
+    void createPipeline(bool blend, VkPipeline& out, VkRenderPass rp);
     void createFramebuffers();
     void createCmdPool();
     void createSampler();
@@ -497,4 +499,5 @@ private:
     // the default-path readback restores it to COLOR_ATTACHMENT_OPTIMAL to keep the invariant).
     void readbackProcessedInFrame(VkCommandBuffer cb, VkImage img, VkImageLayout curLayout);
     void readbackProcessedP1();
+    void readbackOffscreenDiag();
 };
