@@ -32,6 +32,26 @@ GameNative lets you run the PC games in your Steam, Epic and GOG libraries direc
 
 It's still early. Not every game runs yet, and some need tweaking to play well, but the community is constantly finding and sharing configs that work — and these get applied automatically. You can see if anyone has tried running your game successfully at https://gamenative.app/compatibility.
 
+## ✨ What this fork adds: RetroArch shader support (librashader)
+
+This fork brings **native RetroArch shader support** to GameNative's Vulkan renderer: every game frame is pushed through a [librashader](https://github.com/SnowflakePowered/librashader) filter chain before it hits the screen, so you can apply the same CRT, LCD, scanline, upscaling and color-grading effects you know from RetroArch to your PC games — switched live from the in-game effects panel, with no restart required.
+
+**What's included:**
+
+- [librashader](https://github.com/SnowflakePowered/librashader) Vulkan runtime (built from source in the Gradle build — no prebuilts)
+- **131 bundled presets** from the [libretro/slang-shaders](https://github.com/libretro/slang-shaders) pack (CRT, LCD, cel, HDR, NTSC, color grading…)
+- Live preset switching (in-game effects panel or per-container config), verified on Adreno 650 with an automated black-box test loop
+- A hardened pipeline: chain access from the render thread only, failure fallback (a broken preset degrades to the unshaded frame instead of a black screen), create-first preset swap and bounded fence waits
+
+### How it was built — credit where credit is due
+
+Shipping this feature meant studying how established emulators integrate librashader in Vulkan. An **automated agent** reviewed the production implementations of two reference projects and ported their battle-tested patterns into GameNative's compositor:
+
+- **[melonDS](https://github.com/melonDS-emu/melonDS)** — the DS/DSi emulator by [StapleButter](https://github.com/StapleButter) and contributors — together with the **[melonDS Android port](https://github.com/rafaelvcaetano/melonDS-android)** by Rafael Caetano (v0.7.0.rc2), contributed the offscreen → sampler → swapchain present topology, the image-layout tracking and the wide memory barriers that keep the Adreno driver honest.
+- **[ARMSX2](https://github.com/ARMSX2/ARMSX2)** — the native-ARM64 fork of [PCSX2](https://pcsx2.net) — contributed the render-thread parameter application pattern, the chain failure fallback + latch, and the create-first swap that keeps the previous shader alive when a new preset fails to build.
+
+To the melonDS developers, Rafael Caetano, the PCSX2 team, the **ARMSX2 team**, [SnowflakePowered](https://github.com/SnowflakePowered) for librashader, and the [libretro](https://www.libretro.com) community for the shader pack — **thank you**. This feature would not exist without your work.
+
 ## What you get
 
 - Play games you actually own on Steam, Epic, GOG and Amazon
