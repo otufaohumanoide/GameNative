@@ -564,6 +564,7 @@ fun ScreenEffectsTabContent(
         mutableStateOf<List<Map.Entry<String, String>>>(emptyList())
     }
     var shaderQuery by remember(renderer, container) { mutableStateOf("") }
+    var legacyEffectsExpanded by remember(renderer, container) { mutableStateOf(false) }
     var collapsedCategories by remember(renderer, container) { mutableStateOf(setOf<String>()) }
     var shaderPassCounts by remember(renderer, container) {
         mutableStateOf<Map<String, Int>>(emptyMap())
@@ -644,7 +645,137 @@ fun ScreenEffectsTabContent(
             .focusGroup()
             .padding(vertical = 12.dp),
     ) {
-        DisplayBrightnessRow(focusRequester = firstItemFocusRequester)
+        // ═══ RETROARCH SHADERS — priority section (spec 2026-08-08) ═══
+        ScreenEffectToggleRow(
+            title = "RetroArch Shaders",
+            focusRequester = firstItemFocusRequester,
+            subtitle = when {
+                shaderEnabled && shaderPresetName.isNotEmpty() -> shaderPresetName
+                shaderEnabled -> "Pick a preset below"
+                else -> "Off"
+            },
+            enabled = shaderEnabled,
+            onToggle = { toggleShaders() },
+        )
+
+        if (shaderEnabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            ShaderPresetRow(
+                title = "No filter",
+                subtitle = null,
+                selected = shaderRelativePath.isEmpty(),
+                onClick = { disableShaders() },
+            )
+            if (shaderOptions.isEmpty()) {
+                Text(
+                    text = "Loading bundled presets...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            } else {
+                Spacer(modifier = Modifier.height(4.dp))
+                NoExtractOutlinedTextField(
+                    value = shaderQuery,
+                    onValueChange = { shaderQuery = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    placeholder = { Text("Search presets…") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (shaderQuery.isNotEmpty()) {
+                            IconButton(onClick = { shaderQuery = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                val query = shaderQuery.trim().lowercase()
+                val filtered = if (query.isEmpty()) {
+                    shaderOptions
+                } else {
+                    shaderOptions.filter { entry ->
+                        friendlyName(entry.key).lowercase().contains(query) ||
+                            categoryOf(entry.key)?.lowercase()?.contains(query) == true ||
+                            entry.key.lowercase().contains(query)
+                    }
+                }
+                if (query.isEmpty()) {
+                    // Grouped by family (folder), collapsible sections.
+                    val groups = filtered.groupBy { categoryOf(it.key) ?: "outros" }
+                    val ordered = shaderCategoryOrder + (groups.keys - shaderCategoryOrder.toSet()).sorted()
+                    ordered.filter { groups.containsKey(it) }.forEach { cat ->
+                        val items = groups.getValue(cat)
+                        val collapsed = cat in collapsedCategories
+                        ShaderCategoryHeader(
+                            label = friendlyCategoryName(cat),
+                            count = items.size,
+                            collapsed = collapsed,
+                            onClick = {
+                                collapsedCategories = if (collapsed) {
+                                    collapsedCategories - cat
+                                } else {
+                                    collapsedCategories + cat
+                                }
+                            },
+                        )
+                        if (!collapsed) {
+                            items.forEach { entry ->
+                                ShaderPresetRow(
+                                    title = friendlyName(entry.key),
+                                    subtitle = passCountSubtitle(entry.key, cat, shaderPassCounts),
+                                    selected = shaderEnabled && entry.key == shaderRelativePath,
+                                    onClick = { applyShaderPreset(entry) },
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    if (filtered.isEmpty()) {
+                        Text(
+                            text = "No presets match \"${shaderQuery.trim()}\"",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    } else {
+                        filtered.forEach { entry ->
+                            ShaderPresetRow(
+                                title = friendlyName(entry.key),
+                                subtitle = passCountSubtitle(
+                                    entry.key,
+                                    categoryOf(entry.key) ?: "outros",
+                                    shaderPassCounts,
+                                ),
+                                selected = shaderEnabled && entry.key == shaderRelativePath,
+                                onClick = { applyShaderPreset(entry) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 8.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // ═══ LEGACY EFFECTS — kept from the original fork, deprioritized (collapsible) ═══
+        LegacyEffectsHeader(
+            expanded = legacyEffectsExpanded,
+            onToggle = { legacyEffectsExpanded = !legacyEffectsExpanded },
+        )
+        if (legacyEffectsExpanded) {
+        DisplayBrightnessRow()
 
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -782,125 +913,7 @@ fun ScreenEffectsTabContent(
         )
 
         Spacer(modifier = Modifier.height(12.dp))
-
-        HorizontalDivider(
-            modifier = Modifier.padding(horizontal = 8.dp),
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-        )
-
-        ScreenEffectToggleRow(
-            title = "RetroArch Shaders",
-            subtitle = when {
-                shaderEnabled && shaderPresetName.isNotEmpty() -> shaderPresetName
-                shaderEnabled -> "Pick a preset below"
-                else -> "Off"
-            },
-            enabled = shaderEnabled,
-            onToggle = { toggleShaders() },
-        )
-
-        if (shaderEnabled) {
-            Spacer(modifier = Modifier.height(8.dp))
-            ShaderPresetRow(
-                title = "No filter",
-                subtitle = null,
-                selected = shaderRelativePath.isEmpty(),
-                onClick = { disableShaders() },
-            )
-            if (shaderOptions.isEmpty()) {
-                Text(
-                    text = "Loading bundled presets...",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            } else {
-                Spacer(modifier = Modifier.height(4.dp))
-                NoExtractOutlinedTextField(
-                    value = shaderQuery,
-                    onValueChange = { shaderQuery = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    placeholder = { Text("Search presets…") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    trailingIcon = {
-                        if (shaderQuery.isNotEmpty()) {
-                            IconButton(onClick = { shaderQuery = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear search")
-                            }
-                        }
-                    },
-                    singleLine = true,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
-                val query = shaderQuery.trim().lowercase()
-                val filtered = if (query.isEmpty()) {
-                    shaderOptions
-                } else {
-                    shaderOptions.filter { entry ->
-                        friendlyName(entry.key).lowercase().contains(query) ||
-                            categoryOf(entry.key)?.lowercase()?.contains(query) == true ||
-                            entry.key.lowercase().contains(query)
-                    }
-                }
-                if (query.isEmpty()) {
-                    // Grouped by family (folder), collapsible sections.
-                    val groups = filtered.groupBy { categoryOf(it.key) ?: "outros" }
-                    val ordered = shaderCategoryOrder + (groups.keys - shaderCategoryOrder.toSet()).sorted()
-                    ordered.filter { groups.containsKey(it) }.forEach { cat ->
-                        val items = groups.getValue(cat)
-                        val collapsed = cat in collapsedCategories
-                        ShaderCategoryHeader(
-                            label = friendlyCategoryName(cat),
-                            count = items.size,
-                            collapsed = collapsed,
-                            onClick = {
-                                collapsedCategories = if (collapsed) {
-                                    collapsedCategories - cat
-                                } else {
-                                    collapsedCategories + cat
-                                }
-                            },
-                        )
-                        if (!collapsed) {
-                            items.forEach { entry ->
-                                ShaderPresetRow(
-                                    title = friendlyName(entry.key),
-                                    subtitle = passCountSubtitle(entry.key, cat, shaderPassCounts),
-                                    selected = shaderEnabled && entry.key == shaderRelativePath,
-                                    onClick = { applyShaderPreset(entry) },
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    if (filtered.isEmpty()) {
-                        Text(
-                            text = "No presets match \"${shaderQuery.trim()}\"",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                    } else {
-                        filtered.forEach { entry ->
-                            ShaderPresetRow(
-                                title = friendlyName(entry.key),
-                                subtitle = passCountSubtitle(
-                                    entry.key,
-                                    categoryOf(entry.key) ?: "outros",
-                                    shaderPassCounts,
-                                ),
-                                selected = shaderEnabled && entry.key == shaderRelativePath,
-                                onClick = { applyShaderPreset(entry) },
-                            )
-                        }
-                    }
-                }
-            }
         }
-
         Spacer(modifier = Modifier.height(24.dp))
     }
 }
@@ -1425,6 +1438,7 @@ private fun ScreenEffectToggleRow(
     subtitle: String? = null,
     enabled: Boolean,
     onToggle: () -> Unit,
+    focusRequester: FocusRequester? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1432,6 +1446,7 @@ private fun ScreenEffectToggleRow(
 
     Row(
         modifier = Modifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
@@ -1512,6 +1527,46 @@ private fun passCountSubtitle(
         parts += "$n pass${if (n == 1) "" else "es"}"
     }
     return parts.joinToString(" · ").ifBlank { null }
+}
+
+/** Collapsible section header for the deprioritized legacy effects (original-fork features). */
+@Composable
+private fun LegacyEffectsHeader(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onToggle,
+            )
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Legacy effects",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "Brightness · Scaling · FSR · Toon · FXAA · Vivid · CRT · NTSC",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 @Composable
