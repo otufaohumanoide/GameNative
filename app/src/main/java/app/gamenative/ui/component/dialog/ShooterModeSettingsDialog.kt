@@ -43,6 +43,8 @@ import app.gamenative.ui.theme.settingsTileColorsAlt
 import com.alorma.compose.settings.ui.SettingsSwitch
 import java.util.Locale
 import kotlin.math.roundToInt
+import app.gamenative.ui.component.GamepadKeyBridge
+import app.gamenative.ui.component.JoystickFocusNavigator
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +65,9 @@ fun ShooterModeSettingsDialog(
             dismissOnClickOutside = false,
         ),
     ) {
+        // Gamepad support for this dialog window (stick/hat -> focus, A/B -> activate/dismiss).
+        JoystickFocusNavigator(enabled = true)
+        GamepadKeyBridge(enabled = true)
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = PluviaBackground,

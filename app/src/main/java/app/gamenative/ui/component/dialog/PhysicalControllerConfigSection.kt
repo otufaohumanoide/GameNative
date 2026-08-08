@@ -25,6 +25,8 @@ import app.gamenative.R
 import com.winlator.inputcontrols.Binding
 import com.winlator.inputcontrols.ControlsProfile
 import com.winlator.inputcontrols.ExternalControllerBinding
+import app.gamenative.ui.component.GamepadKeyBridge
+import app.gamenative.ui.component.JoystickFocusNavigator
 
 /**
  * Data classes for controller configuration
@@ -211,6 +213,9 @@ internal fun PhysicalControllerConfigSection(
             dismissOnClickOutside = false
         )
     ) {
+        // Gamepad support for this dialog window (stick/hat -> focus, A/B -> activate/dismiss).
+        JoystickFocusNavigator(enabled = true)
+        GamepadKeyBridge(enabled = true)
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             topBar = {

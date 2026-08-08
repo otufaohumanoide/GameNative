@@ -223,6 +223,8 @@ import kotlin.io.path.name
 import kotlin.math.roundToInt
 import kotlin.text.lowercase
 import com.winlator.PrefManager as WinlatorPrefManager
+import app.gamenative.ui.component.GamepadKeyBridge
+import app.gamenative.ui.component.JoystickFocusNavigator
 
 // Always re-extract drivers and DXVK on every launch to handle cases of container corruption
 // where games randomly stop working. Set to false once corruption issues are resolved.
@@ -1465,7 +1467,9 @@ fun XServerScreen(
                 }
                 else -> false
             }
-        } else if ((showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode) && (isGamepad || isKeyboard)) {
+        } else if ((showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode ||
+                showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
+                showPlayingBlockedDialog) && (isGamepad || isKeyboard)) {
             val escPressed = !keepPausedForEditor &&
                 isKeyboard &&
                 it.event.keyCode == KeyEvent.KEYCODE_ESCAPE
@@ -1537,7 +1541,9 @@ fun XServerScreen(
     val onMotionEvent: (AndroidEvent.MotionEvent) -> Boolean = {
         val isGamepad = ExternalController.isGameController(it.event?.device)
 
-        if ((showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode) && isGamepad) {
+        if ((showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode ||
+                showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
+                showPlayingBlockedDialog) && isGamepad) {
             // Let Compose consume any gamepad motion while menu is visible.
             false
         } else {
@@ -2762,7 +2768,14 @@ fun XServerScreen(
         androidx.compose.material3.AlertDialog(
             onDismissRequest = {},
             title = { Text(text = stringResource(R.string.main_app_running_title)) },
-            text = { Text(text = stringResource(R.string.main_app_running_message, remoteName)) },
+                        // Gamepad support for this dialog window.
+            text = {
+                Box(Modifier.fillMaxWidth()) {
+                    JoystickFocusNavigator(enabled = true)
+                    GamepadKeyBridge(enabled = true)
+                    Text(text = stringResource(R.string.main_app_running_message, remoteName))
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showPlayingBlockedDialog = false

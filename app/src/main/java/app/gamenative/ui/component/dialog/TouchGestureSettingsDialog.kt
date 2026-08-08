@@ -53,6 +53,8 @@ import app.gamenative.ui.theme.PluviaSurface
 import app.gamenative.ui.theme.PluviaSurfaceElevated
 import com.alorma.compose.settings.ui.SettingsSwitch
 import com.winlator.inputcontrols.Binding
+import app.gamenative.ui.component.GamepadKeyBridge
+import app.gamenative.ui.component.JoystickFocusNavigator
 
 /**
  * Full-screen dialog for configuring per-game touch gesture settings.
@@ -78,6 +80,9 @@ fun TouchGestureSettingsDialog(
             dismissOnClickOutside = false,
         ),
     ) {
+        // Gamepad support for this dialog window (stick/hat -> focus, A/B -> activate/dismiss).
+        JoystickFocusNavigator(enabled = true)
+        GamepadKeyBridge(enabled = true)
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = PluviaBackground,

@@ -67,3 +67,35 @@
   `FocusDirection` vive em `androidx.compose.ui.focus` (não foundation).
 - Build OK, instalado, app boota sem crash. Verificação física (stick/d-pad/A) pendente do
   usuário — caminho de teclas (DPAD_*) já era tratado pelo Compose; o novo cobre o eixo.
+
+
+## Auditoria de navegação por controle no overlay do jogo (2026-08-08, 2ª rodada)
+
+**Metodologia:** auditado o fluxo "após abrir o jogo" — sidebar (QuickMenu), abas, dialogs e
+editor de elementos — contra o padrão da LibraryScreen (handlers globais de key/motion + itens
+focáveis).
+
+**O que JÁ funcionava:**
+- LibraryScreen (tela inicial): L1/R1 trocam abas, DPAD/eixos fazem bootstrap de foco, itens
+  `OptionListItem` (selectable) com foco visível.
+- QuickMenu: abas (`QuickMenuTabButton`) são selectable + focusRing + selecionam no foco;
+  conteúdo usa clickable/selectable; `JoystickFocusNavigator` + `GamepadKeyBridge` no Box raiz
+  (esta sessão e a anterior).
+- Roteamento do XServerScreen: com `showQuickMenu`/`showElementEditor`/`keepPausedForEditor`/
+  `isEditMode`, teclas E motion de gamepad passam ao Compose.
+
+**Gaps encontrados e corrigidos:**
+1. **Dialogs em janelas separadas não tinham suporte**: `ElementEditorDialog`,
+   `TouchGestureSettingsDialog`, `ShooterModeSettingsDialog`, `PhysicalControllerConfigSection`
+   e o AlertDialog de "Playing blocked" — agora cada um tem `JoystickFocusNavigator` +
+   `GamepadKeyBridge` no content (stick/hat → foco; A → ativar item focado; B → voltar).
+2. **Roteamento não cobria os estados de dialog**: a condição
+   `(showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode)` foi ampliada com
+   `showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
+   showPlayingBlockedDialog` (teclado e motion) — senão gamepad ia pro jogo com o dialog aberto.
+3. **BUTTON_A/B não ativam/fecham nada no Compose**: novo `GamepadKeyBridge` traduz
+   A→DPAD_CENTER e B→BACK no nível da view (antes do dispatch do Compose), re-despachando o
+   evento traduzido — funciona para qualquer item focado e qualquer BackHandler.
+
+**Pendência:** verificação física com controle real (stick/d-pad/A/B) — injeção via adb não
+abre o sidebar (rotas do jogo consomem).

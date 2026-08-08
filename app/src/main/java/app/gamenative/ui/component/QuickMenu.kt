@@ -426,6 +426,8 @@ fun QuickMenu(
     Box(modifier = modifier.fillMaxSize()) {
         // Gamepad stick/hat axis -> Compose focus navigation (spec 2026-08-08-dpad).
         JoystickFocusNavigator(enabled = isVisible)
+        // Gamepad A/B -> DPAD_CENTER/BACK so focused rows activate and overlays dismiss.
+        GamepadKeyBridge(enabled = isVisible)
 
         AnimatedVisibility(
             visible = isVisible,

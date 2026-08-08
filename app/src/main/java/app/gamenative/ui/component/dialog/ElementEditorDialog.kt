@@ -32,6 +32,8 @@ import com.winlator.inputcontrols.ControlElement
 import com.winlator.widget.InputControlsView
 import java.util.Locale
 import kotlin.math.roundToInt
+import app.gamenative.ui.component.GamepadKeyBridge
+import app.gamenative.ui.component.JoystickFocusNavigator
 
 /**
  * Normalise a [Binding]'s [toString] into the short label that appears on
@@ -311,6 +313,9 @@ fun ElementEditorDialog(
             dismissOnClickOutside = false
         )
     ) {
+        // Gamepad support for this dialog window (stick/hat -> focus, A/B -> activate/dismiss).
+        app.gamenative.ui.component.JoystickFocusNavigator(enabled = true)
+        app.gamenative.ui.component.GamepadKeyBridge(enabled = true)
         // Show either full settings dialog or minimized size adjuster
         if (showSizeAdjuster) {
             // Minimized size adjuster mode
