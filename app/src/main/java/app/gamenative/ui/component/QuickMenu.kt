@@ -424,6 +424,9 @@ fun QuickMenu(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
+        // Gamepad stick/hat axis -> Compose focus navigation (spec 2026-08-08-dpad).
+        JoystickFocusNavigator(enabled = isVisible)
+
         AnimatedVisibility(
             visible = isVisible,
             enter = fadeIn(animationSpec = tween(200)),

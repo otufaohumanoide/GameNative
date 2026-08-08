@@ -71,7 +71,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -1484,6 +1486,7 @@ private fun ScreenEffectToggleRow(
                 indication = null,
                 onClick = onToggle,
             )
+            .gamepadActivate(isFocused, onToggle)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -1508,6 +1511,31 @@ private fun ScreenEffectToggleRow(
         Box(contentAlignment = Alignment.CenterEnd) {
             ScreenEffectSwitch(enabled = enabled, accentColor = accentColor)
         }
+    }
+}
+
+/**
+ * Lets a gamepad activate a focused row with BUTTON_A (Compose's clickable/selectable only
+ * react to Enter/Space/DPAD_CENTER). Consumes the event so the underlying handler doesn't
+ * double-fire. Spec: docs/superpowers/specs/2026-08-08-dpad-shader-navigation-design.md
+ */
+private fun Modifier.gamepadActivate(
+    isFocused: Boolean,
+    onClick: () -> Unit,
+): Modifier = onPreviewKeyEvent { keyEvent ->
+    val native = keyEvent.nativeKeyEvent
+    val isActivate = native.keyCode == KeyEvent.KEYCODE_BUTTON_A ||
+        native.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+        native.keyCode == KeyEvent.KEYCODE_ENTER
+    if (isFocused && isActivate &&
+        keyEvent.type == KeyEventType.KeyDown &&
+        native.action == KeyEvent.ACTION_DOWN &&
+        native.repeatCount == 0
+    ) {
+        onClick()
+        true
+    } else {
+        false
     }
 }
 
@@ -1538,14 +1566,24 @@ private fun NativeEffectsHeader(
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .then(
+                if (isFocused) {
+                    Modifier.border(1.5.dp, PluviaTheme.colors.accentCyan.copy(alpha = 0.8f), RoundedCornerShape(10.dp))
+                } else Modifier
+            )
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onToggle,
             )
+            .gamepadActivate(isFocused, onToggle)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1579,14 +1617,24 @@ private fun ShaderCategoryHeader(
     collapsed: Boolean,
     onClick: () -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .then(
+                if (isFocused) {
+                    Modifier.border(1.5.dp, PluviaTheme.colors.accentCyan.copy(alpha = 0.8f), RoundedCornerShape(10.dp))
+                } else Modifier
+            )
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
             )
+            .gamepadActivate(isFocused, onClick)
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1619,6 +1667,8 @@ private fun ShaderPresetRow(
     onClick: () -> Unit,
 ) {
     val accentColor = PluviaTheme.colors.accentCyan
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
 
     Row(
         modifier = Modifier
@@ -1631,11 +1681,17 @@ private fun ShaderPresetRow(
                     MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
                 },
             )
+            .then(
+                if (isFocused) {
+                    Modifier.border(1.5.dp, accentColor.copy(alpha = 0.8f), RoundedCornerShape(14.dp))
+                } else Modifier
+            )
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
             )
+            .gamepadActivate(isFocused, onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1718,6 +1774,7 @@ private fun ScreenEffectRadioRow(
                 indication = null,
                 onClick = onSelect,
             )
+            .gamepadActivate(isFocused, onSelect)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
