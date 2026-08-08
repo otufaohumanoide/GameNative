@@ -649,12 +649,12 @@ fun ScreenEffectsTabContent(
     ) {
         // ═══ RETROARCH SHADERS — priority section (spec 2026-08-08) ═══
         ScreenEffectToggleRow(
-            title = "RetroArch Shaders",
+            title = stringResource(R.string.retroarch_shaders_title),
             focusRequester = firstItemFocusRequester,
             subtitle = when {
                 shaderEnabled && shaderPresetName.isNotEmpty() -> shaderPresetName
-                shaderEnabled -> "Pick a preset below"
-                else -> "Off"
+                shaderEnabled -> stringResource(R.string.shader_pick_preset)
+                else -> stringResource(R.string.shader_off)
             },
             enabled = shaderEnabled,
             onToggle = { toggleShaders() },
@@ -663,14 +663,14 @@ fun ScreenEffectsTabContent(
         if (shaderEnabled) {
             Spacer(modifier = Modifier.height(8.dp))
             ShaderPresetRow(
-                title = "No filter",
+                title = stringResource(R.string.shader_no_filter),
                 subtitle = null,
                 selected = shaderRelativePath.isEmpty(),
                 onClick = { disableShaders() },
             )
             if (shaderOptions.isEmpty()) {
                 Text(
-                    text = "Loading bundled presets...",
+                    text = stringResource(R.string.shader_loading),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -683,12 +683,12 @@ fun ScreenEffectsTabContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
-                    placeholder = { Text("Search presets…") },
+                    placeholder = { Text(stringResource(R.string.shader_search)) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     trailingIcon = {
                         if (shaderQuery.isNotEmpty()) {
                             IconButton(onClick = { shaderQuery = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.shader_clear_search))
                             }
                         }
                     },
@@ -739,7 +739,7 @@ fun ScreenEffectsTabContent(
                 } else {
                     if (filtered.isEmpty()) {
                         Text(
-                            text = "No presets match \"${shaderQuery.trim()}\"",
+                            text = stringResource(R.string.shader_no_match, shaderQuery.trim()),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -1552,6 +1552,7 @@ private val shaderCategoryOrder = listOf(
 )
 
 /** Row subtitle for a preset: friendly category + pass count when known (e.g. "CRT · 4 passes"). */
+@Composable
 private fun passCountSubtitle(
     entryKey: String,
     category: String,
@@ -1602,13 +1603,13 @@ private fun NativeEffectsHeader(
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Renderer-native effects",
+                text = stringResource(R.string.shader_renderer_native_title),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "Built into the renderer · complement RetroArch shaders · FSR · Scaling · Toon · FXAA · Vivid · CRT · NTSC",
+                text = stringResource(R.string.shader_renderer_native_subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

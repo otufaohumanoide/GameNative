@@ -1,6 +1,9 @@
 package app.gamenative.ui.component.dialog
 
 import android.content.Context
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import app.gamenative.R
 import com.winlator.container.Container
 import com.winlator.renderer.RetroArchShaderConfig
 import com.winlator.renderer.ShaderImporter
@@ -31,29 +34,38 @@ fun categoryOf(key: String): String? {
     return if (slash > 0) key.substring(0, slash) else null
 }
 
-/** Human-readable labels for the known preset families (bundled slang-shaders layout). */
-private val CATEGORY_LABELS = mapOf(
-    "crt" to "CRT",
-    "lcd" to "LCD",
-    "interpolation" to "Upscaling",
-    "misc" to "Effects & Misc",
-    "film" to "Film",
-    "cel" to "Cel Shading",
-    "hdr" to "HDR",
-    "ntsc" to "NTSC / Composite",
-    "reshade" to "ReShade",
-    "nearest" to "Scaling",
-    "bilinear" to "Scaling",
-    "stock" to "Stock",
-    "outros" to "Other",
+/** String resources for the known preset families (bundled slang-shaders layout). */
+private val CATEGORY_LABEL_RES = mapOf(
+    "crt" to R.string.shader_cat_crt,
+    "lcd" to R.string.shader_cat_lcd,
+    "interpolation" to R.string.shader_cat_interpolation,
+    "misc" to R.string.shader_cat_misc,
+    "film" to R.string.shader_cat_film,
+    "cel" to R.string.shader_cat_cel,
+    "hdr" to R.string.shader_cat_hdr,
+    "ntsc" to R.string.shader_cat_ntsc,
+    "reshade" to R.string.shader_cat_reshade,
+    "nearest" to R.string.shader_cat_nearest,
+    "bilinear" to R.string.shader_cat_bilinear,
+    "stock" to R.string.shader_cat_stock,
+    "outros" to R.string.shader_cat_other,
 )
 
-/** Human-readable category label, e.g. "crt" -> "CRT". Falls back to title-casing the raw name. */
-fun friendlyCategoryName(category: String): String =
-    CATEGORY_LABELS[category] ?: category
-        .split('_', '-')
-        .filter { it.isNotEmpty() }
-        .joinToString(" ") { part -> part.replaceFirstChar { c -> c.titlecase() } }
+/**
+ * Human-readable category label, e.g. "crt" -> "CRT". Localized via string resources;
+ * falls back to title-casing the raw name. Composable so resources resolve per locale.
+ */
+@Composable
+fun friendlyCategoryName(category: String): String {
+    val resId = CATEGORY_LABEL_RES[category]
+    return if (resId != null) {
+        stringResource(resId)
+    } else {
+        category.split('_', '-')
+            .filter { it.isNotEmpty() }
+            .joinToString(" ") { part -> part.replaceFirstChar { c -> c.titlecase() } }
+    }
+}
 
 /**
  * Counts the shader passes of a `.slangp` preset: sums `shaderN = ...` entries (ignoring

@@ -30,3 +30,17 @@
 
 - LEFT/RIGHT explícito rail↔conteúdo; L3/R3 home/end; remember-selection de foco; right-stick
   pré-visualização de presets; START = ações rápidas.
+
+
+## Política de referência (2026-08-09, direção do usuário)
+
+- **nowinandroid = métodos modernos de código, NÃO design system.** O fork original do
+  GameNative já usa material3 como base (PluviaTheme: MaterialTheme + darkColorScheme +
+  paleta própria). Não introduzir padrões Material onde o app original não os usa; manter a
+  linguagem visual Pluvia (componentes customizados, accent colors).
+- **Uso do nowinandroid:** APIs atuais do Compose (evitar legado), state hoisting,
+  `stringResource`/recursos localizados (o app tem 14 locales), previews, a11y.
+- **Aplicação nesta rodada:** strings hardcoded do painel de shaders migradas para
+  `strings.xml` (EN + pt-rBR): títulos, subtítulos, busca, estados vazio, categorias
+  (`friendlyCategoryName` virou @Composable usando `stringResource`). Verificado: build OK,
+  app boota limpo.
