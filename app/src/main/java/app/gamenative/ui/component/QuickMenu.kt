@@ -21,6 +21,7 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
@@ -83,7 +84,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -421,10 +424,56 @@ fun QuickMenu(
         }
     }
 
+    // Coroutine scope for L2/R2 page scrolling (ScrollState.scrollBy is a suspend fun).
+    val quickMenuScope = rememberCoroutineScope()
+
     // Track whether focus is on the tab rail (vs. tab content). Used by the hierarchical
     // BackHandler (D2): B with focus in content returns to the selected tab's button;
     // B with focus on the rail dismisses the menu.
     var railFocused by remember { mutableStateOf(false) }
+
+    // RetroArch/Ozone-inspired helpers (spec 2026-08-09): the ordered tab list for L1/R1
+    // cycling and the per-tab scroll states for L2/R2 page scrolling.
+    val orderedTabs = remember {
+        listOf(
+            QuickMenuTab.HUD, QuickMenuTab.LSFG, QuickMenuTab.BFG, QuickMenuTab.EFFECTS,
+            QuickMenuTab.CONTROLLER, QuickMenuTab.TOOLS, QuickMenuTab.INVITE,
+        ).filter { tab ->
+            when (tab) {
+                QuickMenuTab.LSFG -> isLsfgAvailable
+                QuickMenuTab.BFG -> bfgMenu != null
+                QuickMenuTab.INVITE -> inviteMenu != null
+                QuickMenuTab.EFFECTS -> renderer != null
+                else -> true
+            }
+        }
+    }
+    fun selectAdjacentTab(delta: Int) {
+        val idx = orderedTabs.indexOf(selectedTab)
+        if (idx < 0) return
+        val next = orderedTabs[(idx + delta + orderedTabs.size) % orderedTabs.size]
+        selectedTab = next
+        PrefManager.quickMenuLastTab = next
+        // Focus the newly selected tab's rail button (predictable start point).
+        when (next) {
+            QuickMenuTab.HUD -> hudTabFocusRequester.requestFocus()
+            QuickMenuTab.LSFG -> lsfgTabFocusRequester.requestFocus()
+            QuickMenuTab.BFG -> bfgTabFocusRequester.requestFocus()
+            QuickMenuTab.EFFECTS -> effectsTabFocusRequester.requestFocus()
+            QuickMenuTab.TOOLS -> toolsTabFocusRequester.requestFocus()
+            QuickMenuTab.INVITE -> inviteTabFocusRequester.requestFocus()
+            else -> controllerTabFocusRequester.requestFocus()
+        }
+        railFocused = true
+    }
+    val currentTabScrollState: ScrollState? = when (selectedTab) {
+        QuickMenuTab.HUD -> hudScrollState
+        QuickMenuTab.LSFG -> lsfgScrollState
+        QuickMenuTab.BFG -> bfgScrollState
+        QuickMenuTab.EFFECTS -> effectsScrollState
+        QuickMenuTab.TOOLS -> controllerScrollState
+        else -> null
+    }
 
     BackHandler(enabled = isVisible) {
         if (railFocused) {
@@ -445,7 +494,48 @@ fun QuickMenu(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onPreviewKeyEvent { keyEvent ->
+                // RetroArch/Ozone-style fast navigation (spec 2026-08-09): L1/R1 switch tabs,
+                // L2/R2 page-scroll the active tab's list. Preview phase runs before the
+                // focused node, so this works wherever the focus is.
+                if (keyEvent.type == KeyEventType.KeyDown && isVisible) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        KeyEvent.KEYCODE_BUTTON_L1 -> {
+                            selectAdjacentTab(-1)
+                            true
+                        }
+                        KeyEvent.KEYCODE_BUTTON_R1 -> {
+                            selectAdjacentTab(+1)
+                            true
+                        }
+                        KeyEvent.KEYCODE_BUTTON_L2 -> {
+                            val state: ScrollState? = currentTabScrollState
+                            if (state != null) {
+                                quickMenuScope.launch {
+                                    state.scrollBy((state.viewportSize / 2).coerceAtLeast(240).toFloat())
+                                }
+                            }
+                            true
+                        }
+                        KeyEvent.KEYCODE_BUTTON_R2 -> {
+                            val state: ScrollState? = currentTabScrollState
+                            if (state != null) {
+                                quickMenuScope.launch {
+                                    state.scrollBy(-(state.viewportSize / 2).coerceAtLeast(240).toFloat())
+                                }
+                            }
+                            true
+                        }
+                        else -> false
+                    }
+                } else {
+                    false
+                }
+            },
+    ) {
         // Gamepad stick/hat axis -> Compose focus navigation (spec 2026-08-08-dpad).
         JoystickFocusNavigator(enabled = isVisible)
         // Gamepad A/B -> DPAD_CENTER/BACK so focused rows activate and overlays dismiss.
@@ -820,6 +910,21 @@ fun QuickMenu(
                         }
                     }
                 }
+                // RetroArch/Ozone footer hints (spec 2026-08-09): contextual gamepad actions
+                // at the bottom of the sidebar (localized; shown only with a gamepad connected).
+                GamepadActionBar(
+                    actions = listOf(
+                        GamepadAction(GamepadButton.A, R.string.action_select),
+                        GamepadAction(GamepadButton.B, R.string.action_back),
+                        GamepadAction(GamepadButton.LB, R.string.action_switch_tab),
+                        GamepadAction(GamepadButton.RB, R.string.action_switch_tab),
+                        GamepadAction(GamepadButton.LT, R.string.action_page_scroll),
+                        GamepadAction(GamepadButton.RT, R.string.action_page_scroll),
+                    ),
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                    visible = isVisible,
+                )
+
             }
         }
     }

@@ -1078,6 +1078,9 @@
 
     <!-- Gamepad Actions -->
     <string name="action_select">Selecionar</string>
+    <string name="action_back">Voltar</string>
+    <string name="action_switch_tab">Aba</string>
+    <string name="action_page_scroll">Página</string>
     <string name="action_refresh">Atualizar</string>
     <string name="action_details">Detalhes</string>
     <string name="action_add_game">Adicionar jogo</string>

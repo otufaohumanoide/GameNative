@@ -1426,6 +1426,9 @@
 
     <!-- Gamepad Actions -->
     <string name="action_select">Select</string>
+    <string name="action_back">Back</string>
+    <string name="action_switch_tab">Tab</string>
+    <string name="action_page_scroll">Page</string>
     <string name="action_refresh">Refresh</string>
     <string name="action_details">Details</string>
     <string name="action_add_game">Add Game</string>
