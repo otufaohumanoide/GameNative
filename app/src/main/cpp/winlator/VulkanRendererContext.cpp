@@ -1,6 +1,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include "VulkanRendererContext.h"
+#include <unistd.h>
 #include <stdexcept>
 #include <cstdlib>
 #include <cstring>
@@ -954,7 +955,13 @@ void VulkanRendererContext::renderLoop() {
         if (!isRunning) break;
 
         if (swapchain == VK_NULL_HANDLE || cmdBufs.empty()) continue;
-        try { renderFrame(); } catch(...) {}
+        try {
+            renderFrame();
+        } catch (const std::exception& e) {
+            RLOG_E("renderFrame threw: %s", e.what());
+        } catch (...) {
+            RLOG_E("renderFrame threw (unknown exception)");
+        }
     }
 }
 
@@ -1033,7 +1040,12 @@ ok=true;}catch(...){}
     if (imgInFlight[imgIdx]!=VK_NULL_HANDLE &&
         (!currentFenceWaited || imgInFlight[imgIdx] != inFlightFences[currentFrame])) {
         if (!vk_.GetFenceStatus || vk_.GetFenceStatus(device, imgInFlight[imgIdx]) == VK_NOT_READY) {
-            vk_.WaitForFences(device,1,&imgInFlight[imgIdx],VK_TRUE,UINT64_MAX);
+            if (vk_.WaitForFences(device,1,&imgInFlight[imgIdx],VK_TRUE, 500000000ULL) != VK_SUCCESS) {
+                // GPU wedge guard: never freeze the render loop forever on a stalled fence.
+                // Log loudly and skip the frame; the loop stays alive for diagnosis/recovery.
+                RLOG_E("renderFrame: imgInFlight fence timeout (GPU stalled?) - skipping frame");
+                return;
+            }
         }
     }
     imgInFlight[imgIdx]=inFlightFences[currentFrame];
@@ -1058,8 +1070,15 @@ ok=true;}catch(...){}
         if (__system_property_get("debug.gamenative.preset", pbuf) > 0 && pbuf[0] != '\0') {
             if (sLastPresetOverride != pbuf) {
                 sLastPresetOverride = pbuf;
-                presetToLoad = pbuf;
-                RLOG("librashader: runtime preset override -> %s", pbuf);
+                // Only honor the override when it names an existing preset file: a stale
+                // debug.gamenative.preset left over from a previous session (or a bad value)
+                // must NOT hijack the UI's preset request and drop the chain to inactive.
+                if (access(pbuf, F_OK) == 0) {
+                    presetToLoad = pbuf;
+                    RLOG("librashader: runtime preset override -> %s", pbuf);
+                } else {
+                    RLOG_E("librashader: ignoring runtime preset override (no such file): %s", pbuf);
+                }
             }
         } else if (!sLastPresetOverride.empty()) {
             sLastPresetOverride.clear();
@@ -1072,6 +1091,8 @@ ok=true;}catch(...){}
             }
             libraShader.reloadPreset(presetToLoad);
             libraShaderActive.store(libraShader.isActive());
+            // New preset requested -> retry the chain (clear the failure latch).
+            libraChainFailed = false;
             RLOG("librashader: preset chain active=%d", (int)libraShader.isActive());
             if (!libraShader.isActive()) RLOG_E("librashader: filter chain create failed: %s", libraShader.getLastError().c_str());
             libraNeedsHistoryClear = true;
@@ -1168,7 +1189,12 @@ ok=true;}catch(...){}
             vk_.CreateFence(device,&ffi,nullptr,&filterFence);
             return;
         }
-        vk_.WaitForFences(device,1,&filterFence,VK_TRUE,UINT64_MAX);
+        if (vk_.WaitForFences(device,1,&filterFence,VK_TRUE, 500000000ULL) != VK_SUCCESS) {
+            // GPU wedge guard (same rationale as the imgInFlight wait above): a wedged queue
+            // must not freeze the loop; skip this frame's present and keep diagnosing.
+            RLOG_E("renderFrame: compositor fence timeout (GPU wedged?) - skipping frame");
+            return;
+        }
 
         // DIAG: confirm the filter's INPUT (offscreenImage) contains the game.
         readbackOffscreenDiag();
@@ -1224,6 +1250,7 @@ ok=true;}catch(...){}
                 transferBarrierWide(filterCmdBuf, offscreenImage,
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                libraShader.applyPendingParams();   // render-thread param application (generation)
                 bool ok = libraShader.applyFrame(filterCmdBuf, libraFrameCount++,
                     offscreenImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
                     filterOutputImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
@@ -1256,6 +1283,7 @@ ok=true;}catch(...){}
             transferBarrierWide(filterCmdBuf, offscreenImage,
                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            libraShader.applyPendingParams();   // render-thread param application (generation)
             bool libraOk = libraShader.applyFrame(filterCmdBuf, libraFrameCount++,
                 offscreenImage, VK_FORMAT_R8G8B8A8_UNORM,
                 (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
@@ -1304,89 +1332,76 @@ ok=true;}catch(...){}
             // DEFAULT path: EXACTLY the TEST MODE C structure that provably presents the filter
             // output on screen (applyFrame + present blit in the SAME command buffer, narrow
             // CAO->SRO transition, NEAREST blit sampler, no in-CB readback).
+            //
+            // LAYOUT INVARIANTS (ARMSX2 Task 3):
+            //  - filterOutputImage is always COLOR_ATTACHMENT_OPTIMAL at the top of this block
+            //    (tracked in filterOutputLayout; UNDEFINED on the 1st frame / after recreate,
+            //    which transferBarrierWide handles). It is restored to CAO at the end of every
+            //    present, so the tracked layout never drifts.
+            //  - offscreenImage is always COLOR_ATTACHMENT_OPTIMAL when the compositor finishes
+            //    (its render pass ends in CAO). The compositor itself transitions it from
+            //    UNDEFINED every frame, so the librashader path leaving it in SRO is harmless.
             VkCommandBufferBeginInfo fbi{}; fbi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             if (vk_.BeginCommandBuffer(filterCmdBuf,&fbi)!=VK_SUCCESS) throw std::runtime_error("begin filter cb");
-            transferBarrierWide(filterCmdBuf, filterOutputImage,
-                filterOutputLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-            filterOutputLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            transferBarrierWide(filterCmdBuf, offscreenImage,
-                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-            bool ok = libraShader.applyFrame(filterCmdBuf, libraFrameCount++,
-                offscreenImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
-                filterOutputImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
-                VkExtent2D{(uint32_t)surfaceWidth, (uint32_t)surfaceHeight}, clearHistoryThisFrame);
-            if (!ok) RLOG_E("librashader: applyFrame failed: %s", libraShader.getLastError().c_str());
-            // narrow CAO->SRO (same as TEST MODE C)
-            transition(filterCmdBuf, filterOutputImage,
-                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-            // Present the filter output + draw the cursor INSIDE the same render pass. The old
-            // separate cursor pass used the CLEAR-load swapchain render pass, which wiped the
-            // presented frame to black whenever the cursor was visible.
-            {
-                VkRenderPassBeginInfo rpi{};
-                rpi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                rpi.renderPass = renderPass;
-                rpi.framebuffer = swapchainFBs[imgIdx];
-                rpi.renderArea = {{0, 0}, swapchainExt};
-                VkClearValue clr = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
-                rpi.clearValueCount = 1; rpi.pClearValues = &clr;
-                vk_.CmdBeginRenderPass(filterCmdBuf, &rpi, VK_SUBPASS_CONTENTS_INLINE);
-                VkViewport vp{0, 0, (float)swapchainExt.width, (float)swapchainExt.height, 0, 1};
-                vk_.CmdSetViewport(filterCmdBuf, 0, 1, &vp);
-                VkRect2D sc{{0, 0}, swapchainExt};
-                vk_.CmdSetScissor(filterCmdBuf, 0, 1, &sc);
-                VkDescriptorImageInfo dii{};
-                dii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                dii.imageView = filterOutputView;
-                dii.sampler = blitSampler;
-                VkWriteDescriptorSet wr{};
-                wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                wr.dstSet = blitDS; wr.dstBinding = 0;
-                wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                wr.descriptorCount = 1; wr.pImageInfo = &dii;
-                vk_.UpdateDescriptorSets(device, 1, &wr, 0, nullptr);
-                vk_.CmdBindPipeline(filterCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-                vk_.CmdBindDescriptorSets(filterCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    pipeLayout, 0, 1, &blitDS, 0, nullptr);
-                WindowPushConstants pc{};
-                pc.ndcX0 = -1.0f; pc.ndcY0 = -1.0f;
-                pc.ndcX1 =  1.0f; pc.ndcY1 =  1.0f;
-                pc.useTexAlpha = 0; pc.effectId = 0; pc.sharpness = 0.0f;
-                pc.resW = (float)swapchainExt.width; pc.resH = (float)swapchainExt.height;
-                pc.effectMask = 0; pc.brightness = 0.0f; pc.contrast = 0.0f; pc.gamma = 1.0f;
-                pc.outW = (float)swapchainExt.width; pc.outH = (float)swapchainExt.height;
-                vk_.CmdPushConstants(filterCmdBuf, pipeLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-                vk_.CmdDraw(filterCmdBuf, 4, 1, 0, 0);
-                // cursor inside the same pass (no clear)
-                if (effectiveCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
-                    vk_.CmdBindDescriptorSets(filterCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        pipeLayout, 0, 1, &cursorDS, 0, nullptr);
-                    float cx=(float)std::max(0,(int)ptrX-curHotX), cy=(float)std::max(0,(int)ptrY-curHotY);
-                    WindowPushConstants cpc{};
-                    cpc.ndcX0=(ox+cx*sx)/cw*2.f-1.f; cpc.ndcY0=(oy+cy*sy)/ch*2.f-1.f;
-                    cpc.ndcX1=(ox+(cx+curW)*sx)/cw*2.f-1.f; cpc.ndcY1=(oy+(cy+curH)*sy)/ch*2.f-1.f;
-                    cpc.useTexAlpha=1;
-                    cpc.effectId=0; cpc.sharpness=0.f;
-                    cpc.resW=(float)std::max(1,(int)curW); cpc.resH=(float)std::max(1,(int)curH);
-                    cpc.effectMask=0; cpc.brightness=0.f; cpc.contrast=0.f; cpc.gamma=1.f;
-                    cpc.outW=(float)std::max(1,(int)curW); cpc.outH=(float)std::max(1,(int)curH);
-                    vk_.CmdPushConstants(filterCmdBuf, pipeLayout,
-                        VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(cpc),&cpc);
-                    vk_.CmdDraw(filterCmdBuf,4,1,0,0);
+            if (libraChainFailed) {
+                // Latch (ARMSX2 pattern): a chain that errored is not retried 60x/s (each retry
+                // would rebuild descriptors on a half-dead chain). Present the UNSHADED offscreen
+                // (the frame without shader) — never stale/garbage filterOutput. filterOutput
+                // stays in CAO (its tracked layout is already CAO for the next frame).
+                static uint64_t sLatchLog = 0;
+                if ((sLatchLog++ & 0x3F) == 0)
+                    RLOG("librashader: chain latched (failed) - presenting unshaded frame");
+                transferBarrierWide(filterCmdBuf, offscreenImage,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                recordPresentPass(filterCmdBuf, imgIdx, offscreenView, sampler,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                presentCB = filterCmdBuf;
+                cursorDrawnInPass = true;
+            } else {
+                transferBarrierWide(filterCmdBuf, filterOutputImage,
+                    filterOutputLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+                filterOutputLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                transferBarrierWide(filterCmdBuf, offscreenImage,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                libraShader.applyPendingParams();   // render-thread param application (generation)
+                bool ok = libraShader.applyFrame(filterCmdBuf, libraFrameCount++,
+                    offscreenImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+                    filterOutputImage, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)surfaceWidth, (uint32_t)surfaceHeight,
+                    VkExtent2D{(uint32_t)surfaceWidth, (uint32_t)surfaceHeight}, clearHistoryThisFrame);
+                if (!ok) {
+                    // ARMSX2 pattern: a failed frame() degrades to the unshaded frame instead of
+                    // presenting a stale/garbage filterOutput. offscreen is already SRO here, so
+                    // present it; filterOutput stays CAO (never transitioned to SRO), which keeps
+                    // the tracked filterOutputLayout correct for the next frame.
+                    RLOG_E("librashader: applyFrame failed: %s", libraShader.getLastError().c_str());
+                    libraChainFailed = true;
+                    recordPresentPass(filterCmdBuf, imgIdx, offscreenView, sampler,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                } else {
+                    // narrow CAO->SRO (same as TEST MODE C)
+                    transition(filterCmdBuf, filterOutputImage,
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+                    // Present the filter output + draw the cursor INSIDE the same render pass. The
+                    // old separate cursor pass used the CLEAR-load swapchain render pass, which
+                    // wiped the presented frame to black whenever the cursor was visible.
+                    recordPresentPass(filterCmdBuf, imgIdx, filterOutputView, blitSampler,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    // restore filterOutputImage to CAO so the tracked layout stays valid next frame
+                    transferBarrierWide(filterCmdBuf, filterOutputImage,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
                 }
-                vk_.CmdEndRenderPass(filterCmdBuf);
+                presentCB = filterCmdBuf;
+                cursorDrawnInPass = true;
+                static uint64_t sOkLog = 0;
+                if ((sOkLog++ & 0x3F) == 0)
+                    RLOG("librashader: DEFAULT path ok (shader present) frame=%llu", (unsigned long long)libraFrameCount);
             }
-            // restore filterOutputImage to CAO so the tracked layout stays valid next frame
-            transferBarrierWide(filterCmdBuf, filterOutputImage,
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-            presentCB = filterCmdBuf;
-            cursorDrawnInPass = true;
         }
 
         if (!cursorDrawnInPass && !libraDiagTestBlit() && effectiveCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
@@ -1422,6 +1437,10 @@ ok=true;}catch(...){}
             throw std::runtime_error("end present cb");
         }
     } else {
+        static uint64_t sNoLibraLog = 0;
+        if ((sNoLibraLog++ & 0xFF) == 0)
+            RLOG("librashader: NON-LIBRA path (shader OFF/inactive) frame=%llu",
+                 (unsigned long long)libraFrameCount);
         recordCmdBuf(cmdBufs[currentFrame], imgIdx, frameDraws,
             frameAhbTransitions, framePreUpload, framePostUpload,
             curUpload, hasCurUpload,
@@ -1689,6 +1708,8 @@ void VulkanRendererContext::dumpRendererInfo() {
         "Surface: %dx%d container: %dx%d",
         surfaceWidth,surfaceHeight,containerWidth,containerHeight);
     __android_log_print(ANDROID_LOG_DEBUG,WLOG_TAG,"=== END RENDERER INFO ===");
+    RLOG("librashader: diagMode=%d testBlit=%d probeGeneral=%d probeTransferWide=%d",
+         libraDiagMode(), (int)libraDiagTestBlit(), (int)gLibraProbeGeneralPresent, (int)gLibraProbeTransferWide);
 }
 
 void VulkanRendererContext::setFilterMode(int mode) {
@@ -2432,6 +2453,74 @@ void VulkanRendererContext::blitImageToSwapchainLayout(VkCommandBuffer cb, uint3
 
     vk_.CmdEndRenderPass(cb);
 }
+// Full-screen present of srcView (in srcLayout) into swapchain image imgIdx, drawing the cursor
+// in the SAME render pass (a separate cursor pass with loadOp=CLEAR wiped the presented frame —
+// bug-fix 5). Equivalent to the inline pass previously in the default librashader path; used by
+// that path, its failure fallback, and the latched-chain fallback.
+void VulkanRendererContext::recordPresentPass(VkCommandBuffer cb, uint32_t imgIdx,
+    VkImageView srcView, VkSampler srcSampler, VkImageLayout srcLayout)
+{
+    VkRenderPassBeginInfo rpi{};
+    rpi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpi.renderPass = renderPass;
+    rpi.framebuffer = swapchainFBs[imgIdx];
+    rpi.renderArea = {{0, 0}, swapchainExt};
+    VkClearValue clr = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    rpi.clearValueCount = 1; rpi.pClearValues = &clr;
+    vk_.CmdBeginRenderPass(cb, &rpi, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport vp{0, 0, (float)swapchainExt.width, (float)swapchainExt.height, 0, 1};
+    vk_.CmdSetViewport(cb, 0, 1, &vp);
+    VkRect2D sc{{0, 0}, swapchainExt};
+    vk_.CmdSetScissor(cb, 0, 1, &sc);
+    VkDescriptorImageInfo dii{};
+    dii.imageLayout = srcLayout;
+    dii.imageView = srcView;
+    dii.sampler = srcSampler;
+    VkWriteDescriptorSet wr{};
+    wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    wr.dstSet = blitDS; wr.dstBinding = 0;
+    wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wr.descriptorCount = 1; wr.pImageInfo = &dii;
+    vk_.UpdateDescriptorSets(device, 1, &wr, 0, nullptr);
+    vk_.CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vk_.CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        pipeLayout, 0, 1, &blitDS, 0, nullptr);
+    WindowPushConstants pc{};
+    pc.ndcX0 = -1.0f; pc.ndcY0 = -1.0f;
+    pc.ndcX1 =  1.0f; pc.ndcY1 =  1.0f;
+    pc.useTexAlpha = 0; pc.effectId = 0; pc.sharpness = 0.0f;
+    pc.resW = (float)swapchainExt.width; pc.resH = (float)swapchainExt.height;
+    pc.effectMask = 0; pc.brightness = 0.0f; pc.contrast = 0.0f; pc.gamma = 1.0f;
+    pc.outW = (float)swapchainExt.width; pc.outH = (float)swapchainExt.height;
+    vk_.CmdPushConstants(cb, pipeLayout,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+    vk_.CmdDraw(cb, 4, 1, 0, 0);
+    // cursor inside the same pass (no clear) — values read fresh from members (same source the
+    // render thread copies into locals at the top of renderFrame).
+    bool effCurVis = cursorVisible.load() && !scanoutActive.load();
+    if (effCurVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE) {
+        float ox = sceneOffsetX, oy = sceneOffsetY, sx = sceneScaleX, sy = sceneScaleY;
+        float cw = (float)containerWidth, ch = (float)containerHeight;
+        short ptrX = (short)pointerX.load(), ptrY = (short)pointerY.load();
+        short curHotX = cursorHotX, curHotY = cursorHotY, curW = cursorTexW, curH = cursorTexH;
+        vk_.CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            pipeLayout, 0, 1, &cursorDS, 0, nullptr);
+        float cx=(float)std::max(0,(int)ptrX-curHotX), cy=(float)std::max(0,(int)ptrY-curHotY);
+        WindowPushConstants cpc{};
+        cpc.ndcX0=(ox+cx*sx)/cw*2.f-1.f; cpc.ndcY0=(oy+cy*sy)/ch*2.f-1.f;
+        cpc.ndcX1=(ox+(cx+curW)*sx)/cw*2.f-1.f; cpc.ndcY1=(oy+(cy+curH)*sy)/ch*2.f-1.f;
+        cpc.useTexAlpha=1;
+        cpc.effectId=0; cpc.sharpness=0.f;
+        cpc.resW=(float)std::max(1,(int)curW); cpc.resH=(float)std::max(1,(int)curH);
+        cpc.effectMask=0; cpc.brightness=0.f; cpc.contrast=0.f; cpc.gamma=1.f;
+        cpc.outW=(float)std::max(1,(int)curW); cpc.outH=(float)std::max(1,(int)curH);
+        vk_.CmdPushConstants(cb, pipeLayout,
+            VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(cpc),&cpc);
+        vk_.CmdDraw(cb,4,1,0,0);
+    }
+    vk_.CmdEndRenderPass(cb);
+}
+
 
 void VulkanRendererContext::recordCompositorPass(VkCommandBuffer cb,
     const std::vector<DrawEntry>& draws,

@@ -3,6 +3,8 @@
 #include <dlfcn.h>
 #include <string>
 #include <mutex>
+#include <vector>
+#include <atomic>
 
 struct _shader_preset;
 typedef struct _shader_preset *libra_shader_preset_t;
@@ -32,7 +34,13 @@ public:
 
     void reloadPreset(const std::string& presetPath);
     bool isActive() const { return chain != nullptr; }
+    // Store-only: NEVER touches the chain from the caller's thread. The chain is
+    // single-threaded (render thread); pending values are applied by applyPendingParams()
+    // on the render thread just before applyFrame (ARMSX2 generation pattern).
     void setParam(const std::string& name, float value);
+    // Render-thread only: applies any pending params to the live chain (fast path: one
+    // atomic load per frame when nothing changed). Called before applyFrame.
+    void applyPendingParams();
 
     bool applyFrame(VkCommandBuffer cb, uint64_t frameCount,
                     VkImage srcImage, VkFormat srcFormat, uint32_t srcW, uint32_t srcH,
@@ -59,6 +67,14 @@ private:
     std::string presetPath;
     std::string lastError;
     std::mutex mtx;
+
+    // Deferred param store (ARMSX2 pattern): UI writes here under paramStoreMtx and bumps
+    // paramGeneration (release); the render thread snapshots when generation != applied
+    // and applies to the chain under mtx (which serializes with applyFrame/reloadPreset).
+    std::mutex paramStoreMtx;
+    std::vector<std::pair<std::string, float>> pendingParams;
+    std::atomic<uint64_t> paramGeneration{0};
+    uint64_t appliedGeneration = 0;
 
     // C API function pointers (dlopened from liblibrashader.so)
     libra_error_t (*fnPresetCreateWithOptions)(const char*, libra_preset_ctx_t*,

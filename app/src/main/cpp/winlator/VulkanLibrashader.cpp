@@ -52,60 +52,101 @@ bool VulkanLibrashader::init(VkInstance inst, VkPhysicalDevice pdev, VkDevice de
 void VulkanLibrashader::reloadPreset(const std::string& path) {
     std::lock_guard<std::mutex> lk(mtx);
     presetPath = path;
+    // A fresh chain starts with the preset's initial values; force the consumer to
+    // re-apply the latest pending params on its next applyPendingParams() call.
+    appliedGeneration = 0;
     if (!handle) { lastError = "library not loaded"; return; }
-
-    if (chain) { fnVkFilterChainFree(&chain); chain = nullptr; }
-    if (preset) { fnPresetFree(&preset); preset = nullptr; }
-    if (presetCtx) { fnPresetCtxFree(&presetCtx); presetCtx = nullptr; }
 
     if (path.empty()) { lastError.clear(); return; }
 
-    libra_error_t err = fnPresetCtxCreate(&presetCtx);
-    if (err != 0) { lastError = "preset_ctx_create failed"; LLOG_E("%s", lastError.c_str()); return; }
-    if (fnPresetCtxSetAllowRotation) fnPresetCtxSetAllowRotation(&presetCtx, false);
+    // CREATE-FIRST swap (ARMSX2 spirit, hardened): build the new chain completely BEFORE
+    // releasing the old one. If the new create fails, the previous chain stays active and the
+    // frame degrades gracefully (old shader keeps running) instead of dropping to no-shader or
+    // black. Also, the old chain is only freed after the new create's internal vkQueueWaitIdle
+    // has guaranteed the previous present CB finished with its frame objects (a free-first
+    // sequence could free objects still referenced by an in-flight present CB on Adreno).
+    libra_shader_preset_t newPreset = nullptr;
+    libra_preset_ctx_t newCtx = nullptr;
+    libra_vk_filter_chain_t newChain = nullptr;
+    std::string errMsg;
+    bool ok = false;
+    do {
+        if (libra_error_t e = fnPresetCtxCreate(&newCtx)) { errMsg = "preset_ctx_create failed"; break; }
+        if (fnPresetCtxSetAllowRotation) fnPresetCtxSetAllowRotation(&newCtx, false);
+        libra_preset_opt_t presetOpt{}; presetOpt.version = 2;
+        if (libra_error_t e = fnPresetCreateWithOptions(path.c_str(), &newCtx, &presetOpt, &newPreset)) {
+            errMsg = "preset_create_with_options failed"; break;
+        }
+        newCtx = nullptr;   // preset owns the ctx from here on
 
-    libra_preset_opt_t presetOpt{};
-    presetOpt.version = 2;
-    err = fnPresetCreateWithOptions(path.c_str(), &presetCtx, &presetOpt, &preset);
-    if (err != 0) {
-        lastError = "preset_create_with_options failed";
-        LLOG_E("%s", lastError.c_str());
-        if (presetCtx) { fnPresetCtxFree(&presetCtx); presetCtx = nullptr; }
+        libra_device_vk_t vkDev{};
+        vkDev.physical_device = physicalDevice;
+        vkDev.instance = instance;
+        vkDev.device = device;
+        vkDev.queue = queue;
+        vkDev.entry = gipa;
+
+        filter_chain_vk_opt_t opt{};
+        opt.version = 2;
+        opt.frames_in_flight = 3;
+        opt.force_no_mipmaps = false;
+        opt.use_dynamic_rendering = false;
+        opt.disable_cache = false;
+
+        if (libra_error_t e = fnVkFilterChainCreate(&newPreset, vkDev, &opt, &newChain)) {
+            errMsg = "vk_filter_chain_create failed"; break;
+        }
+        newPreset = nullptr;   // chain owns the preset from here on
+        ok = true;
+    } while (false);
+
+    if (!ok) {
+        // Failed create: keep the old chain/preset untouched and running.
+        lastError = errMsg;
+        LLOG_E("librashader: %s (keeping previous chain active)", errMsg.c_str());
+        if (newPreset) { fnPresetFree(&newPreset); newPreset = nullptr; }
+        if (newCtx) { fnPresetCtxFree(&newCtx); newCtx = nullptr; }
+        if (newChain) { fnVkFilterChainFree(&newChain); newChain = nullptr; }
         return;
     }
-    presetCtx = nullptr;
 
-    libra_device_vk_t vkDev{};
-    vkDev.physical_device = physicalDevice;
-    vkDev.instance = instance;
-    vkDev.device = device;
-    vkDev.queue = queue;
-    vkDev.entry = gipa;
-
-    filter_chain_vk_opt_t opt{};
-    opt.version = 2;
-    opt.frames_in_flight = 3;
-    opt.force_no_mipmaps = false;
-    opt.use_dynamic_rendering = false;
-    opt.disable_cache = false;
-
-    err = fnVkFilterChainCreate(&preset, vkDev, &opt, &chain);
-    if (err != 0) {
-        lastError = "vk_filter_chain_create failed";
-        LLOG_E("%s", lastError.c_str());
-        if (preset) { fnPresetFree(&preset); preset = nullptr; }
-        chain = nullptr;
-        return;
-    }
-    preset = nullptr;
+    // Swap: release the old chain/preset now that the new one is ready (GPU idle).
+    if (chain) { fnVkFilterChainFree(&chain); chain = nullptr; }
+    if (preset) { fnPresetFree(&preset); preset = nullptr; }
+    if (presetCtx) { fnPresetCtxFree(&presetCtx); presetCtx = nullptr; }
+    chain = newChain;
+    preset = newPreset;
 
     lastError.clear();
     LLOG("librashader: filter chain created for %s", path.c_str());
 }
 
 void VulkanLibrashader::setParam(const std::string& name, float value) {
+    // Store-only, safe from any thread (UI). Never touches the chain here: the chain is
+    // single-threaded and may be mid-frame on the render thread.
+    std::lock_guard<std::mutex> lk(paramStoreMtx);
+    bool found = false;
+    for (auto& p : pendingParams) {
+        if (p.first == name) { p.second = value; found = true; break; }
+    }
+    if (!found) pendingParams.emplace_back(name, value);
+    paramGeneration.fetch_add(1, std::memory_order_release);
+}
+
+void VulkanLibrashader::applyPendingParams() {
+    // Render-thread only. Serializes with applyFrame/reloadPreset via mtx; the chain
+    // itself is never touched from any other thread.
     std::lock_guard<std::mutex> lk(mtx);
-    if (chain && fnVkFilterChainSetParam) {
+    if (!chain || !fnVkFilterChainSetParam) return;
+    std::vector<std::pair<std::string, float>> params;
+    {
+        std::lock_guard<std::mutex> lk2(paramStoreMtx);
+        const uint64_t gen = paramGeneration.load(std::memory_order_acquire);
+        if (gen == appliedGeneration) return;   // fast path: 1 atomic load per frame
+        params = pendingParams;
+        appliedGeneration = gen;
+    }
+    for (auto& [name, value] : params) {
         libra_error_t err = fnVkFilterChainSetParam(&chain, name.c_str(), value);
         if (err != 0) LLOG_E("librashader: set_param %s failed", name.c_str());
     }

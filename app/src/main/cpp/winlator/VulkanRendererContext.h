@@ -430,6 +430,11 @@ private:
     std::atomic<bool> libraShaderActive{false};
     std::string libraShaderPresetPath;
     bool libraNeedsHistoryClear = true;
+    // Latch: a chain that failed applyFrame (or failed to compile) is not retried 60x/s.
+    // While latched, the default path presents the unshaded offscreen (ARMSX2 pattern:
+    // a broken preset degrades to the frame without shader, never to a black/garbage frame).
+    // Reset whenever a new preset is requested.
+    bool libraChainFailed = false;
 
     VkImage         offscreenImage = VK_NULL_HANDLE;
     VkDeviceMemory  offscreenMem = VK_NULL_HANDLE;
@@ -490,6 +495,11 @@ private:
     void blitProcessedToSwapchain(VkCommandBuffer cb, uint32_t imgIdx);
     void blitImageToSwapchain(VkCommandBuffer cb, uint32_t imgIdx, VkImageView srcView, VkSampler srcSampler);
     void blitImageToSwapchainLayout(VkCommandBuffer cb, uint32_t imgIdx, VkImageView srcView, VkSampler srcSampler, VkImageLayout imageLayout);
+    // Full-screen present of srcView (in srcLayout) into swapchain image imgIdx, drawing the
+    // cursor in the SAME render pass (a separate cursor pass with loadOp=CLEAR wiped the
+    // presented frame — bug-fix 5). Used by the default librashader path and its fallback.
+    void recordPresentPass(VkCommandBuffer cb, uint32_t imgIdx,
+                           VkImageView srcView, VkSampler srcSampler, VkImageLayout srcLayout);
     // P4-PROBE (temporary): blit processedImage -> dedicated diagDstImage with the melonDS wide
     // transfer barrier, read back diagDstImage (READBACK-D), leave both images in presentable state.
     void blitProcessedToDedicated(VkCommandBuffer cb);
