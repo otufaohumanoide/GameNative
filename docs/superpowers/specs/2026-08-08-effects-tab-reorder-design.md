@@ -10,9 +10,13 @@
 
 1. **RetroArch Shaders vira a PRIMEIRA seção do painel** (0 rolagem ao abrir): toggle + busca +
    lista agrupada sobem para o topo do `Column` do painel (hoje em `DisplayBrightnessRow`).
-2. **Efeitos legados entram numa seção colapsável "Legacy effects"** (padrão: **recolhida**),
-   com chevron + subtitle listando o conteúdo: *"Brightness · Scaling · FSR · Toon · FXAA ·
-   Vivid · CRT · NTSC"*. Um toque expande. Nada é removido — apenas deprioritizado.
+2. **Efeitos nativos entram numa seção colapsável "Renderer-native effects"** (padrão:
+   **recolhida**), com chevron + subtitle que expressa a ontologia do projeto: *"Built into the
+   renderer · complement RetroArch shaders · FSR · Scaling · Toon · FXAA · Vivid · CRT · NTSC"*.
+   A semântica é **complementaridade, não herança**: FSR/DLS/scaling/brilho/FXAA são tecnologias
+   implementadas no próprio renderer Vulkan e **coexistem** com os shaders (ex.: não há FSR no
+   RetroArch — são famílias diferentes de processamento de imagem). Um toque expande. Nada é
+   removido — apenas deprioritizado na hierarquia visual.
 3. **Reset** permanece dentro da seção legada (ele reseta os efeitos legados).
 4. **Foco de controle**: `firstItemFocusRequester` passa para o toggle de RetroArch Shaders
    (novo param opcional `focusRequester` em `ScreenEffectToggleRow`) — ao abrir o painel, o
@@ -24,7 +28,7 @@
 | # | Arquivo | Mudança | Aceite |
 |---|---|---|---|
 | 1 | `docs/superpowers/specs/2026-08-08-effects-tab-reorder-design.md` | este doc | — |
-| 2 | `ScreenEffectsPanel.kt` | mover bloco shaders (linhas ~786-902) para o topo do Column; envolver bloco legado (linhas ~647-784) em `LegacyEffectsHeader` colapsável (default collapsed) + estado `legacyEffectsExpanded` | painel abre mostrando shaders; legado recolhido; 1 toque expande |
+| 2 | `ScreenEffectsPanel.kt` | mover bloco shaders para o topo do Column; envolver bloco nativo em `NativeEffectsHeader` colapsável (default collapsed) + estado `nativeEffectsExpanded` | painel abre mostrando shaders; nativos recolhidos; 1 toque expande |
 | 3 | `ScreenEffectToggleRow` | param opcional `focusRequester` | foco inicial cai no toggle de shaders |
 | 4 | Build + device | `assembleModernDebug` + install | sem crash; painel abre na seção de shaders |
 

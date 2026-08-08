@@ -564,7 +564,7 @@ fun ScreenEffectsTabContent(
         mutableStateOf<List<Map.Entry<String, String>>>(emptyList())
     }
     var shaderQuery by remember(renderer, container) { mutableStateOf("") }
-    var legacyEffectsExpanded by remember(renderer, container) { mutableStateOf(false) }
+    var nativeEffectsExpanded by remember(renderer, container) { mutableStateOf(false) }
     var collapsedCategories by remember(renderer, container) { mutableStateOf(setOf<String>()) }
     var shaderPassCounts by remember(renderer, container) {
         mutableStateOf<Map<String, Int>>(emptyMap())
@@ -769,12 +769,13 @@ fun ScreenEffectsTabContent(
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // ═══ LEGACY EFFECTS — kept from the original fork, deprioritized (collapsible) ═══
-        LegacyEffectsHeader(
-            expanded = legacyEffectsExpanded,
-            onToggle = { legacyEffectsExpanded = !legacyEffectsExpanded },
+        // ═══ RENDERER-NATIVE EFFECTS — technologies built into the renderer that complement
+        // ═══ RetroArch shaders (FSR, scaling, FXAA, brightness…); collapsible, collapsed by default.
+        NativeEffectsHeader(
+            expanded = nativeEffectsExpanded,
+            onToggle = { nativeEffectsExpanded = !nativeEffectsExpanded },
         )
-        if (legacyEffectsExpanded) {
+        if (nativeEffectsExpanded) {
         DisplayBrightnessRow()
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -1529,9 +1530,11 @@ private fun passCountSubtitle(
     return parts.joinToString(" · ").ifBlank { null }
 }
 
-/** Collapsible section header for the deprioritized legacy effects (original-fork features). */
+/** Collapsible section header for renderer-native effects (FSR, scaling, FXAA, brightness…).
+ * These are technologies built into the Vulkan renderer itself — complementary to RetroArch
+ * shaders, not a replacement for them (e.g. FSR has no RetroArch equivalent). */
 @Composable
-private fun LegacyEffectsHeader(
+private fun NativeEffectsHeader(
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
@@ -1555,13 +1558,13 @@ private fun LegacyEffectsHeader(
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Legacy effects",
+                text = "Renderer-native effects",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "Brightness · Scaling · FSR · Toon · FXAA · Vivid · CRT · NTSC",
+                text = "Built into the renderer · complement RetroArch shaders · FSR · Scaling · Toon · FXAA · Vivid · CRT · NTSC",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
