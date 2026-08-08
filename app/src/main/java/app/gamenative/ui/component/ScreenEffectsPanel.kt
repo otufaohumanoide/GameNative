@@ -42,7 +42,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -76,7 +79,9 @@ import androidx.compose.ui.unit.dp
 import app.gamenative.R
 import app.gamenative.ui.component.dialog.categoryOf
 import app.gamenative.ui.component.dialog.ensureBundledShaders
+import app.gamenative.ui.component.dialog.friendlyCategoryName
 import app.gamenative.ui.component.dialog.friendlyName
+import app.gamenative.ui.component.dialog.resolvePassCount
 import app.gamenative.ui.component.dialog.loadShaderConfig
 import app.gamenative.ui.component.dialog.persistShaderConfig
 import app.gamenative.ui.theme.PluviaTheme
@@ -558,6 +563,11 @@ fun ScreenEffectsTabContent(
     var shaderOptions by remember(renderer, container) {
         mutableStateOf<List<Map.Entry<String, String>>>(emptyList())
     }
+    var shaderQuery by remember(renderer, container) { mutableStateOf("") }
+    var collapsedCategories by remember(renderer, container) { mutableStateOf(setOf<String>()) }
+    var shaderPassCounts by remember(renderer, container) {
+        mutableStateOf<Map<String, Int>>(emptyMap())
+    }
 
     LaunchedEffect(Unit) {
         val presets = withContext(Dispatchers.IO) {
@@ -565,6 +575,10 @@ fun ScreenEffectsTabContent(
             importer.listBundledPresets()
         }
         shaderOptions = presets
+        shaderPassCounts = withContext(Dispatchers.IO) {
+            val bundledDir = importer.bundledPresetsDir
+            presets.associate { entry -> entry.key to resolvePassCount(entry.key, bundledDir) }
+        }
     }
 
     fun persistShaderState(enabled: Boolean, path: String, name: String, relative: String) {
@@ -801,13 +815,88 @@ fun ScreenEffectsTabContent(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             } else {
-                shaderOptions.forEach { entry ->
-                    ShaderPresetRow(
-                        title = friendlyName(entry.key),
-                        subtitle = categoryOf(entry.key),
-                        selected = shaderEnabled && entry.key == shaderRelativePath,
-                        onClick = { applyShaderPreset(entry) },
-                    )
+                Spacer(modifier = Modifier.height(4.dp))
+                NoExtractOutlinedTextField(
+                    value = shaderQuery,
+                    onValueChange = { shaderQuery = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    placeholder = { Text("Search presets…") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (shaderQuery.isNotEmpty()) {
+                            IconButton(onClick = { shaderQuery = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                val query = shaderQuery.trim().lowercase()
+                val filtered = if (query.isEmpty()) {
+                    shaderOptions
+                } else {
+                    shaderOptions.filter { entry ->
+                        friendlyName(entry.key).lowercase().contains(query) ||
+                            categoryOf(entry.key)?.lowercase()?.contains(query) == true ||
+                            entry.key.lowercase().contains(query)
+                    }
+                }
+                if (query.isEmpty()) {
+                    // Grouped by family (folder), collapsible sections.
+                    val groups = filtered.groupBy { categoryOf(it.key) ?: "outros" }
+                    val ordered = shaderCategoryOrder + (groups.keys - shaderCategoryOrder.toSet()).sorted()
+                    ordered.filter { groups.containsKey(it) }.forEach { cat ->
+                        val items = groups.getValue(cat)
+                        val collapsed = cat in collapsedCategories
+                        ShaderCategoryHeader(
+                            label = friendlyCategoryName(cat),
+                            count = items.size,
+                            collapsed = collapsed,
+                            onClick = {
+                                collapsedCategories = if (collapsed) {
+                                    collapsedCategories - cat
+                                } else {
+                                    collapsedCategories + cat
+                                }
+                            },
+                        )
+                        if (!collapsed) {
+                            items.forEach { entry ->
+                                ShaderPresetRow(
+                                    title = friendlyName(entry.key),
+                                    subtitle = passCountSubtitle(entry.key, cat, shaderPassCounts),
+                                    selected = shaderEnabled && entry.key == shaderRelativePath,
+                                    onClick = { applyShaderPreset(entry) },
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    if (filtered.isEmpty()) {
+                        Text(
+                            text = "No presets match \"${shaderQuery.trim()}\"",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    } else {
+                        filtered.forEach { entry ->
+                            ShaderPresetRow(
+                                title = friendlyName(entry.key),
+                                subtitle = passCountSubtitle(
+                                    entry.key,
+                                    categoryOf(entry.key) ?: "outros",
+                                    shaderPassCounts,
+                                ),
+                                selected = shaderEnabled && entry.key == shaderRelativePath,
+                                onClick = { applyShaderPreset(entry) },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1403,6 +1492,64 @@ private fun ScreenEffectToggleRow(
         Box(contentAlignment = Alignment.CenterEnd) {
             ScreenEffectSwitch(enabled = enabled, accentColor = accentColor)
         }
+    }
+}
+
+/** Display order for the bundled preset families; unknown categories sort after these. */
+private val shaderCategoryOrder = listOf(
+    "crt", "lcd", "interpolation", "misc", "film", "cel", "hdr", "ntsc", "reshade", "nearest",
+    "bilinear", "stock", "outros",
+)
+
+/** Row subtitle for a preset: friendly category + pass count when known (e.g. "CRT · 4 passes"). */
+private fun passCountSubtitle(
+    entryKey: String,
+    category: String,
+    passCounts: Map<String, Int>,
+): String? {
+    val parts = mutableListOf(friendlyCategoryName(category))
+    passCounts[entryKey]?.takeIf { it > 0 }?.let { n ->
+        parts += "$n pass${if (n == 1) "" else "es"}"
+    }
+    return parts.joinToString(" · ").ifBlank { null }
+}
+
+@Composable
+private fun ShaderCategoryHeader(
+    label: String,
+    count: Int,
+    collapsed: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = if (collapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

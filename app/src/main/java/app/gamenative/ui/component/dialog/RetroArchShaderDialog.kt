@@ -31,6 +31,77 @@ fun categoryOf(key: String): String? {
     return if (slash > 0) key.substring(0, slash) else null
 }
 
+/** Human-readable labels for the known preset families (bundled slang-shaders layout). */
+private val CATEGORY_LABELS = mapOf(
+    "crt" to "CRT",
+    "lcd" to "LCD",
+    "interpolation" to "Upscaling",
+    "misc" to "Effects & Misc",
+    "film" to "Film",
+    "cel" to "Cel Shading",
+    "hdr" to "HDR",
+    "ntsc" to "NTSC / Composite",
+    "reshade" to "ReShade",
+    "nearest" to "Scaling",
+    "bilinear" to "Scaling",
+    "stock" to "Stock",
+    "outros" to "Other",
+)
+
+/** Human-readable category label, e.g. "crt" -> "CRT". Falls back to title-casing the raw name. */
+fun friendlyCategoryName(category: String): String =
+    CATEGORY_LABELS[category] ?: category
+        .split('_', '-')
+        .filter { it.isNotEmpty() }
+        .joinToString(" ") { part -> part.replaceFirstChar { c -> c.titlecase() } }
+
+/**
+ * Counts the shader passes of a `.slangp` preset: sums `shaderN = ...` entries (ignoring
+ * comments) and follows a `#reference <path>` chain one level deep (the referenced preset's
+ * shader entries count too). Returns 0 for unreadable/unknown files.
+ */
+fun passCountOf(presetFile: File): Int = passCountOf(presetFile, mutableSetOf())
+
+/**
+ * Counts the shader passes of a `.slangp` preset: sums `shaderN = ...` entries (ignoring
+ * comments) and resolves `#reference <path>` chains recursively (megatron-style presets are
+ * parameter overrides referencing a base preset 2-3 levels deep). Cycle-safe via a visited set.
+ */
+private fun passCountOf(presetFile: File, visited: MutableSet<String>): Int {
+    if (!presetFile.isFile) return 0
+    val canonical = runCatching { presetFile.canonicalPath }.getOrElse { presetFile.path }
+    if (!visited.add(canonical)) return 0 // cycle guard
+    val text = runCatching { presetFile.readText() }.getOrNull() ?: return 0
+    var count = 0
+    var reference: String? = null
+    for (rawLine in text.lineSequence()) {
+        val line = rawLine.trim()
+        if (line.isEmpty()) continue
+        if (line.startsWith('#')) {
+            if (line.startsWith("#reference")) {
+                reference = line.substringAfter(' ').trim().trim('"').takeIf { it.isNotEmpty() }
+            }
+            continue
+        }
+        if (line.startsWith("shader") && line.contains('=')) {
+            val key = line.substringBefore('=').trim()
+            if (key.removePrefix("shader").toIntOrNull() != null) count++
+        }
+    }
+    if (reference != null) {
+        count += passCountOf(File(presetFile.parentFile, reference), visited)
+    }
+    return count
+}
+
+/** Pass count for a bundled preset key (relative path, e.g. "misc/invert.slangp"), path-traversal safe. */
+fun resolvePassCount(key: String, bundledDir: File): Int {
+    if (key.isBlank()) return 0
+    val file = File(bundledDir, key).normalize()
+    if (!file.path.startsWith(bundledDir.path)) return 0
+    return passCountOf(file)
+}
+
 /**
  * Ensures the bundled shader presets are materialized from {@code assets/retroarch} into the app
  * files dir so they can be enumerated and imported by [ShaderImporter].
