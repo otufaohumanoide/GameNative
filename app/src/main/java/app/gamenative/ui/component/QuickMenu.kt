@@ -20,6 +20,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -419,8 +421,28 @@ fun QuickMenu(
         }
     }
 
+    // Track whether focus is on the tab rail (vs. tab content). Used by the hierarchical
+    // BackHandler (D2): B with focus in content returns to the selected tab's button;
+    // B with focus on the rail dismisses the menu.
+    var railFocused by remember { mutableStateOf(false) }
+
     BackHandler(enabled = isVisible) {
-        onDismiss()
+        if (railFocused) {
+            onDismiss()
+        } else {
+            // Hierarchical back: content -> selected tab button.
+            val requester = when (selectedTab) {
+                QuickMenuTab.HUD -> hudTabFocusRequester
+                QuickMenuTab.LSFG -> lsfgTabFocusRequester
+                QuickMenuTab.BFG -> bfgTabFocusRequester
+                QuickMenuTab.EFFECTS -> effectsTabFocusRequester
+                QuickMenuTab.TOOLS -> toolsTabFocusRequester
+                QuickMenuTab.INVITE -> inviteTabFocusRequester
+                else -> controllerTabFocusRequester
+            }
+            requester.requestFocus()
+            railFocused = true
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -438,11 +460,11 @@ fun QuickMenu(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onDismiss,
-                    ),
+                    // NOT clickable: a clickable scrim is focusable and can swallow invisible
+                    // focus (P1-4) — taps only.
+                    .pointerInput(Unit) {
+                        detectTapGestures { onDismiss() }
+                    },
             )
         }
 
@@ -510,7 +532,8 @@ fun QuickMenu(
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .verticalScroll(tabScrollState),
+                                    .verticalScroll(tabScrollState)
+                                    .onFocusChanged { railFocused = it.hasFocus },
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
@@ -1564,11 +1587,6 @@ private fun QuickMenuTabButton(
                     Modifier
                 }
             )
-            .onFocusChanged {
-                if (it.isFocused && !selected) {
-                    onSelected()
-                }
-            }
             .selectable(
                 selected = selected,
                 interactionSource = interactionSource,
@@ -1784,9 +1802,13 @@ private fun QuickMenuAdjustmentRow(
             }
             .focusable(interactionSource = interactionSource)
             .onPreviewKeyEvent { keyEvent ->
+                // A-lock arrives as DPAD_CENTER via GamepadKeyBridge (raw BUTTON_A handled too
+                // for surfaces without a bridge); B-unlock uses the RAW BUTTON_B (bridge no
+                // longer translates B — decision D1).
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && isFocused) {
                     when {
-                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BUTTON_A -> {
+                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                            keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BUTTON_A -> {
                             isAdjustmentLocked = !isAdjustmentLocked
                             true
                         }

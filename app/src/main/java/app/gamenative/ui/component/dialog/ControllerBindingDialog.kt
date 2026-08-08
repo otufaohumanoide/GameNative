@@ -23,6 +23,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.gamenative.ui.component.NoExtractOutlinedTextField
 import com.winlator.inputcontrols.Binding
+import app.gamenative.ui.component.GamepadKeyBridge
+import app.gamenative.ui.component.JoystickFocusNavigator
 
 /**
  * Dialog for selecting controller button bindings.
@@ -116,6 +118,9 @@ fun ControllerBindingDialog(
             dismissOnClickOutside = false
         )
     ) {
+        // Gamepad support for this dialog window (stick/hat -> focus, A -> activate).
+        JoystickFocusNavigator(enabled = true)
+        GamepadKeyBridge(enabled = true)
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.98f)  // Nearly full width for better space utilization

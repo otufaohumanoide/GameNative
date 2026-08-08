@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalView
 fun JoystickFocusNavigator(
     enabled: Boolean,
     deadZone: Float = 0.45f,
+    releaseZone: Float = 0.30f,
     cooldownMs: Long = 180L,
 ) {
     val focusManager = LocalFocusManager.current
@@ -34,6 +35,10 @@ fun JoystickFocusNavigator(
     DisposableEffect(enabled, view) {
         if (!enabled) return@DisposableEffect onDispose {}
         var lastMoveAt = 0L
+        // Hysteresis (P3-20): after issuing a move, the stick must return below releaseZone
+        // before another move is accepted — a stick resting near the dead-zone edge cannot
+        // produce phantom movement.
+        var armed = true
         val listener = View.OnGenericMotionListener { _, ev ->
             if (ev.actionMasked != MotionEvent.ACTION_MOVE) return@OnGenericMotionListener false
             val isGamepad = (ev.source and InputDevice.SOURCE_JOYSTICK) != 0 ||
@@ -43,6 +48,14 @@ fun JoystickFocusNavigator(
             val stickY = ev.getAxisValue(MotionEvent.AXIS_Y)
             val hatX = ev.getAxisValue(MotionEvent.AXIS_HAT_X)
             val hatY = ev.getAxisValue(MotionEvent.AXIS_HAT_Y)
+            val magnitude = kotlin.math.max(
+                kotlin.math.max(kotlin.math.abs(stickX), kotlin.math.abs(stickY)),
+                kotlin.math.max(kotlin.math.abs(hatX), kotlin.math.abs(hatY)),
+            )
+            if (!armed) {
+                if (magnitude < releaseZone) armed = true
+                return@OnGenericMotionListener true
+            }
             val now = SystemClock.uptimeMillis()
             val direction = when {
                 hatY < -0.5f -> FocusDirection.Up
@@ -58,6 +71,7 @@ fun JoystickFocusNavigator(
             if (direction == null) return@OnGenericMotionListener false
             if (now - lastMoveAt < cooldownMs) return@OnGenericMotionListener true
             lastMoveAt = now
+            armed = false
             focusManager.moveFocus(direction)
             true
         }

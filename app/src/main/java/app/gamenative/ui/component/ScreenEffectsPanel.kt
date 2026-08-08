@@ -1256,9 +1256,13 @@ private fun ScreenEffectAdjustmentRow(
             }
             .focusable(interactionSource = interactionSource)
             .onPreviewKeyEvent { keyEvent ->
+                // A-lock arrives as DPAD_CENTER via GamepadKeyBridge (raw BUTTON_A handled too
+                // for surfaces without a bridge); B-unlock uses the RAW BUTTON_B (bridge no
+                // longer translates B — decision D1).
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && isFocused) {
                     when {
-                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BUTTON_A -> {
+                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                            keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BUTTON_A -> {
                             isAdjustmentLocked = !isAdjustmentLocked
                             true
                         }
@@ -1524,8 +1528,10 @@ private fun Modifier.gamepadActivate(
     onClick: () -> Unit,
 ): Modifier = onPreviewKeyEvent { keyEvent ->
     val native = keyEvent.nativeKeyEvent
-    val isActivate = native.keyCode == KeyEvent.KEYCODE_BUTTON_A ||
-        native.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+    // BUTTON_A never reaches Compose in bridged windows (translated to DPAD_CENTER at the
+    // view level — decision D1), so only the keys that actually arrive are handled here.
+    val isActivate = native.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+        native.keyCode == KeyEvent.KEYCODE_BUTTON_A ||
         native.keyCode == KeyEvent.KEYCODE_ENTER
     if (isFocused && isActivate &&
         keyEvent.type == KeyEventType.KeyDown &&

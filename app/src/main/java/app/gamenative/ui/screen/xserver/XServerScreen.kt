@@ -225,6 +225,7 @@ import kotlin.text.lowercase
 import com.winlator.PrefManager as WinlatorPrefManager
 import app.gamenative.ui.component.GamepadKeyBridge
 import app.gamenative.ui.component.JoystickFocusNavigator
+import app.gamenative.ui.component.OverlayInputContext
 
 // Always re-extract drivers and DXVK on every launch to handle cases of container corruption
 // where games randomly stop working. Set to false once corruption issues are resolved.
@@ -1444,6 +1445,18 @@ fun XServerScreen(
         Timber.i("onActivityDestroyed")
         exit(xServerView!!.getxServer().winHandler, frameRating, currentAppInfo, container, appId, onExit, navigateBack)
     }
+    // Single source of truth for "is an overlay consuming input right now?" (D3).
+    // Every overlay state must be listed HERE — the key/motion handlers only consult this.
+    val overlayInputContext = if (
+        showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode ||
+        showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
+        showPlayingBlockedDialog
+    ) {
+        OverlayInputContext.OVERLAY
+    } else {
+        OverlayInputContext.NONE
+    }
+
     val onKeyEvent: (AndroidEvent.KeyEvent) -> Boolean = {
         val isKeyboard = Keyboard.isKeyboardDevice(it.event.device)
         val isPhysicalKeyboard = isKeyboard && it.event.device?.isVirtual != true
@@ -1467,9 +1480,7 @@ fun XServerScreen(
                 }
                 else -> false
             }
-        } else if ((showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode ||
-                showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
-                showPlayingBlockedDialog) && (isGamepad || isKeyboard)) {
+        } else if (overlayInputContext != OverlayInputContext.NONE && (isGamepad || isKeyboard)) {
             val escPressed = !keepPausedForEditor &&
                 isKeyboard &&
                 it.event.keyCode == KeyEvent.KEYCODE_ESCAPE
@@ -1541,9 +1552,7 @@ fun XServerScreen(
     val onMotionEvent: (AndroidEvent.MotionEvent) -> Boolean = {
         val isGamepad = ExternalController.isGameController(it.event?.device)
 
-        if ((showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode ||
-                showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
-                showPlayingBlockedDialog) && isGamepad) {
+        if (overlayInputContext != OverlayInputContext.NONE && isGamepad) {
             // Let Compose consume any gamepad motion while menu is visible.
             false
         } else {

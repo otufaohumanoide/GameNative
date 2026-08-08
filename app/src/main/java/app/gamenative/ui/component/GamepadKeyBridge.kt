@@ -7,18 +7,19 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalView
 
 /**
- * Bridges common gamepad buttons that Compose does not understand natively:
- * - BUTTON_A -> DPAD_CENTER (activates any focused clickable/selectable; Compose only
- *   reacts to Enter/Space/DPAD_CENTER),
- * - BUTTON_B -> BACK (dismisses BackHandler-aware overlays/dialogs).
+ * Bridges gamepad buttons that Compose does not understand natively.
  *
- * Installed on the host view (window) via setOnKeyListener, which runs BEFORE Compose's
- * dispatch; the translated events are re-dispatched through the same view so the rest of
- * the pipeline (focus system, BackHandler) behaves exactly as if the user pressed the
- * native key. The original button events are consumed so the game never sees them while
- * an overlay is open.
+ * BUTTON_A -> DPAD_CENTER: activates any focused clickable/selectable (Compose only reacts
+ * to Enter/Space/DPAD_CENTER). The translated events are re-dispatched through the same
+ * view so the focus system behaves exactly as if the user pressed DPAD_CENTER; the original
+ * A is consumed so the game never sees it while an overlay is open.
  *
- * Spec: docs/superpowers/specs/2026-08-08-dpad-shader-navigation-design.md
+ * BUTTON_B is deliberately left RAW (decision D1, spec 2026-08-08-gamepad-input-refactoring):
+ * surfaces handle it directly (adjustment rows unlock with B, gamepadBackHandler surfaces
+ * map it to hierarchical back) — no synthetic BACK through the Activity dispatcher, which was
+ * fragile (P2-12) and never reached OnBackPressedDispatcher anyway. The game never sees B
+ * because the XServerScreen routing already hands the event to Compose when an overlay is
+ * open.
  */
 @Composable
 fun GamepadKeyBridge(enabled: Boolean) {
@@ -30,6 +31,7 @@ fun GamepadKeyBridge(enabled: Boolean) {
                 KeyEvent.KEYCODE_BUTTON_A -> {
                     if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                         // Translate A -> DPAD_CENTER (activation key Compose understands).
+                        GamepadHaptics.vibrate(view.context)
                         val down = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER)
                         val up = KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER)
                         view.dispatchKeyEvent(down)
@@ -37,18 +39,7 @@ fun GamepadKeyBridge(enabled: Boolean) {
                     }
                     true // consume A (up too) so it never reaches the game/other layers
                 }
-                KeyEvent.KEYCODE_BUTTON_B -> {
-                    if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                        view.dispatchKeyEvent(
-                            KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK),
-                        )
-                        view.dispatchKeyEvent(
-                            KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK),
-                        )
-                    }
-                    true
-                }
-                else -> false
+                else -> false // B and everything else reach Compose raw
             }
         }
         view.setOnKeyListener(listener)
