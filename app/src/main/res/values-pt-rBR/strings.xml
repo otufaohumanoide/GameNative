@@ -1078,9 +1078,6 @@
 
     <!-- Gamepad Actions -->
     <string name="action_select">Selecionar</string>
-    <string name="action_back">Voltar</string>
-    <string name="action_switch_tab">Aba</string>
-    <string name="action_page_scroll">Página</string>
     <!-- RetroArch shader panel -->
     <string name="retroarch_shaders_title">Shaders RetroArch</string>
     <string name="shader_pick_preset">Escolha um preset abaixo</string>
