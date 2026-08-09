@@ -1,5 +1,19 @@
 package app.gamenative.ui.component.dialog
 
+import app.gamenative.ui.component.gamepadFocusIndex
+
+
+import app.gamenative.ui.component.gamepadAdjustableRow
+
+
+import app.gamenative.ui.component.gamepadBackHandler
+
+
+import app.gamenative.ui.component.GamepadFocusScope
+
+
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -9,9 +23,12 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FileCopy
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -32,8 +49,6 @@ import com.winlator.inputcontrols.ControlElement
 import com.winlator.widget.InputControlsView
 import java.util.Locale
 import kotlin.math.roundToInt
-import app.gamenative.ui.component.GamepadKeyBridge
-import app.gamenative.ui.component.JoystickFocusNavigator
 
 /**
  * Normalise a [Binding]'s [toString] into the short label that appears on
@@ -313,9 +328,19 @@ fun ElementEditorDialog(
             dismissOnClickOutside = false
         )
     ) {
-        // Gamepad support for this dialog window (stick/hat -> focus, A/B -> activate/dismiss).
-        app.gamenative.ui.component.JoystickFocusNavigator(enabled = true)
-        app.gamenative.ui.component.GamepadKeyBridge(enabled = true)
+        val exitDialogBackAction: () -> Unit = {
+            if (hasUnsavedChanges) {
+                showExitConfirmation = true
+            } else {
+                onDismiss()
+            }
+        }
+        val editorInitialFocus = remember { FocusRequester() }
+        // Gamepad window bootstrap (stick/hat -> focus, A -> activate, B -> hierarchical back).
+        GamepadFocusScope(
+            backAction = exitDialogBackAction,
+            initialFocusRequester = editorInitialFocus,
+        ) {
         // Show either full settings dialog or minimized size adjuster
         if (showSizeAdjuster) {
             // Minimized size adjuster mode
@@ -323,6 +348,7 @@ fun ElementEditorDialog(
                 element = element,
                 view = view,
                 currentScale = currentScale,
+                initialFocusRequester = editorInitialFocus,
                 onScaleChange = {
                     currentScale = it
                     hasUnsavedChanges = true
@@ -346,7 +372,9 @@ fun ElementEditorDialog(
         } else {
             // Full settings dialog
             Scaffold(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .gamepadBackHandler(exitDialogBackAction),
                 topBar = {
                 CenterAlignedTopAppBar(
                     title = {
@@ -440,6 +468,7 @@ fun ElementEditorDialog(
                         subtitle = { Text(stringResource(R.string.element_type_subtitle)) },
                         value = currentTypeIndex,
                         items = typeNames,
+                        modifier = Modifier.focusRequester(editorInitialFocus),
                         onItemSelected = { index ->
                             val newType = types[index]
                             currentTypeIndex = index
@@ -660,26 +689,21 @@ fun ElementEditorDialog(
                             subtitle = { Text(stringResource(R.string.range_visible_segments_subtitle, currentVisibleSegments)) },
                             onClick = {}
                         )
-                        Row(
+                        LockableSliderRow(
+                            value = currentVisibleSegments.toFloat(),
+                            onValueChange = {
+                                val newCount = it.roundToInt().coerceIn(1, maxSegments)
+                                currentVisibleSegments = newCount
+                                element.setBindingCount(newCount)
+                                hasUnsavedChanges = true
+                                view.invalidate()
+                            },
+                            valueRange = 1f..maxSegments.toFloat(),
+                            steps = (maxSegments - 2).coerceAtLeast(0),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Slider(
-                                value = currentVisibleSegments.toFloat(),
-                                onValueChange = {
-                                    val newCount = it.roundToInt().coerceIn(1, maxSegments)
-                                    currentVisibleSegments = newCount
-                                    element.setBindingCount(newCount)
-                                    hasUnsavedChanges = true
-                                    view.invalidate()
-                                },
-                                valueRange = 1f..maxSegments.toFloat(),
-                                steps = (maxSegments - 2).coerceAtLeast(0),
-                                modifier = Modifier.weight(1f)
-                            )
                             Text(
                                 text = "$currentVisibleSegments",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -738,22 +762,17 @@ fun ElementEditorDialog(
                             subtitle = { Text(stringResource(R.string.look_sensitivity_subtitle)) },
                             onClick = {}
                         )
-                        Row(
+                        LockableSliderRow(
+                            value = currentLookSensitivity,
+                            onValueChange = {
+                                currentLookSensitivity = it
+                                hasUnsavedChanges = true
+                            },
+                            valueRange = 0.1f..10.0f,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Slider(
-                                value = currentLookSensitivity,
-                                onValueChange = {
-                                    currentLookSensitivity = it
-                                    hasUnsavedChanges = true
-                                },
-                                valueRange = 0.1f..10.0f,
-                                modifier = Modifier.weight(1f)
-                            )
                             Text(
                                 text = String.format(Locale.US, "%.1fx", currentLookSensitivity),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -768,23 +787,18 @@ fun ElementEditorDialog(
                             subtitle = { Text(stringResource(R.string.joystick_size_subtitle)) },
                             onClick = {}
                         )
-                        Row(
+                        LockableSliderRow(
+                            value = currentJoystickSize,
+                            onValueChange = {
+                                currentJoystickSize = it
+                                hasUnsavedChanges = true
+                            },
+                            valueRange = 0.5f..3.0f,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp)
                                 .padding(bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Slider(
-                                value = currentJoystickSize,
-                                onValueChange = {
-                                    currentJoystickSize = it
-                                    hasUnsavedChanges = true
-                                },
-                                valueRange = 0.5f..3.0f,
-                                modifier = Modifier.weight(1f)
-                            )
                             Text(
                                 text = String.format(Locale.US, "%.1fx", currentJoystickSize),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -862,23 +876,18 @@ fun ElementEditorDialog(
                         },
                         onClick = {}
                     )
-                    Row(
+                    LockableSliderRow(
+                        value = currentButtonOpacity,
+                        onValueChange = {
+                            currentButtonOpacity = it
+                            currentButtonOpacityInherited = false
+                            hasUnsavedChanges = true
+                        },
+                        valueRange = 0.1f..1.0f,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Slider(
-                            value = currentButtonOpacity,
-                            onValueChange = {
-                                currentButtonOpacity = it
-                                currentButtonOpacityInherited = false
-                                hasUnsavedChanges = true
-                            },
-                            valueRange = 0.1f..1.0f,
-                            modifier = Modifier.weight(1f)
-                        )
                         Text(
                             text = "${(currentButtonOpacity * 100).roundToInt()}%",
                             style = MaterialTheme.typography.bodyMedium,
@@ -1019,6 +1028,7 @@ fun ElementEditorDialog(
             }
         }
         }
+        }
     }
 
     // Show binding selector dialog
@@ -1081,16 +1091,30 @@ fun ElementEditorDialog(
 
     // Show exit confirmation dialog if there are unsaved changes
     if (showExitConfirmation) {
+        val closeExitConfirmation = { showExitConfirmation = false }
+        val exitConfirmFocus = remember { FocusRequester() }
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showExitConfirmation = false },
+            onDismissRequest = closeExitConfirmation,
+            modifier = Modifier.gamepadBackHandler(closeExitConfirmation),
             title = { Text(stringResource(R.string.unsaved_changes)) },
-            text = { Text(stringResource(R.string.unsaved_changes_message)) },
+            text = {
+                // Standalone window: navigator/bridge + physical BACK parity (G1/G10).
+                GamepadFocusScope(
+                    backAction = closeExitConfirmation,
+                    initialFocusRequester = exitConfirmFocus,
+                ) {
+                    Text(text = stringResource(R.string.unsaved_changes_message))
+                }
+            },
             confirmButton = {
-                TextButton(onClick = {
-                    saveChanges()
-                    showExitConfirmation = false
-                    onDismiss()
-                }) {
+                TextButton(
+                    onClick = {
+                        saveChanges()
+                        showExitConfirmation = false
+                        onDismiss()
+                    },
+                    modifier = Modifier.focusRequester(exitConfirmFocus),
+                ) {
                     Text(stringResource(R.string.save))
                 }
             },
@@ -1138,6 +1162,61 @@ fun ElementEditorDialog(
 }
 
 /**
+ * A-lock wrapper for a Material3 [Slider] row (spec 2026-08-09, G4): the row is the gamepad
+ * focus target; A/DPAD_CENTER locks it, L/R adjusts in 5%-of-range steps, raw B unlocks and
+ * the lock resets when focus leaves the row. The slider itself is excluded from focus so it
+ * cannot fight the lock with its native arrow handling.
+ */
+@Composable
+private fun LockableSliderRow(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    steps: Int = 0,
+    onLockedChange: ((Boolean) -> Unit)? = null,
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    var isLocked by remember { mutableStateOf(false) }
+    val step = (valueRange.endInclusive - valueRange.start) / 20f
+    Row(
+        modifier = modifier.gamepadAdjustableRow(
+            locked = isLocked,
+            onLockChange = { next ->
+                isLocked = next
+                onLockedChange?.invoke(next)
+            },
+            onAdjust = { delta ->
+                onValueChange((value + delta * step).coerceIn(valueRange.start, valueRange.endInclusive))
+            },
+            shape = RoundedCornerShape(10.dp),
+            interactionSource = interactionSource,
+        ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            steps = steps,
+            modifier = Modifier
+                .weight(1f)
+                .focusProperties { canFocus = false },
+        )
+        content()
+        if (isLocked) {
+            Text(
+                text = stringResource(R.string.quick_menu_locked_indicator),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+/**
  * Floating size adjuster overlay - appears on top of the controls view
  * with a slider and action buttons positioned away from the control element.
  * Automatically positions itself at top or bottom based on element location.
@@ -1150,8 +1229,10 @@ private fun SizeAdjusterOverlay(
     onScaleChange: (Float) -> Unit,
     onConfirm: () -> Unit,
     onCancel: () -> Unit,
-    onReset: () -> Unit
+    onReset: () -> Unit,
+    initialFocusRequester: FocusRequester? = null,
 ) {
+    var sizeAdjusterLocked by remember { mutableStateOf(false) }
     // Determine if element is in top or bottom half of screen
     // Coordinates are in actual screen pixels (not normalized)
     // Y=0 is at TOP, Y increases downward (standard Android Canvas)
@@ -1192,22 +1273,38 @@ private fun SizeAdjusterOverlay(
                         text = stringResource(R.string.adjust_size),
                         style = MaterialTheme.typography.labelLarge
                     )
-                    Text(
-                        text = String.format(Locale.US, "%.2fx", currentScale),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = String.format(Locale.US, "%.2fx", currentScale),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        )
+                        if (sizeAdjusterLocked) {
+                            Text(
+                                text = stringResource(R.string.quick_menu_locked_indicator),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
                 }
 
-                // Slider - more compact
-                Slider(
+                // Slider - more compact (A-lock: A trava, B destrava, L/R ajusta)
+                LockableSliderRow(
                     value = currentScale,
                     onValueChange = onScaleChange,
                     valueRange = 0.1f..5.0f,
+                    onLockedChange = { sizeAdjusterLocked = it },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(32.dp)
-                )
+                        .then(
+                            if (initialFocusRequester != null) {
+                                Modifier.focusRequester(initialFocusRequester)
+                            } else {
+                                Modifier
+                            }
+                        ),
+                ) {}
 
                 // All 4 buttons in one row
                 Row(

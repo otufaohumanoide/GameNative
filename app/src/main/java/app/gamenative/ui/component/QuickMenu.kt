@@ -21,9 +21,9 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -40,7 +40,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -77,13 +76,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -97,6 +100,7 @@ import app.gamenative.ui.data.PerformanceHudSize
 import app.gamenative.ui.theme.PluviaTheme
 import app.gamenative.ui.util.adaptivePanelWidth
 import app.gamenative.utils.MathUtils.normalizedProgress
+import timber.log.Timber
 import com.winlator.container.Container
 import com.winlator.renderer.GLRenderer
 import com.winlator.renderer.VulkanRenderer
@@ -394,6 +398,14 @@ fun QuickMenu(
     val bfgItemFocusRequester = remember { FocusRequester() }
     val inviteTabFocusRequester = remember { FocusRequester() }
     val inviteItemFocusRequester = remember { FocusRequester() }
+    val toolsScrollState = rememberScrollState()
+    val inviteScrollState = rememberScrollState()
+    val exitItemFocusRequester = remember { FocusRequester() }
+    // G9 remember-selection: per-tab index of the last focused item, restored on reopen.
+    var effectsFocusIndex by rememberSaveable { mutableIntStateOf(0) }
+    var controllerFocusIndex by rememberSaveable { mutableIntStateOf(0) }
+    var toolsFocusIndex by rememberSaveable { mutableIntStateOf(0) }
+    var inviteFocusIndex by rememberSaveable { mutableIntStateOf(0) }
 
     // The game's own "Invite friends" button reaches us as an engine callback the bionic host
     // captures. Open on the invite tab rather than drawing a separate panel, so controller focus
@@ -422,11 +434,67 @@ fun QuickMenu(
     }
 
     // Track whether focus is on the tab rail (vs. tab content). Used by the hierarchical
-    // BackHandler (D2): B with focus in content returns to the selected tab's button;
+    // back (D2): B with focus in content returns to the selected tab's button;
     // B with focus on the rail dismisses the menu.
     var railFocused by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = isVisible) {
+    // Coroutine scope for L2/R2 page scrolling (ScrollState.scrollBy is a suspend fun).
+    val quickMenuScope = rememberCoroutineScope()
+
+    // RetroArch/Ozone-inspired helpers (spec 2026-08-09): the ordered tab list for L1/R1
+    // cycling and the per-tab scroll states for L2/R2 page scrolling.
+    // Keyed on the availability flags: the renderer/menus may not exist on the first
+    // composition (xServerView is created asynchronously), so a bare `remember` would
+    // freeze the tab list without EFFECTS forever.
+    val orderedTabs = remember(isLsfgAvailable, bfgMenu, inviteMenu, renderer, glRenderer) {
+        listOf(
+            QuickMenuTab.HUD, QuickMenuTab.LSFG, QuickMenuTab.BFG, QuickMenuTab.EFFECTS,
+            QuickMenuTab.CONTROLLER, QuickMenuTab.TOOLS, QuickMenuTab.INVITE,
+        ).filter { tab ->
+            when (tab) {
+                QuickMenuTab.LSFG -> isLsfgAvailable
+                QuickMenuTab.BFG -> bfgMenu != null
+                QuickMenuTab.INVITE -> inviteMenu != null
+                QuickMenuTab.EFFECTS -> renderer != null || glRenderer != null
+                else -> true
+            }
+        }
+    }
+    fun selectAdjacentTab(delta: Int) {
+        val idx = orderedTabs.indexOf(selectedTab)
+        Timber.d("QuickMenu: selectAdjacentTab(delta=%d) idx=%d tabs=%s", delta, idx, orderedTabs)
+        if (idx < 0) return
+        val next = orderedTabs[(idx + delta + orderedTabs.size) % orderedTabs.size]
+        selectedTab = next
+        PrefManager.quickMenuLastTab = next
+        // Focus the newly selected tab's rail button (predictable start point).
+        when (next) {
+            QuickMenuTab.HUD -> hudTabFocusRequester.requestFocus()
+            QuickMenuTab.LSFG -> lsfgTabFocusRequester.requestFocus()
+            QuickMenuTab.BFG -> bfgTabFocusRequester.requestFocus()
+            QuickMenuTab.EFFECTS -> effectsTabFocusRequester.requestFocus()
+            QuickMenuTab.TOOLS -> toolsTabFocusRequester.requestFocus()
+            QuickMenuTab.INVITE -> inviteTabFocusRequester.requestFocus()
+            else -> controllerTabFocusRequester.requestFocus()
+        }
+        railFocused = true
+    }
+    val currentTabScrollState: ScrollState? = when (selectedTab) {
+        QuickMenuTab.HUD -> hudScrollState
+        QuickMenuTab.LSFG -> lsfgScrollState
+        QuickMenuTab.BFG -> bfgScrollState
+        QuickMenuTab.EFFECTS -> effectsScrollState
+        QuickMenuTab.CONTROLLER -> controllerScrollState
+        QuickMenuTab.TOOLS -> toolsScrollState
+        QuickMenuTab.INVITE -> inviteScrollState
+        else -> null
+    }
+
+    // One lambda for both back paths (parity gamepad/touch): the physical BackHandler
+    // (OnBackPressedDispatcher) and the raw gamepad B (gamepadBackHandler on the root box).
+    // The paths are disjoint by construction: raw B never reaches the dispatcher and the
+    // physical BACK never reaches Compose (spec 2026-08-09, §3.1).
+    val backAction: () -> Unit = {
         if (railFocused) {
             onDismiss()
         } else {
@@ -444,12 +512,59 @@ fun QuickMenu(
             railFocused = true
         }
     }
+    BackHandler(enabled = isVisible, onBack = backAction)
 
-    Box(modifier = modifier.fillMaxSize()) {
-        // Gamepad stick/hat axis -> Compose focus navigation (spec 2026-08-08-dpad).
-        JoystickFocusNavigator(enabled = isVisible)
-        // Gamepad A/B -> DPAD_CENTER/BACK so focused rows activate and overlays dismiss.
-        GamepadKeyBridge(enabled = isVisible)
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .gamepadBackHandler(backAction)
+            .onPreviewKeyEvent { keyEvent ->
+                // RetroArch/Ozone-style fast navigation (spec 2026-08-09): L1/R1 switch tabs,
+                // L2/R2 page-scroll the active tab's list. Preview phase runs before the
+                // focused node, so this works wherever the focus is.
+                if (keyEvent.type == KeyEventType.KeyDown && isVisible) {
+                    Timber.d("QuickMenu: root preview key=%d", keyEvent.nativeKeyEvent.keyCode)
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        KeyEvent.KEYCODE_BUTTON_L1 -> {
+                            selectAdjacentTab(-1)
+                            true
+                        }
+                        KeyEvent.KEYCODE_BUTTON_R1 -> {
+                            selectAdjacentTab(+1)
+                            true
+                        }
+                        KeyEvent.KEYCODE_BUTTON_L2 -> {
+                            val state: ScrollState? = currentTabScrollState
+                            if (state != null) {
+                                quickMenuScope.launch {
+                                    state.scrollBy(-(state.viewportSize / 2).coerceAtLeast(240).toFloat())
+                                }
+                            }
+                            true
+                        }
+                        KeyEvent.KEYCODE_BUTTON_R2 -> {
+                            val state: ScrollState? = currentTabScrollState
+                            if (state != null) {
+                                quickMenuScope.launch {
+                                    state.scrollBy((state.viewportSize / 2).coerceAtLeast(240).toFloat())
+                                }
+                            }
+                            true
+                        }
+                        else -> false
+                    }
+                } else {
+                    false
+                }
+            },
+    ) {
+        // Gamepad stick/hat axis -> Compose focus navigation. Bus-level (LibraryScreen
+        // pattern): the QuickMenu shares the game window with the GL surface, where
+        // view-level generic-motion listeners are unreliable (spec 2026-08-09, §2.1).
+        BusJoystickFocusNavigator(enabled = isVisible)
+        // Gamepad A/B/L1/R1/L2/R2 -> Compose, delivered directly to this ComposeView and
+        // consumed so the game never sees them while the overlay is open.
+        BusGamepadKeyBridge(enabled = isVisible)
 
         AnimatedVisibility(
             visible = isVisible,
@@ -518,7 +633,8 @@ fun QuickMenu(
 
                     Row(
                         modifier = Modifier
-                            .fillMaxSize()
+                            .weight(1f)
+                            .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 12.dp),
                     ) {
                         Column(
@@ -622,7 +738,10 @@ fun QuickMenu(
                                     contentDescriptionResId = R.string.task_manager,
                                     selected = selectedTab == QuickMenuTab.TOOLS,
                                     accentColor = PluviaTheme.colors.accentPurple,
-                                    onSelected = { selectedTab = QuickMenuTab.TOOLS },
+                                    onSelected = {
+                                        selectedTab = QuickMenuTab.TOOLS
+                                        PrefManager.quickMenuLastTab = selectedTab
+                                    },
                                     modifier = Modifier.width(56.dp),
                                     focusRequester = toolsTabFocusRequester,
                                 )
@@ -644,6 +763,7 @@ fun QuickMenu(
                                     }
                                 },
                                 modifier = Modifier.width(56.dp),
+                                focusRequester = exitItemFocusRequester,
                             )
                         }
 
@@ -730,6 +850,9 @@ fun QuickMenu(
                                             SteamInviteQuickMenuTab(
                                                 state = inviteMenu,
                                                 focusRequester = inviteItemFocusRequester,
+                                                initialFocusIndex = inviteFocusIndex,
+                                                onFocusIndexChanged = { inviteFocusIndex = it },
+                                                scrollState = inviteScrollState,
                                                 modifier = Modifier.fillMaxSize(),
                                             )
                                         }
@@ -742,6 +865,8 @@ fun QuickMenu(
                                                 container = container,
                                                 modifier = Modifier.fillMaxSize(),
                                                 firstItemFocusRequester = effectsItemFocusRequester,
+                                                initialFocusIndex = effectsFocusIndex,
+                                                onFocusIndexChanged = { effectsFocusIndex = it },
                                                 scrollState = effectsScrollState,
                                             )
                                         } else if (glRenderer != null) {
@@ -750,6 +875,8 @@ fun QuickMenu(
                                                 container = container,
                                                 modifier = Modifier.fillMaxSize(),
                                                 firstItemFocusRequester = effectsItemFocusRequester,
+                                                initialFocusIndex = effectsFocusIndex,
+                                                onFocusIndexChanged = { effectsFocusIndex = it },
                                                 scrollState = effectsScrollState,
                                             )
                                         } else {
@@ -774,6 +901,9 @@ fun QuickMenu(
                                             isLoadingProcesses = isWineProcessesLoading,
                                             onEndProcess = onEndWineProcess,
                                             firstItemFocusRequester = toolsItemFocusRequester,
+                                            initialFocusIndex = toolsFocusIndex,
+                                            onFocusIndexChanged = { toolsFocusIndex = it },
+                                            scrollState = toolsScrollState,
                                             modifier = Modifier.fillMaxSize(),
                                         )
                                     }
@@ -786,6 +916,8 @@ fun QuickMenu(
                                                 .focusGroup(),
                                             verticalArrangement = Arrangement.spacedBy(4.dp),
                                         ) {
+                                            val clampedControllerIndex = controllerFocusIndex
+                                                .coerceIn(0, controllerItems.lastIndex)
                                             controllerItems.forEachIndexed { index, item ->
                                                 QuickMenuItemRow(
                                                     item = item,
@@ -795,7 +927,9 @@ fun QuickMenu(
                                                             onDismiss()
                                                         }
                                                     },
-                                                    focusRequester = if (index == 0) controllerItemFocusRequester else null,
+                                                    focusRequester = if (index == clampedControllerIndex) controllerItemFocusRequester else null,
+                                                    focusIndex = index,
+                                                    onFocusIndexChanged = { controllerFocusIndex = it },
                                                     secondaryIcon = if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && isTouchscreenModeActive)
                                                         Icons.Default.Settings
                                                     else if (item.id == QuickMenuAction.SHOOTER_MODE && isShooterModeActive)
@@ -818,6 +952,22 @@ fun QuickMenu(
                                 }
                             }
                         }
+
+                        // RetroArch/Ozone footer hints (spec 2026-08-09): contextual gamepad
+                        // actions at the bottom of the sidebar (localized; shown only with a
+                        // gamepad connected, per shouldShowGamepadUI).
+                        GamepadActionBar(
+                            actions = listOf(
+                                GamepadAction(GamepadButton.A, R.string.action_select),
+                                GamepadAction(GamepadButton.B, R.string.action_back),
+                                GamepadAction(GamepadButton.LB, R.string.action_switch_tab),
+                                GamepadAction(GamepadButton.RB, R.string.action_switch_tab),
+                                GamepadAction(GamepadButton.LT, R.string.action_page_scroll),
+                                GamepadAction(GamepadButton.RT, R.string.action_page_scroll),
+                            ),
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                            visible = isVisible,
+                        )
                     }
                 }
             }
@@ -828,8 +978,10 @@ fun QuickMenu(
         onToolsVisibilityChanged(isVisible && selectedTab == QuickMenuTab.TOOLS)
     }
 
+    val focusManager = LocalFocusManager.current
     LaunchedEffect(isVisible) {
         if (isVisible) {
+            var focused = false
             repeat(3) {
                 try {
                     when (selectedTab) {
@@ -837,13 +989,34 @@ fun QuickMenu(
                         QuickMenuTab.LSFG -> lsfgItemFocusRequester.requestFocus()
                         QuickMenuTab.BFG -> bfgItemFocusRequester.requestFocus()
                         QuickMenuTab.INVITE -> inviteItemFocusRequester.requestFocus()
-                        QuickMenuTab.EFFECTS -> effectsItemFocusRequester.requestFocus()
+                        QuickMenuTab.EFFECTS -> {
+                            effectsItemFocusRequester.requestFocus()
+                            // G9 remember-selection: walk down to the last focused row
+                            // (moveFocus clamps naturally at the last focusable).
+                            repeat(effectsFocusIndex) {
+                                focusManager.moveFocus(FocusDirection.Down)
+                            }
+                        }
                         QuickMenuTab.TOOLS -> toolsItemFocusRequester.requestFocus()
                         else -> controllerItemFocusRequester.requestFocus()
                     }
+                    focused = true
+                    Timber.d("QuickMenu bootstrap: focus requested (tab=%d)", selectedTab)
                     return@LaunchedEffect
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    Timber.w(error, "QuickMenu bootstrap: focus retry (tab=%d)", selectedTab)
                     delay(80)
+                }
+            }
+            if (!focused) {
+                // The tab has no focusable items (e.g. TOOLS with no wine processes) —
+                // fall back to the rail so the menu is never born dead (the original bug:
+                // menu opened with no focus anywhere, so the joystick did nothing).
+                try {
+                    hudTabFocusRequester.requestFocus()
+                    railFocused = true
+                    Timber.d("QuickMenu bootstrap: fallback to rail focus")
+                } catch (_: Exception) {
                 }
             }
         }
@@ -854,9 +1027,11 @@ fun QuickMenu(
 private fun SteamInviteQuickMenuTab(
     state: SteamInviteState,
     focusRequester: FocusRequester? = null,
+    initialFocusIndex: Int = 0,
+    onFocusIndexChanged: (Int) -> Unit = {},
+    scrollState: ScrollState = rememberScrollState(),
     modifier: Modifier = Modifier,
 ) {
-    val scrollState = rememberScrollState()
     val accentColor = PluviaTheme.colors.accentPurple
     val scope = rememberCoroutineScope()
 
@@ -885,6 +1060,11 @@ private fun SteamInviteQuickMenuTab(
             subtitle = state.lastError?.let { stringResource(it) },
         )
 
+        val clampedInviteIndex = if (state.friends.isEmpty()) {
+            0
+        } else {
+            initialFocusIndex.coerceIn(0, state.friends.lastIndex)
+        }
         state.friends.forEachIndexed { index, friend ->
             QuickMenuDetailRow(
                 title = friend.name,
@@ -904,7 +1084,9 @@ private fun SteamInviteQuickMenuTab(
                         if (friend.isJoinable) state.join(friend) else state.invite(friend.steamId)
                     }
                 },
-                focusRequester = if (index == 0) focusRequester else null,
+                focusRequester = if (index == clampedInviteIndex) focusRequester else null,
+                focusIndex = index,
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         }
     }
@@ -916,9 +1098,11 @@ private fun ToolsQuickMenuTab(
     isLoadingProcesses: Boolean,
     onEndProcess: (ProcessInfo) -> Unit,
     firstItemFocusRequester: FocusRequester? = null,
+    initialFocusIndex: Int = 0,
+    onFocusIndexChanged: (Int) -> Unit = {},
+    scrollState: ScrollState = rememberScrollState(),
     modifier: Modifier = Modifier,
 ) {
-    val scrollState = rememberScrollState()
     val accentColor = PluviaTheme.colors.accentPurple
 
     Column(
@@ -943,15 +1127,26 @@ private fun ToolsQuickMenuTab(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
         } else {
+            val clampedToolsIndex = if (processes.isEmpty()) {
+            0
+        } else {
+            initialFocusIndex.coerceIn(0, processes.lastIndex)
+        }
             processes.forEachIndexed { index, process ->
                 QuickMenuDetailRow(
-                    title = process.name + if (process.wow64Process) " *32" else "",
+                    title = process.name + if (process.wow64Process) {
+                        stringResource(R.string.quick_menu_wine_32bit_suffix)
+                    } else {
+                        ""
+                    },
                     subtitle = process.formattedMemoryUsage,
                     accentColor = accentColor,
                     onActivate = {
                         onEndProcess(process)
                     },
-                    focusRequester = if (index == 0) firstItemFocusRequester else null,
+                    focusRequester = if (index == clampedToolsIndex) firstItemFocusRequester else null,
+                    focusIndex = index,
+                    onFocusIndexChanged = onFocusIndexChanged,
                 )
             }
         }
@@ -1335,7 +1530,7 @@ private fun LsfgQuickMenuTab(
         ) {
             listOf(0, 2, 3, 4).forEach { value ->
                 QuickMenuChoiceChip(
-                    text = if (value == 0) "Off" else "${value}x",
+                    text = if (value == 0) stringResource(R.string.quick_menu_off) else stringResource(R.string.quick_menu_x_multiplier, value),
                     selected = multiplier == value || (value == 0 && multiplier < 2),
                     accentColor = accentColor,
                     onClick = { onMultiplierChanged(value) },
@@ -1418,7 +1613,7 @@ private fun BionicFgQuickMenuTab(
         ) {
             listOf(0, 2, 3, 4).forEach { value ->
                 QuickMenuChoiceChip(
-                    text = if (value == 0) "Off" else "${value}x",
+                    text = if (value == 0) stringResource(R.string.quick_menu_off) else stringResource(R.string.quick_menu_x_multiplier, value),
                     selected = multiplier == value || (value == 0 && multiplier < 2),
                     accentColor = accentColor,
                     onClick = { onMultiplierChanged(value) },
@@ -1532,13 +1727,12 @@ private fun QuickMenuCloseButton(
                     Color.Transparent
                 },
             )
-            .focusRing(interactionSource, shape, width = 2.dp)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
+            .gamepadSelectable(
+                selected = false,
                 onClick = onClick,
-            )
-            .focusable(interactionSource = interactionSource),
+                shape = shape,
+                interactionSource = interactionSource,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -1579,7 +1773,6 @@ private fun QuickMenuTabButton(
                     else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                 },
             )
-            .focusRing(interactionSource, shape, width = 2.dp)
             .then(
                 if (focusRequester != null) {
                     Modifier.focusRequester(focusRequester)
@@ -1587,13 +1780,13 @@ private fun QuickMenuTabButton(
                     Modifier
                 }
             )
-            .selectable(
+            .gamepadSelectable(
                 selected = selected,
-                interactionSource = interactionSource,
-                indication = null,
                 onClick = onSelected,
-            )
-            .focusable(interactionSource = interactionSource),
+                shape = shape,
+                interactionSource = interactionSource,
+                accentColor = accentColor,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -1627,20 +1820,10 @@ private fun QuickMenuRailActionButton(
     Box(
         modifier = modifier
             .size(56.dp)
-            .then(
-                if (isFocused) {
-                    Modifier.border(
-                        width = 2.dp,
-                        color = accentColor.copy(alpha = 0.7f),
-                        shape = shape,
-                    )
-                } else {
-                    Modifier.border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-                        shape = shape,
-                    )
-                }
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
+                shape = shape,
             )
             .clip(shape)
             .background(
@@ -1657,12 +1840,13 @@ private fun QuickMenuRailActionButton(
                     Modifier
                 }
             )
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
+            .gamepadSelectable(
+                selected = false,
                 onClick = onClick,
-            )
-            .focusable(interactionSource = interactionSource),
+                shape = shape,
+                interactionSource = interactionSource,
+                accentColor = accentColor,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -1690,20 +1874,10 @@ private fun QuickMenuChoiceChip(
     Box(
         modifier = modifier
             .height(44.dp)
-            .then(
-                if (isFocused) {
-                    Modifier.border(
-                        width = 2.dp,
-                        color = accentColor.copy(alpha = 0.7f),
-                        shape = shape,
-                    )
-                } else {
-                    Modifier.border(
-                        width = 1.dp,
-                        color = if (selected) accentColor.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-                        shape = shape,
-                    )
-                }
+            .border(
+                width = 1.dp,
+                color = if (selected) accentColor.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
+                shape = shape,
             )
             .clip(shape)
             .background(
@@ -1720,13 +1894,13 @@ private fun QuickMenuChoiceChip(
                     Modifier
                 }
             )
-            .selectable(
+            .gamepadSelectable(
                 selected = selected,
-                interactionSource = interactionSource,
-                indication = null,
                 onClick = onClick,
+                shape = shape,
+                interactionSource = interactionSource,
+                accentColor = accentColor,
             )
-            .focusable(interactionSource = interactionSource)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -1778,67 +1952,19 @@ private fun QuickMenuAdjustmentRow(
                 },
             )
             .then(
-                if (isFocused && !isAdjustmentLocked) {
-                    Modifier.border(
-                        width = 2.dp,
-                        color = accentColor.copy(alpha = 0.7f),
-                        shape = shape,
-                    )
-                } else {
-                    Modifier
-                }
-            )
-            .then(
                 if (focusRequester != null) {
                     Modifier.focusRequester(focusRequester)
                 } else {
                     Modifier
                 }
             )
-            .onFocusChanged {
-                if (!it.isFocused) {
-                    isAdjustmentLocked = false
-                }
-            }
-            .focusable(interactionSource = interactionSource)
-            .onPreviewKeyEvent { keyEvent ->
-                // A-lock arrives as DPAD_CENTER via GamepadKeyBridge (raw BUTTON_A handled too
-                // for surfaces without a bridge); B-unlock uses the RAW BUTTON_B (bridge no
-                // longer translates B — decision D1).
-                if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && isFocused) {
-                    when {
-                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                            keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BUTTON_A -> {
-                            isAdjustmentLocked = !isAdjustmentLocked
-                            true
-                        }
-
-                        isAdjustmentLocked && keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BUTTON_B -> {
-                            isAdjustmentLocked = false
-                            true
-                        }
-
-                        isAdjustmentLocked && keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT -> {
-                            onDecrease()
-                            true
-                        }
-
-                        isAdjustmentLocked && keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            onIncrease()
-                            true
-                        }
-
-                        else -> false
-                    }
-                } else {
-                    false
-                }
-            }
-            .selectable(
-                selected = isFocused,
+            .gamepadAdjustableRow(
+                locked = isAdjustmentLocked,
+                onLockChange = { isAdjustmentLocked = it },
+                onAdjust = { delta -> if (delta < 0) onDecrease() else onIncrease() },
+                shape = shape,
                 interactionSource = interactionSource,
-                indication = null,
-                onClick = {},
+                accentColor = accentColor,
             )
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
@@ -1864,7 +1990,7 @@ private fun QuickMenuAdjustmentRow(
                 )
                 if (isAdjustmentLocked) {
                     Text(
-                        text = "●",
+                        text = stringResource(R.string.quick_menu_locked_indicator),
                         style = MaterialTheme.typography.labelSmall,
                         color = accentColor,
                     )
@@ -1891,7 +2017,7 @@ private fun QuickMenuAdjustmentRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             QuickMenuAdjustmentButton(
-                text = "-",
+                text = stringResource(R.string.quick_menu_minus),
                 rowIsFocused = isFocused,
                 isAdjustmentLocked = isAdjustmentLocked,
                 accentColor = accentColor,
@@ -1939,7 +2065,7 @@ private fun QuickMenuAdjustmentRow(
             }
 
             QuickMenuAdjustmentButton(
-                text = "+",
+                text = stringResource(R.string.quick_menu_plus),
                 rowIsFocused = isFocused,
                 isAdjustmentLocked = isAdjustmentLocked,
                 accentColor = accentColor,
@@ -2030,30 +2156,20 @@ private fun QuickMenuToggleRow(
                 },
             )
             .then(
-                if (isFocused) {
-                    Modifier.border(
-                        width = 2.dp,
-                        color = accentColor.copy(alpha = 0.7f),
-                        shape = RoundedCornerShape(14.dp),
-                    )
-                } else {
-                    Modifier
-                }
-            )
-            .then(
                 if (focusRequester != null) {
                     Modifier.focusRequester(focusRequester)
                 } else {
                     Modifier
                 }
             )
-            .selectable(
-                selected = isFocused,
-                interactionSource = interactionSource,
-                indication = null,
+            .gamepadSelectable(
+                // Selection = the switch state (toggle ligado), never focus (spec D7).
+                selected = enabled,
                 onClick = onToggle,
+                shape = RoundedCornerShape(14.dp),
+                interactionSource = interactionSource,
+                accentColor = accentColor,
             )
-            .focusable(interactionSource = interactionSource)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -2120,6 +2236,8 @@ private fun QuickMenuDetailRow(
     onActivate: () -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -2165,28 +2283,19 @@ private fun QuickMenuDetailRow(
                     Modifier
                 }
             )
-            .focusable(interactionSource = interactionSource)
-            .onPreviewKeyEvent { keyEvent ->
-                if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && isFocused) {
-                    when (keyEvent.nativeKeyEvent.keyCode) {
-                        KeyEvent.KEYCODE_BUTTON_A,
-                        KeyEvent.KEYCODE_DPAD_CENTER,
-                        KeyEvent.KEYCODE_ENTER -> {
-                            onActivate()
-                            true
-                        }
-
-                        else -> false
-                    }
+            .then(
+                if (focusIndex != null && onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
                 } else {
-                    false
+                    Modifier
                 }
-            }
-            .selectable(
-                selected = isFocused,
-                interactionSource = interactionSource,
-                indication = null,
+            )
+            .gamepadSelectable(
+                selected = false,
                 onClick = onActivate,
+                shape = shape,
+                interactionSource = interactionSource,
+                accentColor = accentColor,
             )
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -2221,6 +2330,8 @@ private fun QuickMenuItemRow(
     isActive: Boolean = false,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
     secondaryIcon: ImageVector? = null,
     secondaryContentDescriptionResId: Int? = null,
     onSecondaryClick: (() -> Unit)? = null,
@@ -2258,29 +2369,27 @@ private fun QuickMenuItemRow(
                 }
             )
             .then(
-                if (isEnabled) {
-                    Modifier.focusRing(interactionSource, shape, width = 2.dp)
-                } else {
-                    Modifier
-                }
-            )
-            .then(
                 if (focusRequester != null) {
                     Modifier.focusRequester(focusRequester)
                 } else {
                     Modifier
                 }
             )
-            .selectable(
-                selected = isFocused,
-                enabled = isEnabled,
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
+            .then(
+                if (focusIndex != null && onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
+                } else {
+                    Modifier
+                }
             )
-            .focusable(
+            .gamepadSelectable(
+                // Selection = the item's active state (toggle ligado), never focus (spec D7).
+                selected = isActive,
+                onClick = onClick,
                 enabled = isEnabled,
+                shape = shape,
                 interactionSource = interactionSource,
+                accentColor = accentColor,
             )
             .padding(horizontal = 12.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,

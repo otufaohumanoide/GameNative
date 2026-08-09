@@ -223,6 +223,8 @@ import kotlin.io.path.name
 import kotlin.math.roundToInt
 import kotlin.text.lowercase
 import com.winlator.PrefManager as WinlatorPrefManager
+import app.gamenative.ui.component.DebugGamepadInputHarness
+import app.gamenative.ui.component.GamepadFocusScope
 import app.gamenative.ui.component.GamepadKeyBridge
 import app.gamenative.ui.component.JoystickFocusNavigator
 import app.gamenative.ui.component.OverlayInputContext
@@ -1447,6 +1449,10 @@ fun XServerScreen(
     }
     // Single source of truth for "is an overlay consuming input right now?" (D3).
     // Every overlay state must be listed HERE — the key/motion handlers only consult this.
+    // Debug-only synthetic gamepad input (setprop debug.gamenative.input) so adb can drive
+    // the full input pipeline on devices where `input keyevent` is blocked (MIUI).
+    DebugGamepadInputHarness(enabled = true)
+
     val overlayInputContext = if (
         showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode ||
         showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
@@ -1553,8 +1559,11 @@ fun XServerScreen(
         val isGamepad = ExternalController.isGameController(it.event?.device)
 
         if (overlayInputContext != OverlayInputContext.NONE && isGamepad) {
-            // Let Compose consume any gamepad motion while menu is visible.
-            false
+            // The overlay owns the stick: consume it so the game never receives gamepad
+            // motion while a menu/dialog is up. Overlay navigation (QuickMenu) reads the
+            // same event from this bus (BusJoystickFocusNavigator); dialog windows are
+            // separate windows and never reach this handler.
+            true
         } else {
             var handled = false
             if (isGamepad && it.event != null) {
@@ -2777,12 +2786,14 @@ fun XServerScreen(
         androidx.compose.material3.AlertDialog(
             onDismissRequest = {},
             title = { Text(text = stringResource(R.string.main_app_running_title)) },
-                        // Gamepad support for this dialog window.
             text = {
-                Box(Modifier.fillMaxWidth()) {
-                    JoystickFocusNavigator(enabled = true)
-                    GamepadKeyBridge(enabled = true)
-                    Text(text = stringResource(R.string.main_app_running_message, remoteName))
+                // Gamepad window bootstrap (stick/hat -> focus, A -> activate). B is
+                // intentionally unmapped: this dialog forces a decision (play anyway vs
+                // cancel), so a stray B must not close it (spec: zero accidental exits).
+                GamepadFocusScope {
+                    Box(Modifier.fillMaxWidth()) {
+                        Text(text = stringResource(R.string.main_app_running_message, remoteName))
+                    }
                 }
             },
             confirmButton = {

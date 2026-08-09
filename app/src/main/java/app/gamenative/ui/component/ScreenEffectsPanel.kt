@@ -4,7 +4,6 @@ import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
@@ -18,7 +17,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -35,7 +33,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -68,13 +65,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -176,6 +170,8 @@ private val GL_BASIC_MODES = listOf(
 @Composable
 private fun DisplayBrightnessRow(
     focusRequester: FocusRequester? = null,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { BrightnessManager.findActivity(context) }
@@ -233,6 +229,8 @@ private fun DisplayBrightnessRow(
             setDisplayBrightness(displayBrightness + BrightnessManager.DISPLAY_BRIGHTNESS_STEP)
         },
         focusRequester = focusRequester,
+        focusIndex = focusIndex,
+        onFocusIndexChanged = onFocusIndexChanged,
     )
 }
 
@@ -242,6 +240,8 @@ fun GLScreenEffectsTabContent(
     modifier: Modifier = Modifier,
     container: Container? = null,
     firstItemFocusRequester: FocusRequester? = null,
+    initialFocusIndex: Int = 0,
+    onFocusIndexChanged: (Int) -> Unit = {},
     scrollState: ScrollState = rememberScrollState(),
 ) {
     val initialConfig = remember(renderer, container) { loadScreenEffectsConfig(container) }
@@ -326,7 +326,15 @@ fun GLScreenEffectsTabContent(
             .focusGroup()
             .padding(vertical = 12.dp),
     ) {
-        DisplayBrightnessRow(focusRequester = firstItemFocusRequester)
+        // G9 remember-selection: sequential index of every focusable row in this tab.
+        var focusSlot = 0
+        fun nextFocusSlot(): Int = focusSlot++
+
+        DisplayBrightnessRow(
+            focusRequester = firstItemFocusRequester,
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
+        )
 
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -334,6 +342,8 @@ fun GLScreenEffectsTabContent(
             title = stringResource(scalingModeLabelRes(ScreenEffectsConfig.SCALING_MODE_NONE)),
             selected = scalingMode == ScreenEffectsConfig.SCALING_MODE_NONE,
             onSelect = { scalingMode = ScreenEffectsConfig.SCALING_MODE_NONE },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -345,6 +355,8 @@ fun GLScreenEffectsTabContent(
                 subtitle = stringResource(scalingModeDescRes(mode)),
                 selected = scalingMode == mode,
                 onSelect = { scalingMode = mode },
+                focusIndex = nextFocusSlot(),
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         }
 
@@ -365,6 +377,8 @@ fun GLScreenEffectsTabContent(
                 onIncrease = {
                     fsrSharpnessLevel = (fsrSharpnessLevel + 1).coerceAtMost(ScreenEffectsConfig.FSR_MAX_LEVEL)
                 },
+                focusIndex = nextFocusSlot(),
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         }
 
@@ -377,6 +391,8 @@ fun GLScreenEffectsTabContent(
                 subtitle = stringResource(scalingModeDescRes(mode)),
                 selected = scalingMode == mode,
                 onSelect = { scalingMode = mode },
+                focusIndex = nextFocusSlot(),
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         }
 
@@ -394,6 +410,8 @@ fun GLScreenEffectsTabContent(
             onIncrease = {
                 brightness = (brightness + SCREEN_EFFECT_PERCENT_STEP).coerceIn(-100f, 100f)
             },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectAdjustmentRow(
             title = stringResource(R.string.screen_effects_contrast),
@@ -405,10 +423,12 @@ fun GLScreenEffectsTabContent(
             onIncrease = {
                 contrast = (contrast + SCREEN_EFFECT_PERCENT_STEP).coerceIn(-100f, 100f)
             },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectAdjustmentRow(
             title = stringResource(R.string.screen_effects_gamma),
-            valueText = String.format("%.2fx", gamma),
+            valueText = stringResource(R.string.quick_menu_decimal_x_multiplier, gamma),
             progress = normalizedProgress(gamma, 0.5f, 2.5f),
             onDecrease = {
                 gamma = (gamma - SCREEN_EFFECT_GAMMA_STEP).coerceIn(0.5f, 2.5f)
@@ -416,6 +436,8 @@ fun GLScreenEffectsTabContent(
             onIncrease = {
                 gamma = (gamma + SCREEN_EFFECT_GAMMA_STEP).coerceIn(0.5f, 2.5f)
             },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -427,30 +449,40 @@ fun GLScreenEffectsTabContent(
             subtitle = stringResource(R.string.screen_effects_toon_description),
             enabled = enableToon,
             onToggle = { enableToon = !enableToon },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectToggleRow(
             title = stringResource(R.string.screen_effects_fxaa),
             subtitle = stringResource(R.string.screen_effects_fxaa_description),
             enabled = enableFXAA,
             onToggle = { enableFXAA = !enableFXAA },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectToggleRow(
             title = stringResource(R.string.screen_effects_vivid),
             subtitle = stringResource(R.string.screen_effects_vivid_description),
             enabled = enableVivid,
             onToggle = { enableVivid = !enableVivid },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectToggleRow(
             title = stringResource(R.string.screen_effects_crt),
             subtitle = stringResource(R.string.screen_effects_crt_description),
             enabled = enableCRT,
             onToggle = { enableCRT = !enableCRT },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectToggleRow(
             title = stringResource(R.string.screen_effects_ntsc),
             subtitle = stringResource(R.string.screen_effects_ntsc_description),
             enabled = enableNTSC,
             onToggle = { enableNTSC = !enableNTSC },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -472,6 +504,8 @@ fun ScreenEffectsTabContent(
     modifier: Modifier = Modifier,
     container: Container? = null,
     firstItemFocusRequester: FocusRequester? = null,
+    initialFocusIndex: Int = 0,
+    onFocusIndexChanged: (Int) -> Unit = {},
     scrollState: ScrollState = rememberScrollState(),
 ) {
     val initialConfig = remember(renderer, container) { loadScreenEffectsConfig(container) }
@@ -647,10 +681,16 @@ fun ScreenEffectsTabContent(
             .focusGroup()
             .padding(vertical = 12.dp),
     ) {
+        // G9 remember-selection: sequential index of every focusable row in this tab.
+        var focusSlot = 0
+        fun nextFocusSlot(): Int = focusSlot++
+
         // ═══ RETROARCH SHADERS — priority section (spec 2026-08-08) ═══
         ScreenEffectToggleRow(
             title = stringResource(R.string.retroarch_shaders_title),
             focusRequester = firstItemFocusRequester,
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
             subtitle = when {
                 shaderEnabled && shaderPresetName.isNotEmpty() -> shaderPresetName
                 shaderEnabled -> stringResource(R.string.shader_pick_preset)
@@ -667,6 +707,8 @@ fun ScreenEffectsTabContent(
                 subtitle = null,
                 selected = shaderRelativePath.isEmpty(),
                 onClick = { disableShaders() },
+                focusIndex = nextFocusSlot(),
+                onFocusIndexChanged = onFocusIndexChanged,
             )
             if (shaderOptions.isEmpty()) {
                 Text(
@@ -677,6 +719,8 @@ fun ScreenEffectsTabContent(
                 )
             } else {
                 Spacer(modifier = Modifier.height(4.dp))
+                // The search field is focusable too — it consumes one focus slot.
+                nextFocusSlot()
                 NoExtractOutlinedTextField(
                     value = shaderQuery,
                     onValueChange = { shaderQuery = it },
@@ -724,6 +768,8 @@ fun ScreenEffectsTabContent(
                                     collapsedCategories + cat
                                 }
                             },
+                            focusIndex = nextFocusSlot(),
+                            onFocusIndexChanged = onFocusIndexChanged,
                         )
                         if (!collapsed) {
                             items.forEach { entry ->
@@ -732,6 +778,8 @@ fun ScreenEffectsTabContent(
                                     subtitle = passCountSubtitle(entry.key, cat, shaderPassCounts),
                                     selected = shaderEnabled && entry.key == shaderRelativePath,
                                     onClick = { applyShaderPreset(entry) },
+                                    focusIndex = nextFocusSlot(),
+                                    onFocusIndexChanged = onFocusIndexChanged,
                                 )
                             }
                         }
@@ -755,6 +803,8 @@ fun ScreenEffectsTabContent(
                                 ),
                                 selected = shaderEnabled && entry.key == shaderRelativePath,
                                 onClick = { applyShaderPreset(entry) },
+                                focusIndex = nextFocusSlot(),
+                                onFocusIndexChanged = onFocusIndexChanged,
                             )
                         }
                     }
@@ -776,9 +826,14 @@ fun ScreenEffectsTabContent(
         NativeEffectsHeader(
             expanded = nativeEffectsExpanded,
             onToggle = { nativeEffectsExpanded = !nativeEffectsExpanded },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         if (nativeEffectsExpanded) {
-        DisplayBrightnessRow()
+        DisplayBrightnessRow(
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
+        )
 
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -786,6 +841,8 @@ fun ScreenEffectsTabContent(
             title = stringResource(scalingModeLabelRes(ScreenEffectsConfig.SCALING_MODE_NONE)),
             selected = scalingMode == ScreenEffectsConfig.SCALING_MODE_NONE,
             onSelect = { scalingMode = ScreenEffectsConfig.SCALING_MODE_NONE },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -797,6 +854,8 @@ fun ScreenEffectsTabContent(
                 subtitle = stringResource(scalingModeDescRes(mode)),
                 selected = scalingMode == mode,
                 onSelect = { scalingMode = mode },
+                focusIndex = nextFocusSlot(),
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         }
 
@@ -818,6 +877,8 @@ fun ScreenEffectsTabContent(
                 onIncrease = {
                     fsrSharpnessLevel = (fsrSharpnessLevel + 1).coerceAtMost(ScreenEffectsConfig.FSR_MAX_LEVEL)
                 },
+                focusIndex = nextFocusSlot(),
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         }
 
@@ -830,6 +891,8 @@ fun ScreenEffectsTabContent(
                 subtitle = stringResource(scalingModeDescRes(mode)),
                 selected = scalingMode == mode,
                 onSelect = { scalingMode = mode },
+                focusIndex = nextFocusSlot(),
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         }
 
@@ -847,6 +910,8 @@ fun ScreenEffectsTabContent(
             onIncrease = {
                 brightness = (brightness + SCREEN_EFFECT_PERCENT_STEP).coerceIn(-100f, 100f)
             },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectAdjustmentRow(
             title = stringResource(R.string.screen_effects_contrast),
@@ -858,10 +923,12 @@ fun ScreenEffectsTabContent(
             onIncrease = {
                 contrast = (contrast + SCREEN_EFFECT_PERCENT_STEP).coerceIn(-100f, 100f)
             },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectAdjustmentRow(
             title = stringResource(R.string.screen_effects_gamma),
-            valueText = String.format("%.2fx", gamma),
+            valueText = stringResource(R.string.quick_menu_decimal_x_multiplier, gamma),
             progress = normalizedProgress(gamma, 0.5f, 2.5f),
             onDecrease = {
                 gamma = (gamma - SCREEN_EFFECT_GAMMA_STEP).coerceIn(0.5f, 2.5f)
@@ -869,6 +936,8 @@ fun ScreenEffectsTabContent(
             onIncrease = {
                 gamma = (gamma + SCREEN_EFFECT_GAMMA_STEP).coerceIn(0.5f, 2.5f)
             },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -880,30 +949,40 @@ fun ScreenEffectsTabContent(
             subtitle = stringResource(R.string.screen_effects_toon_description),
             enabled = enableToon,
             onToggle = { enableToon = !enableToon },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectToggleRow(
             title = stringResource(R.string.screen_effects_fxaa),
             subtitle = stringResource(R.string.screen_effects_fxaa_description),
             enabled = enableFXAA,
             onToggle = { enableFXAA = !enableFXAA },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectToggleRow(
             title = stringResource(R.string.screen_effects_vivid),
             subtitle = stringResource(R.string.screen_effects_vivid_description),
             enabled = enableVivid,
             onToggle = { enableVivid = !enableVivid },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectToggleRow(
             title = stringResource(R.string.screen_effects_crt),
             subtitle = stringResource(R.string.screen_effects_crt_description),
             enabled = enableCRT,
             onToggle = { enableCRT = !enableCRT },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
         ScreenEffectToggleRow(
             title = stringResource(R.string.screen_effects_ntsc),
             subtitle = stringResource(R.string.screen_effects_ntsc_description),
             enabled = enableNTSC,
             onToggle = { enableNTSC = !enableNTSC },
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -1090,20 +1169,7 @@ fun ScreenEffectsPanel(
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
                         .focusGroup()
-                        .onPreviewKeyEvent { keyEvent ->
-                            if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
-                                when (keyEvent.nativeKeyEvent.keyCode) {
-                                    KeyEvent.KEYCODE_BUTTON_B,
-                                    KeyEvent.KEYCODE_BACK -> {
-                                        onDismiss()
-                                        true
-                                    }
-                                    else -> false
-                                }
-                            } else {
-                                false
-                            }
-                        }
+                        .gamepadBackHandler(onDismiss)
                         .padding(vertical = 12.dp),
                 ) {
                     OptionSectionHeader(text = stringResource(R.string.screen_effects_color_adjustments))
@@ -1203,6 +1269,8 @@ private fun ScreenEffectAdjustmentRow(
     onDecrease: () -> Unit,
     onIncrease: () -> Unit,
     focusRequester: FocusRequester? = null,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1232,67 +1300,26 @@ private fun ScreenEffectAdjustmentRow(
                 },
             )
             .then(
-                if (isFocused && !isAdjustmentLocked) {
-                    Modifier.border(
-                        width = 2.dp,
-                        color = accentColor.copy(alpha = 0.7f),
-                        shape = shape,
-                    )
-                } else {
-                    Modifier
-                },
-            )
-            .then(
                 if (focusRequester != null) {
                     Modifier.focusRequester(focusRequester)
                 } else {
                     Modifier
                 }
             )
-            .onFocusChanged {
-                if (!it.isFocused) {
-                    isAdjustmentLocked = false
-                }
-            }
-            .focusable(interactionSource = interactionSource)
-            .onPreviewKeyEvent { keyEvent ->
-                // A-lock arrives as DPAD_CENTER via GamepadKeyBridge (raw BUTTON_A handled too
-                // for surfaces without a bridge); B-unlock uses the RAW BUTTON_B (bridge no
-                // longer translates B — decision D1).
-                if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && isFocused) {
-                    when {
-                        keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                            keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BUTTON_A -> {
-                            isAdjustmentLocked = !isAdjustmentLocked
-                            true
-                        }
-
-                        isAdjustmentLocked && keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BUTTON_B -> {
-                            isAdjustmentLocked = false
-                            true
-                        }
-
-                        isAdjustmentLocked && keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT -> {
-                            onDecrease()
-                            true
-                        }
-
-                        isAdjustmentLocked && keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            onIncrease()
-                            true
-                        }
-
-                        else -> false
-                    }
+            .then(
+                if (focusIndex != null && onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
                 } else {
-                    false
+                    Modifier
                 }
-            }
-            .selectable(
-                selected = isFocused,
+            )
+            .gamepadAdjustableRow(
+                locked = isAdjustmentLocked,
+                onLockChange = { isAdjustmentLocked = it },
+                onAdjust = { delta -> if (delta < 0) onDecrease() else onIncrease() },
+                shape = shape,
                 interactionSource = interactionSource,
-                indication = null,
-                onClick = {},
+                accentColor = accentColor,
             )
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
@@ -1318,7 +1345,7 @@ private fun ScreenEffectAdjustmentRow(
                 )
                 if (isAdjustmentLocked) {
                     Text(
-                        text = "●",
+                        text = stringResource(R.string.quick_menu_locked_indicator),
                         style = MaterialTheme.typography.labelSmall,
                         color = accentColor,
                     )
@@ -1336,7 +1363,7 @@ private fun ScreenEffectAdjustmentRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             ScreenEffectAdjustmentButton(
-                text = "-",
+                text = stringResource(R.string.quick_menu_minus),
                 rowIsFocused = isFocused,
                 isAdjustmentLocked = isAdjustmentLocked,
                 accentColor = accentColor,
@@ -1384,7 +1411,7 @@ private fun ScreenEffectAdjustmentRow(
             }
 
             ScreenEffectAdjustmentButton(
-                text = "+",
+                text = stringResource(R.string.quick_menu_plus),
                 rowIsFocused = isFocused,
                 isAdjustmentLocked = isAdjustmentLocked,
                 accentColor = accentColor,
@@ -1446,6 +1473,8 @@ private fun ScreenEffectToggleRow(
     enabled: Boolean,
     onToggle: () -> Unit,
     focusRequester: FocusRequester? = null,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1454,6 +1483,13 @@ private fun ScreenEffectToggleRow(
     Row(
         modifier = Modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .then(
+                if (focusIndex != null && onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
+                } else {
+                    Modifier
+                }
+            )
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
@@ -1473,24 +1509,14 @@ private fun ScreenEffectToggleRow(
                     )
                 },
             )
-            .then(
-                if (isFocused) {
-                    Modifier.border(
-                        width = 2.dp,
-                        color = accentColor.copy(alpha = 0.7f),
-                        shape = RoundedCornerShape(14.dp),
-                    )
-                } else {
-                    Modifier
-                },
-            )
-            .selectable(
-                selected = isFocused,
-                interactionSource = interactionSource,
-                indication = null,
+            .gamepadSelectable(
+                // Selection = the switch state, never focus (spec D7).
+                selected = enabled,
                 onClick = onToggle,
+                shape = RoundedCornerShape(14.dp),
+                interactionSource = interactionSource,
+                accentColor = accentColor,
             )
-            .gamepadActivate(isFocused, onToggle)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -1518,33 +1544,6 @@ private fun ScreenEffectToggleRow(
     }
 }
 
-/**
- * Lets a gamepad activate a focused row with BUTTON_A (Compose's clickable/selectable only
- * react to Enter/Space/DPAD_CENTER). Consumes the event so the underlying handler doesn't
- * double-fire. Spec: docs/superpowers/specs/2026-08-08-dpad-shader-navigation-design.md
- */
-private fun Modifier.gamepadActivate(
-    isFocused: Boolean,
-    onClick: () -> Unit,
-): Modifier = onPreviewKeyEvent { keyEvent ->
-    val native = keyEvent.nativeKeyEvent
-    // BUTTON_A never reaches Compose in bridged windows (translated to DPAD_CENTER at the
-    // view level — decision D1), so only the keys that actually arrive are handled here.
-    val isActivate = native.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-        native.keyCode == KeyEvent.KEYCODE_BUTTON_A ||
-        native.keyCode == KeyEvent.KEYCODE_ENTER
-    if (isFocused && isActivate &&
-        keyEvent.type == KeyEventType.KeyDown &&
-        native.action == KeyEvent.ACTION_DOWN &&
-        native.repeatCount == 0
-    ) {
-        onClick()
-        true
-    } else {
-        false
-    }
-}
-
 /** Display order for the bundled preset families; unknown categories sort after these. */
 private val shaderCategoryOrder = listOf(
     "crt", "lcd", "interpolation", "misc", "film", "cel", "hdr", "ntsc", "reshade", "nearest",
@@ -1560,7 +1559,7 @@ private fun passCountSubtitle(
 ): String? {
     val parts = mutableListOf(friendlyCategoryName(category))
     passCounts[entryKey]?.takeIf { it > 0 }?.let { n ->
-        parts += "$n pass${if (n == 1) "" else "es"}"
+        parts += pluralStringResource(R.plurals.quick_menu_n_passes, n, n)
     }
     return parts.joinToString(" · ").ifBlank { null }
 }
@@ -1572,6 +1571,8 @@ private fun passCountSubtitle(
 private fun NativeEffectsHeader(
     expanded: Boolean,
     onToggle: () -> Unit,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1581,16 +1582,18 @@ private fun NativeEffectsHeader(
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .then(
-                if (isFocused) {
-                    Modifier.border(1.5.dp, PluviaTheme.colors.accentCyan.copy(alpha = 0.8f), RoundedCornerShape(10.dp))
-                } else Modifier
+                if (focusIndex != null && onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
+                } else {
+                    Modifier
+                }
             )
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
+            .gamepadSelectable(
+                selected = false,
                 onClick = onToggle,
+                shape = RoundedCornerShape(10.dp),
+                interactionSource = interactionSource,
             )
-            .gamepadActivate(isFocused, onToggle)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1623,6 +1626,8 @@ private fun ShaderCategoryHeader(
     count: Int,
     collapsed: Boolean,
     onClick: () -> Unit,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1632,16 +1637,18 @@ private fun ShaderCategoryHeader(
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .then(
-                if (isFocused) {
-                    Modifier.border(1.5.dp, PluviaTheme.colors.accentCyan.copy(alpha = 0.8f), RoundedCornerShape(10.dp))
-                } else Modifier
+                if (focusIndex != null && onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
+                } else {
+                    Modifier
+                }
             )
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
+            .gamepadSelectable(
+                selected = false,
                 onClick = onClick,
+                shape = RoundedCornerShape(10.dp),
+                interactionSource = interactionSource,
             )
-            .gamepadActivate(isFocused, onClick)
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1672,6 +1679,8 @@ private fun ShaderPresetRow(
     subtitle: String?,
     selected: Boolean,
     onClick: () -> Unit,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
 ) {
     val accentColor = PluviaTheme.colors.accentCyan
     val interactionSource = remember { MutableInteractionSource() }
@@ -1689,16 +1698,19 @@ private fun ShaderPresetRow(
                 },
             )
             .then(
-                if (isFocused) {
-                    Modifier.border(1.5.dp, accentColor.copy(alpha = 0.8f), RoundedCornerShape(14.dp))
-                } else Modifier
+                if (focusIndex != null && onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
+                } else {
+                    Modifier
+                }
             )
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
+            .gamepadSelectable(
+                selected = selected,
                 onClick = onClick,
+                shape = RoundedCornerShape(14.dp),
+                interactionSource = interactionSource,
+                accentColor = accentColor,
             )
-            .gamepadActivate(isFocused, onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1738,6 +1750,8 @@ private fun ScreenEffectRadioRow(
     selected: Boolean,
     onSelect: () -> Unit,
     focusRequester: FocusRequester? = null,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1766,22 +1780,22 @@ private fun ScreenEffectRadioRow(
                 },
             )
             .then(
-                if (isFocused) {
-                    Modifier.border(width = 2.dp, color = accentColor.copy(alpha = 0.7f), shape = shape)
-                } else {
-                    Modifier
-                },
-            )
-            .then(
                 if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
             )
-            .selectable(
-                selected = selected,
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onSelect,
+            .then(
+                if (focusIndex != null && onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
+                } else {
+                    Modifier
+                }
             )
-            .gamepadActivate(isFocused, onSelect)
+            .gamepadSelectable(
+                selected = selected,
+                onClick = onSelect,
+                shape = shape,
+                interactionSource = interactionSource,
+                accentColor = accentColor,
+            )
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),

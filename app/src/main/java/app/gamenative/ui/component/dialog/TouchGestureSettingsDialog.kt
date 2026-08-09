@@ -1,9 +1,20 @@
 package app.gamenative.ui.component.dialog
 
+import app.gamenative.ui.component.gamepadSelectable
+
+
+import app.gamenative.ui.component.gamepadBackHandler
+
+
+import app.gamenative.ui.component.GamepadFocusScope
+
+
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -15,6 +26,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -80,11 +93,15 @@ fun TouchGestureSettingsDialog(
             dismissOnClickOutside = false,
         ),
     ) {
-        // Gamepad support for this dialog window (stick/hat -> focus, A/B -> activate/dismiss).
-        JoystickFocusNavigator(enabled = true)
-        GamepadKeyBridge(enabled = true)
+        val firstItemFocusRequester = remember { FocusRequester() }
+        GamepadFocusScope(
+            backAction = onDismiss,
+            initialFocusRequester = firstItemFocusRequester,
+        ) {
         Scaffold(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .gamepadBackHandler(onDismiss),
             containerColor = PluviaBackground,
             topBar = {
                 CenterAlignedTopAppBar(
@@ -131,6 +148,7 @@ fun TouchGestureSettingsDialog(
                     subtitle = tapHoldActionLabel(config.tapAction),
                     enabled = config.tapEnabled,
                     onEnabledChange = { config = config.copy(tapEnabled = it) },
+                    focusRequester = firstItemFocusRequester,
                 ) {
                     TapHoldActionPicker(
                         currentAction = config.tapAction,
@@ -406,6 +424,7 @@ fun TouchGestureSettingsDialog(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+    }
     }
 }
 
@@ -746,34 +765,54 @@ private fun PanActionPicker(
     }
 
     if (showDialog) {
+        val pickerInitialFocus = remember { FocusRequester() }
+        val closePicker = { showDialog = false }
         AlertDialog(
-            onDismissRequest = { showDialog = false },
+            onDismissRequest = closePicker,
             containerColor = PluviaBackground,
             title = { Text(stringResource(R.string.gesture_action_label)) },
             text = {
-                LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                    items(PAN_ACTIONS) { action ->
-                        val isSelected = action == currentAction
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onActionSelected(action)
-                                    showDialog = false
-                                },
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else PluviaSurface,
-                        ) {
-                            Text(
-                                text = panActionLabel(action),
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            )
+                // Standalone window: navigator/bridge + B-close (G1).
+                GamepadFocusScope(
+                    backAction = closePicker,
+                    initialFocusRequester = pickerInitialFocus,
+                ) {
+                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                        itemsIndexed(PAN_ACTIONS) { index, action ->
+                            val isSelected = action == currentAction
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (index == 0) {
+                                            Modifier.focusRequester(pickerInitialFocus)
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                                    .gamepadSelectable(
+                                        selected = isSelected,
+                                        onClick = {
+                                            onActionSelected(action)
+                                            showDialog = false
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        interactionSource = remember { MutableInteractionSource() },
+                                    ),
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else PluviaSurface,
+                            ) {
+                                Text(
+                                    text = panActionLabel(action),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                )
+                            }
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showDialog = false }) {
+                TextButton(onClick = closePicker) {
                     Text(stringResource(android.R.string.cancel))
                 }
             },

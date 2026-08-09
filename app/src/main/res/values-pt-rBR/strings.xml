@@ -216,6 +216,20 @@
     <string name="open_navigation_menu">Abrir Menu de Navegação</string>
     <string name="quick_menu_title">Menu rápido</string>
     <string name="quick_menu_back">Voltar</string>
+    <string name="quick_menu_off">Desligado</string>
+    <string name="quick_menu_x_multiplier">%1$dx</string>
+    <string name="quick_menu_decimal_x_multiplier">%1$.2fx</string>
+    <string name="quick_menu_locked_indicator">●</string>
+    <string name="quick_menu_minus">-</string>
+    <string name="quick_menu_plus">+</string>
+    <string name="quick_menu_wine_32bit_suffix"> *32</string>
+    <plurals name="quick_menu_n_passes">
+        <item quantity="one">%d passada</item>
+        <item quantity="other">%d passadas</item>
+    </plurals>
+    <string name="action_back">Voltar</string>
+    <string name="action_switch_tab">Aba</string>
+    <string name="action_page_scroll">Página</string>
     <string name="display_brightness">Brilho da tela</string>
     <string name="screen_effects">Efeitos de tela</string>
     <string name="screen_effects_live_preview">As alterações são aplicadas instantaneamente ao jogo atual.</string>
