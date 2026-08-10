@@ -73,11 +73,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -88,7 +90,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -438,6 +439,12 @@ fun QuickMenu(
     // B with focus on the rail dismisses the menu.
     var railFocused by remember { mutableStateOf(false) }
 
+    // RC2 focus guardian (spec 2026-08-10, §3.2): true while any node inside the menu
+    // holds focus. If the focused row leaves the composition (shader toggle, collapse,
+    // search clear, async preset load, cross-input tap), Compose 1.8 clears the focus and
+    // this flips to false — the guardian re-bootstraps instead of leaving a dead menu.
+    var menuHasFocus by remember { mutableStateOf(false) }
+
     // Coroutine scope for L2/R2 page scrolling (ScrollState.scrollBy is a suspend fun).
     val quickMenuScope = rememberCoroutineScope()
 
@@ -518,6 +525,12 @@ fun QuickMenu(
         modifier = modifier
             .fillMaxSize()
             .gamepadBackHandler(backAction)
+            .onFocusChanged {
+                if (menuHasFocus != it.hasFocus) {
+                    menuHasFocus = it.hasFocus
+                    Timber.d("QuickMenu root focus: %b", it.hasFocus)
+                }
+            }
             .onPreviewKeyEvent { keyEvent ->
                 // RetroArch/Ozone-style fast navigation (spec 2026-08-09): L1/R1 switch tabs,
                 // L2/R2 page-scroll the active tab's list. Preview phase runs before the
@@ -563,8 +576,14 @@ fun QuickMenu(
         // view-level generic-motion listeners are unreliable (spec 2026-08-09, §2.1).
         BusJoystickFocusNavigator(enabled = isVisible)
         // Gamepad A/B/L1/R1/L2/R2 -> Compose, delivered directly to this ComposeView and
-        // consumed so the game never sees them while the overlay is open.
-        BusGamepadKeyBridge(enabled = isVisible)
+        // consumed so the game never sees them while the overlay is open. PS (Mode key)
+        // closes the menu (spec 2026-08-10, §3.5 — G6): PS opens it via
+        // PhysicalControllerHandler when closed, the bridge closes it when open.
+        BusGamepadKeyBridge(
+            enabled = isVisible,
+            modeKeyBehavior = ModeKeyBehavior.CloseOverlay,
+            onCloseOverlay = onDismiss,
+        )
 
         AnimatedVisibility(
             visible = isVisible,
@@ -979,45 +998,103 @@ fun QuickMenu(
     }
 
     val focusManager = LocalFocusManager.current
+
+    // RC2/RC3 (spec 2026-08-10, §3.2/§3.3): the ONE focus bootstrap, shared by the opening
+    // effect and the focus guardian (composition instead of duplication). For EFFECTS the
+    // walk-down waits one frame (withFrameNanos) so it walks from the focus that actually
+    // landed, not stale/absent focus (RC3 race: the old code walked the same frame the
+    // request was issued, so the remembered index landed on the wrong row).
+    suspend fun requestMenuFocus() {
+        // UX practice (focus hygiene): clear any stale active focus target FIRST.
+        // Compose 1.8 silently drops a requestFocus when the previously active node
+        // cannot be cleared (the dead-menu accumulation: 1st open works, every reopen
+        // after a close can die). A forced clear makes each bootstrap deterministic.
+        focusManager.clearFocus(true)
+        repeat(3) {
+            try {
+                val hadFocus = menuHasFocus
+                when (selectedTab) {
+                    QuickMenuTab.HUD -> hudItemFocusRequester.requestFocus()
+                    QuickMenuTab.LSFG -> lsfgItemFocusRequester.requestFocus()
+                    QuickMenuTab.BFG -> bfgItemFocusRequester.requestFocus()
+                    QuickMenuTab.INVITE -> inviteItemFocusRequester.requestFocus()
+                    QuickMenuTab.TOOLS -> toolsItemFocusRequester.requestFocus()
+                    QuickMenuTab.EFFECTS -> effectsItemFocusRequester.requestFocus()
+                    else -> controllerItemFocusRequester.requestFocus()
+                }
+                // Wait one frame for the request to actually land (RC3: the walk must
+                // never act on stale/absent focus).
+                withFrameNanos { }
+                if (hadFocus || menuHasFocus) {
+                    // Focus is in the menu. Only walk when THIS request landed it — a
+                    // pre-existing focus (fast reopen during the exit animation) must
+                    // not be displaced.
+                    if (selectedTab == QuickMenuTab.EFFECTS && !hadFocus) {
+                        // G9 remember-selection: walk down to the last focused row
+                        // (moveFocus clamps naturally at the last focusable).
+                        repeat(effectsFocusIndex) {
+                            focusManager.moveFocus(FocusDirection.Down)
+                        }
+                    }
+                    Timber.d("QuickMenu bootstrap: focus landed (tab=%d)", selectedTab)
+                    return
+                }
+                // The request was silently dropped (Compose can drop requests while the
+                // enter transition / IME settle — the dead-menu symptom). Retry.
+                Timber.d("QuickMenu bootstrap: request did not land, retry %d", it)
+                delay(60)
+            } catch (error: Exception) {
+                Timber.w(error, "QuickMenu bootstrap: focus retry (tab=%d)", selectedTab)
+                delay(80)
+            }
+        }
+        // Content focus failed entirely (e.g. TOOLS with no wine processes, or a focus
+        // system that keeps dropping requests) — fall back to the rail so the menu is
+        // never born dead (the original bug: menu opened with no focus anywhere, so the
+        // joystick did nothing). From the rail the stick can still navigate (Right
+        // enters the content, Down/Up cycle the rail).
+        try {
+            hudTabFocusRequester.requestFocus()
+            withFrameNanos { }
+            if (menuHasFocus) {
+                railFocused = true
+                Timber.d("QuickMenu bootstrap: fallback to rail focus")
+            } else {
+                Timber.w("QuickMenu bootstrap: rail fallback also failed")
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     LaunchedEffect(isVisible) {
         if (isVisible) {
-            var focused = false
-            repeat(3) {
-                try {
-                    when (selectedTab) {
-                        QuickMenuTab.HUD -> hudItemFocusRequester.requestFocus()
-                        QuickMenuTab.LSFG -> lsfgItemFocusRequester.requestFocus()
-                        QuickMenuTab.BFG -> bfgItemFocusRequester.requestFocus()
-                        QuickMenuTab.INVITE -> inviteItemFocusRequester.requestFocus()
-                        QuickMenuTab.EFFECTS -> {
-                            effectsItemFocusRequester.requestFocus()
-                            // G9 remember-selection: walk down to the last focused row
-                            // (moveFocus clamps naturally at the last focusable).
-                            repeat(effectsFocusIndex) {
-                                focusManager.moveFocus(FocusDirection.Down)
-                            }
-                        }
-                        QuickMenuTab.TOOLS -> toolsItemFocusRequester.requestFocus()
-                        else -> controllerItemFocusRequester.requestFocus()
-                    }
-                    focused = true
-                    Timber.d("QuickMenu bootstrap: focus requested (tab=%d)", selectedTab)
-                    return@LaunchedEffect
-                } catch (error: Exception) {
-                    Timber.w(error, "QuickMenu bootstrap: focus retry (tab=%d)", selectedTab)
-                    delay(80)
+            requestMenuFocus()
+        } else {
+            // UX practice (focus hygiene): a close must leave a clean slate. If a stale
+            // active focus target survives the exit (e.g. a text field with an open IME
+            // connection), the next open's requestFocus can be silently dropped by the
+            // focus system. Clearing here makes every reopen deterministic.
+            focusManager.clearFocus(true)
+        }
+    }
+
+    // RC2 focus guardian (spec 2026-08-10, §3.2), continuous: whenever the menu is
+    // visible but no node inside it holds focus — the focused row was removed from the
+    // composition by a shader toggle ("No filter"), a category collapse, clearing the
+    // search, an async preset load, or a cross-input tap — restore it. This is a LOOP,
+    // not a one-shot: a single failed restore must never leave the menu permanently dead
+    // (the "abri o menu e não consegui mexer nada" symptom). requestMenuFocus() itself
+    // verifies that the focus actually landed and falls back to the rail.
+    LaunchedEffect(isVisible) {
+        if (isVisible) {
+            // Let the opening bootstrap land first (never fight it).
+            delay(150)
+            while (isVisible) {
+                if (!menuHasFocus) {
+                    Timber.d("QuickMenu guardian: restoring focus (tab=%d)", selectedTab)
+                    requestMenuFocus()
                 }
-            }
-            if (!focused) {
-                // The tab has no focusable items (e.g. TOOLS with no wine processes) —
-                // fall back to the rail so the menu is never born dead (the original bug:
-                // menu opened with no focus anywhere, so the joystick did nothing).
-                try {
-                    hudTabFocusRequester.requestFocus()
-                    railFocused = true
-                    Timber.d("QuickMenu bootstrap: fallback to rail focus")
-                } catch (_: Exception) {
-                }
+                delay(400)
             }
         }
     }
@@ -1059,6 +1136,17 @@ private fun SteamInviteQuickMenuTab(
             },
             subtitle = state.lastError?.let { stringResource(it) },
         )
+
+        // G10 (spec 2026-08-10, §3.7): an empty friend list explains itself instead of
+        // silently falling back to rail focus.
+        if (state.friends.isEmpty() && !state.isLoading && !state.hostUnavailable) {
+            Text(
+                text = stringResource(R.string.steam_invite_no_friends),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
 
         val clampedInviteIndex = if (state.friends.isEmpty()) {
             0
@@ -1190,6 +1278,8 @@ private fun PerformanceHudQuickMenuTab(
             },
             accentColor = accentColor,
             focusRequester = focusRequester,
+            // G5: under LSFG the row cannot act — drop it from focus traversal (no trap).
+            interactionEnabled = !limiterControlledByLsfg,
         )
 
         AnimatedVisibility(
@@ -2041,10 +2131,13 @@ private fun QuickMenuAdjustmentRow(
                 )
 
                 Row(modifier = Modifier.fillMaxSize()) {
+                    // Touch-only halves (spec 2026-08-10, §3.4 — G3): not Compose-focusable,
+                    // so the row keeps ONE focus node and the walk-down counts one stop.
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .focusProperties { canFocus = false }
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
@@ -2055,6 +2148,7 @@ private fun QuickMenuAdjustmentRow(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .focusProperties { canFocus = false }
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
@@ -2104,6 +2198,7 @@ private fun QuickMenuAdjustmentButton(
                 },
                 shape = RoundedCornerShape(10.dp),
             )
+            .focusProperties { canFocus = false }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -2129,6 +2224,11 @@ private fun QuickMenuToggleRow(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     focusRequester: FocusRequester? = null,
+    /** Row-level availability (spec 2026-08-10, §3.4 — G5): a row that cannot act (e.g.
+     * FPS Limiter under LSFG) is not focusable — no focus trap where A does nothing.
+     * Distinct from [enabled], which is the switch state (an OFF toggle must stay
+     * focusable so the user can turn it ON). */
+    interactionEnabled: Boolean = true,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -2166,6 +2266,7 @@ private fun QuickMenuToggleRow(
                 // Selection = the switch state (toggle ligado), never focus (spec D7).
                 selected = enabled,
                 onClick = onToggle,
+                enabled = interactionEnabled,
                 shape = RoundedCornerShape(14.dp),
                 interactionSource = interactionSource,
                 accentColor = accentColor,
@@ -2437,12 +2538,29 @@ private fun QuickMenuItemRow(
         )
 
         if (secondaryIcon != null && onSecondaryClick != null) {
+            // G8 (spec 2026-08-10, §3.7): the settings gear is its own focusable node with
+            // the shared gamepad focus language (ring + tracking) — not a plain clickable
+            // that only "worked" by accident via synthetic DPAD_CENTER.
+            val secondaryInteractionSource = remember { MutableInteractionSource() }
+            val isSecondaryFocused by secondaryInteractionSource.collectIsFocusedAsState()
             Box(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    .clickable(role = Role.Button, onClick = onSecondaryClick),
+                    .background(
+                        if (isSecondaryFocused) {
+                            accentColor.copy(alpha = 0.18f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        },
+                    )
+                    .gamepadSelectable(
+                        selected = false,
+                        onClick = onSecondaryClick,
+                        shape = CircleShape,
+                        interactionSource = secondaryInteractionSource,
+                        accentColor = accentColor,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -2450,7 +2568,7 @@ private fun QuickMenuItemRow(
                     contentDescription = stringResource(
                         secondaryContentDescriptionResId ?: R.string.gesture_settings_title,
                     ),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (isSecondaryFocused) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
                 )
             }

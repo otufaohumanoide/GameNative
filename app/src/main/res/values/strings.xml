@@ -2076,6 +2076,7 @@
     <!-- Bionic FG (AI) Frame Generation -->
     <string name="steam_invite_tab_title">Invite</string>
     <string name="steam_invite_header">%1$d friends</string>
+    <string name="steam_invite_no_friends">No friends online right now. Invite from the game\'s friend list instead.</string>
     <string name="steam_invite_joinable">In this game — tap to join</string>
     <string name="steam_invite_unavailable">Steam client not ready</string>
     <string name="steam_invite_failed">Invite failed — your game isn\'t in a joinable session</string>

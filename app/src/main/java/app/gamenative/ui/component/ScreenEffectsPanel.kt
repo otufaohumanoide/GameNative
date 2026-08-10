@@ -3,15 +3,8 @@ package app.gamenative.ui.component
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -48,7 +40,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -64,10 +55,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -82,12 +76,12 @@ import app.gamenative.ui.component.dialog.loadShaderConfig
 import app.gamenative.ui.component.dialog.persistShaderConfig
 import app.gamenative.ui.theme.PluviaTheme
 import app.gamenative.ui.util.ScreenEffectsConfig
-import app.gamenative.ui.util.adaptivePanelWidth
 import app.gamenative.ui.util.applyScreenEffectsConfig
 import app.gamenative.ui.util.loadScreenEffectsConfig
 import app.gamenative.ui.util.persistScreenEffectsConfig
 import app.gamenative.utils.BrightnessManager
 import com.winlator.container.Container
+import timber.log.Timber
 import com.winlator.renderer.GLRenderer
 import com.winlator.renderer.RetroArchShaderConfig
 import com.winlator.renderer.ShaderImporter
@@ -96,7 +90,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val SCREEN_EFFECT_PERCENT_STEP = 5f
@@ -492,6 +485,8 @@ fun GLScreenEffectsTabContent(
             icon = Icons.Default.RestartAlt,
             accentColor = PluviaTheme.colors.accentPurple,
             onClick = ::resetEffects,
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -719,14 +714,35 @@ fun ScreenEffectsTabContent(
                 )
             } else {
                 Spacer(modifier = Modifier.height(4.dp))
-                // The search field is focusable too — it consumes one focus slot.
-                nextFocusSlot()
+                // The search field is focusable too — it consumes one focus slot. G4
+                // (spec 2026-08-10, §3.3): the field must also REPORT its index when
+                // focused, or the remembered slot diverges from the real focus. The
+                // framework's gamepadFocusIndex keys on isFocused, which never fires for
+                // a text field (the internal CoreTextField node owns focus), so track
+                // hasFocus here instead.
+                val searchFieldSlot = nextFocusSlot()
+                var searchFieldFocused by remember { mutableStateOf(false) }
+                // UX practice: the soft keyboard only appears on explicit intent (touch
+                // tap or A/ENTER), never because stick navigation landed on the field —
+                // a surprise keyboard covers the menu and steals input on a gamepad.
+                val keyboard = LocalSoftwareKeyboardController.current
+                LaunchedEffect(searchFieldFocused) {
+                    if (searchFieldFocused) {
+                        Timber.d("QMFocus: row %d focused (search field)", searchFieldSlot)
+                        onFocusIndexChanged(searchFieldSlot)
+                        if (SystemClock.uptimeMillis() - GamepadNavigationClock.lastMoveAt < 400L) {
+                            Timber.d("QMFocus: search field focused via gamepad - suppressing IME")
+                            keyboard?.hide()
+                        }
+                    }
+                }
                 NoExtractOutlinedTextField(
                     value = shaderQuery,
                     onValueChange = { shaderQuery = it },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = 16.dp)
+                        .onFocusChanged { searchFieldFocused = it.hasFocus },
                     placeholder = { Text(stringResource(R.string.shader_search)) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     trailingIcon = {
@@ -992,6 +1008,8 @@ fun ScreenEffectsTabContent(
             icon = Icons.Default.RestartAlt,
             accentColor = PluviaTheme.colors.accentPurple,
             onClick = ::resetEffects,
+            focusIndex = nextFocusSlot(),
+            onFocusIndexChanged = onFocusIndexChanged,
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -1000,266 +1018,6 @@ fun ScreenEffectsTabContent(
     }
 }
 
-@Composable
-fun ScreenEffectsPanel(
-    isVisible: Boolean,
-    renderer: VulkanRenderer,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
-    container: Container? = null,
-) {
-    val initialConfig = remember(renderer, container) { loadScreenEffectsConfig(container) }
-    val firstItemFocusRequester = remember { FocusRequester() }
-
-    var brightness by remember(renderer, container) {
-        mutableFloatStateOf(initialConfig.brightness)
-    }
-    var contrast by remember(renderer, container) {
-        mutableFloatStateOf(initialConfig.contrast)
-    }
-    var gamma by remember(renderer, container) {
-        mutableFloatStateOf(initialConfig.gamma)
-    }
-    var enableToon by remember(renderer, container) {
-        mutableStateOf(initialConfig.enableToon)
-    }
-    var enableFXAA by remember(renderer, container) {
-        mutableStateOf(initialConfig.enableFXAA)
-    }
-    var enableVivid by remember(renderer, container) {
-        mutableStateOf(initialConfig.enableVivid)
-    }
-    var enableCRT by remember(renderer, container) {
-        mutableStateOf(initialConfig.enableCRT)
-    }
-    var enableNTSC by remember(renderer, container) {
-        mutableStateOf(initialConfig.enableNTSC)
-    }
-
-    LaunchedEffect(brightness, contrast, gamma, enableToon, enableFXAA, enableVivid, enableCRT, enableNTSC) {
-        val config = initialConfig.copy(
-            brightness = brightness,
-            contrast = contrast,
-            gamma = gamma,
-            enableToon = enableToon,
-            enableFXAA = enableFXAA,
-            enableVivid = enableVivid,
-            enableCRT = enableCRT,
-            enableNTSC = enableNTSC,
-        )
-        applyScreenEffectsConfig(renderer, config)
-        delay(300)
-        persistScreenEffectsConfig(container, config)
-        container?.saveData()
-    }
-
-    fun resetEffects() {
-        brightness = 0f
-        contrast = 0f
-        gamma = 1.0f
-        enableToon = false
-        enableFXAA = false
-        enableVivid = false
-        enableCRT = false
-        enableNTSC = false
-    }
-
-    BackHandler(enabled = isVisible, onBack = onDismiss)
-
-    LaunchedEffect(isVisible) {
-        if (isVisible) {
-            repeat(3) {
-                try {
-                    firstItemFocusRequester.requestFocus()
-                    return@LaunchedEffect
-                } catch (_: Exception) {
-                    kotlinx.coroutines.delay(80)
-                }
-            }
-        }
-    }
-
-    Box(
-        modifier = modifier.fillMaxSize(),
-        contentAlignment = Alignment.CenterEnd,
-    ) {
-        AnimatedVisibility(
-            visible = isVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.6f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onDismiss,
-                    ),
-            )
-        }
-
-        AnimatedVisibility(
-            visible = isVisible,
-            enter = slideInHorizontally(
-                initialOffsetX = { fullWidth -> fullWidth },
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMedium,
-                ),
-            ) + fadeIn(),
-            exit = slideOutHorizontally(
-                targetOffsetX = { fullWidth -> fullWidth },
-                animationSpec = spring(stiffness = Spring.StiffnessHigh),
-            ) + fadeOut(),
-            modifier = Modifier.fillMaxHeight(),
-        ) {
-            Surface(
-                modifier = Modifier
-                    .width(adaptivePanelWidth(420.dp))
-                    .fillMaxHeight(),
-            shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 4.dp,
-            shadowElevation = 24.dp,
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.surface,
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                            ),
-                        ),
-                    )
-                    .statusBarsPadding(),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 20.dp, end = 8.dp, top = 16.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        text = stringResource(R.string.screen_effects),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = stringResource(R.string.screen_effects_close),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                )
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .focusGroup()
-                        .gamepadBackHandler(onDismiss)
-                        .padding(vertical = 12.dp),
-                ) {
-                    OptionSectionHeader(text = stringResource(R.string.screen_effects_color_adjustments))
-
-                    ScreenEffectAdjustmentRow(
-                        title = stringResource(R.string.screen_effects_brightness),
-                        valueText = formatPercent(brightness),
-                        progress = normalizedProgress(brightness, -100f, 100f),
-                        onDecrease = {
-                            brightness = (brightness - SCREEN_EFFECT_PERCENT_STEP).coerceIn(-100f, 100f)
-                        },
-                        onIncrease = {
-                            brightness = (brightness + SCREEN_EFFECT_PERCENT_STEP).coerceIn(-100f, 100f)
-                        },
-                        focusRequester = firstItemFocusRequester,
-                    )
-                    ScreenEffectAdjustmentRow(
-                        title = stringResource(R.string.screen_effects_contrast),
-                        valueText = formatPercent(contrast),
-                        progress = normalizedProgress(contrast, -100f, 100f),
-                        onDecrease = {
-                            contrast = (contrast - SCREEN_EFFECT_PERCENT_STEP).coerceIn(-100f, 100f)
-                        },
-                        onIncrease = {
-                            contrast = (contrast + SCREEN_EFFECT_PERCENT_STEP).coerceIn(-100f, 100f)
-                        },
-                    )
-                    ScreenEffectAdjustmentRow(
-                        title = stringResource(R.string.screen_effects_gamma),
-                        valueText = String.format("%.2fx", gamma),
-                        progress = normalizedProgress(gamma, 0.5f, 2.5f),
-                        onDecrease = {
-                            gamma = (gamma - SCREEN_EFFECT_GAMMA_STEP).coerceIn(0.5f, 2.5f)
-                        },
-                        onIncrease = {
-                            gamma = (gamma + SCREEN_EFFECT_GAMMA_STEP).coerceIn(0.5f, 2.5f)
-                        },
-                    )
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    OptionSectionHeader(text = stringResource(R.string.screen_effects_shader_toggles))
-
-                    ScreenEffectToggleRow(
-                        title = stringResource(R.string.screen_effects_toon),
-                        subtitle = stringResource(R.string.screen_effects_toon_description),
-                        enabled = enableToon,
-                        onToggle = { enableToon = !enableToon },
-                    )
-                    ScreenEffectToggleRow(
-                        title = stringResource(R.string.screen_effects_fxaa),
-                        subtitle = stringResource(R.string.screen_effects_fxaa_description),
-                        enabled = enableFXAA,
-                        onToggle = { enableFXAA = !enableFXAA },
-                    )
-                    ScreenEffectToggleRow(
-                        title = stringResource(R.string.screen_effects_vivid),
-                        subtitle = stringResource(R.string.screen_effects_vivid_description),
-                        enabled = enableVivid,
-                        onToggle = { enableVivid = !enableVivid },
-                    )
-                    ScreenEffectToggleRow(
-                        title = stringResource(R.string.screen_effects_crt),
-                        subtitle = stringResource(R.string.screen_effects_crt_description),
-                        enabled = enableCRT,
-                        onToggle = { enableCRT = !enableCRT },
-                    )
-                    ScreenEffectToggleRow(
-                        title = stringResource(R.string.screen_effects_ntsc),
-                        subtitle = stringResource(R.string.screen_effects_ntsc_description),
-                        enabled = enableNTSC,
-                        onToggle = { enableNTSC = !enableNTSC },
-                    )
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    AccentActionRow(
-                        title = stringResource(R.string.screen_effects_reset),
-                        icon = Icons.Default.RestartAlt,
-                        accentColor = PluviaTheme.colors.accentPurple,
-                        onClick = ::resetEffects,
-                    )
-
-                    Spacer(modifier = Modifier.height(24.dp))
-                }
-            }
-        }
-    }
-}
-}
 
 @Composable
 private fun ScreenEffectAdjustmentRow(
@@ -1387,10 +1145,13 @@ private fun ScreenEffectAdjustmentRow(
                 )
 
                 Row(modifier = Modifier.fillMaxSize()) {
+                    // Touch-only halves (spec 2026-08-10, §3.4 — G3): not Compose-focusable,
+                    // so the row keeps ONE focus node and the walk-down counts one stop.
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .focusProperties { canFocus = false }
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
@@ -1401,6 +1162,7 @@ private fun ScreenEffectAdjustmentRow(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .focusProperties { canFocus = false }
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
@@ -1450,6 +1212,7 @@ private fun ScreenEffectAdjustmentButton(
                 },
                 shape = RoundedCornerShape(10.dp),
             )
+            .focusProperties { canFocus = false }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,

@@ -4,7 +4,6 @@ import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalFocusManager
@@ -21,24 +20,23 @@ import androidx.compose.ui.platform.LocalView
  * [cooldownMs] once an axis crosses [deadZone] (holding the stick scrolls steadily, never
  * free-runs). The event is consumed only when a movement is actually issued.
  *
+ * The dead-zone/hysteresis/cooldown decision lives in the pure [GamepadStickLogic]
+ * (spec 2026-08-10, §3.1 — RC1): re-arming below the dead zone replaces the old 0.30
+ * release zone, so a drifting stick resting at 0.30–0.44 can no longer kill navigation.
+ *
  * Spec: docs/superpowers/specs/2026-08-08-dpad-shader-navigation-design.md
  */
 @Composable
 fun JoystickFocusNavigator(
     enabled: Boolean,
     deadZone: Float = 0.45f,
-    releaseZone: Float = 0.30f,
     cooldownMs: Long = 180L,
 ) {
     val focusManager = LocalFocusManager.current
     val view = LocalView.current
     DisposableEffect(enabled, view) {
         if (!enabled) return@DisposableEffect onDispose {}
-        var lastMoveAt = 0L
-        // Hysteresis (P3-20): after issuing a move, the stick must return below releaseZone
-        // before another move is accepted — a stick resting near the dead-zone edge cannot
-        // produce phantom movement.
-        var armed = true
+        var stickState = GamepadStickState()
         val listener = View.OnGenericMotionListener { _, ev ->
             if (ev.actionMasked != MotionEvent.ACTION_MOVE) return@OnGenericMotionListener false
             val isGamepad = (ev.source and InputDevice.SOURCE_JOYSTICK) != 0 ||
@@ -52,27 +50,33 @@ fun JoystickFocusNavigator(
                 kotlin.math.max(kotlin.math.abs(stickX), kotlin.math.abs(stickY)),
                 kotlin.math.max(kotlin.math.abs(hatX), kotlin.math.abs(hatY)),
             )
-            if (!armed) {
-                if (magnitude < releaseZone) armed = true
-                return@OnGenericMotionListener true
-            }
             val now = SystemClock.uptimeMillis()
             val direction = when {
-                hatY < -0.5f -> FocusDirection.Up
-                hatY > 0.5f -> FocusDirection.Down
-                hatX < -0.5f -> FocusDirection.Left
-                hatX > 0.5f -> FocusDirection.Right
-                stickY < -deadZone -> FocusDirection.Up
-                stickY > deadZone -> FocusDirection.Down
-                stickX < -deadZone -> FocusDirection.Left
-                stickX > deadZone -> FocusDirection.Right
+                hatY < -0.5f -> GamepadStickDirection.Up
+                hatY > 0.5f -> GamepadStickDirection.Down
+                hatX < -0.5f -> GamepadStickDirection.Left
+                hatX > 0.5f -> GamepadStickDirection.Right
+                stickY < -deadZone -> GamepadStickDirection.Up
+                stickY > deadZone -> GamepadStickDirection.Down
+                stickX < -deadZone -> GamepadStickDirection.Left
+                stickX > deadZone -> GamepadStickDirection.Right
                 else -> null
             }
-            if (direction == null) return@OnGenericMotionListener false
-            if (now - lastMoveAt < cooldownMs) return@OnGenericMotionListener true
-            lastMoveAt = now
-            armed = false
-            focusManager.moveFocus(direction)
+            val decision = GamepadStickLogic.decide(
+                previous = stickState,
+                now = now,
+                magnitude = magnitude,
+                direction = direction,
+                deadZone = deadZone,
+                cooldownMs = cooldownMs,
+            )
+            stickState = decision.state
+            if (decision.direction == null) {
+                // Neutral samples are not consumed; disarmed/cooldown pushes are.
+                return@OnGenericMotionListener direction != null
+            }
+            GamepadNavigationClock.lastMoveAt = SystemClock.uptimeMillis()
+            focusManager.moveFocus(decision.direction.focusDirection)
             true
         }
         view.setOnGenericMotionListener(listener)

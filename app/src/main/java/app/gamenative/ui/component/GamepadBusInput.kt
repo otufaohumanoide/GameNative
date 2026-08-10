@@ -6,7 +6,6 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import app.gamenative.PluviaApp
@@ -24,27 +23,28 @@ import timber.log.Timber
  * this app, so the QuickMenu uses it too.
  *
  * While [enabled], ALL gamepad motion is consumed (the game must not receive the stick while
- * the overlay is up) and axis/hat movement is translated into Compose focus moves with the
- * same deadzone/hysteresis/cooldown semantics as [JoystickFocusNavigator] (which stays for
- * dialog windows, where events never reach this bus).
+ * the overlay is up) and axis/hat movement is translated into Compose focus moves through
+ * [GamepadStickLogic] — the same pure decision logic as [JoystickFocusNavigator] (which stays
+ * for dialog windows, where events never reach this bus). Spec 2026-08-10, §3.1 (RC1):
+ * re-arming below the dead zone (not a separate release zone) fixes the dead-navigation
+ * bug caused by stick drift resting at 0.30–0.44.
  */
 @Composable
 fun BusJoystickFocusNavigator(
     enabled: Boolean,
     deadZone: Float = 0.45f,
-    releaseZone: Float = 0.30f,
     cooldownMs: Long = 180L,
 ) {
     val focusManager = LocalFocusManager.current
     DisposableEffect(enabled) {
         if (!enabled) return@DisposableEffect onDispose {}
-        var lastMoveAt = 0L
-        var armed = true
+        var stickState = GamepadStickState()
         fun handleMotion(androidEvent: AndroidEvent.MotionEvent): Boolean {
             val ev = androidEvent.event ?: return false
             val isGamepad = (ev.source and InputDevice.SOURCE_JOYSTICK) != 0 ||
                 (ev.source and InputDevice.SOURCE_DPAD) != 0
             if (!isGamepad) return false
+            // Consumed: the overlay owns the stick, even when not moving focus.
             if (ev.actionMasked != MotionEvent.ACTION_MOVE) return true
             val stickX = ev.getAxisValue(MotionEvent.AXIS_X)
             val stickY = ev.getAxisValue(MotionEvent.AXIS_Y)
@@ -54,29 +54,32 @@ fun BusJoystickFocusNavigator(
                 maxOf(kotlin.math.abs(stickX), kotlin.math.abs(stickY)),
                 maxOf(kotlin.math.abs(hatX), kotlin.math.abs(hatY)),
             )
-            if (!armed) {
-                if (magnitude < releaseZone) armed = true
-                // Consumed: the overlay owns the stick, even when not moving focus.
-                return true
-            }
             val now = SystemClock.uptimeMillis()
             val direction = when {
-                hatY < -0.5f -> FocusDirection.Up
-                hatY > 0.5f -> FocusDirection.Down
-                hatX < -0.5f -> FocusDirection.Left
-                hatX > 0.5f -> FocusDirection.Right
-                stickY < -deadZone -> FocusDirection.Up
-                stickY > deadZone -> FocusDirection.Down
-                stickX < -deadZone -> FocusDirection.Left
-                stickX > deadZone -> FocusDirection.Right
+                hatY < -0.5f -> GamepadStickDirection.Up
+                hatY > 0.5f -> GamepadStickDirection.Down
+                hatX < -0.5f -> GamepadStickDirection.Left
+                hatX > 0.5f -> GamepadStickDirection.Right
+                stickY < -deadZone -> GamepadStickDirection.Up
+                stickY > deadZone -> GamepadStickDirection.Down
+                stickX < -deadZone -> GamepadStickDirection.Left
+                stickX > deadZone -> GamepadStickDirection.Right
                 else -> null
             }
-            if (direction == null) return true
-            if (now - lastMoveAt < cooldownMs) return true
-            lastMoveAt = now
-            armed = false
-            Timber.d("BusJoystick: moveFocus(%s) mag=%.2f", direction, magnitude)
-            focusManager.moveFocus(direction)
+            val decision = GamepadStickLogic.decide(
+                previous = stickState,
+                now = now,
+                magnitude = magnitude,
+                direction = direction,
+                deadZone = deadZone,
+                cooldownMs = cooldownMs,
+            )
+            stickState = decision.state
+            decision.direction?.let { dir ->
+                Timber.d("BusJoystick: moveFocus(%s) mag=%.2f", dir, magnitude)
+                GamepadNavigationClock.lastMoveAt = SystemClock.uptimeMillis()
+                focusManager.moveFocus(dir.focusDirection)
+            }
             return true
         }
         val handler: (AndroidEvent.MotionEvent) -> Boolean = ::handleMotion
@@ -86,6 +89,32 @@ fun BusJoystickFocusNavigator(
             PluviaApp.events.off<AndroidEvent.MotionEvent, Boolean>(handler)
         }
     }
+}
+
+/**
+ * Shared clock stamped by every gamepad focus move (bus + view navigators). Lets focus
+ * targets tell "focus arrived via the stick/hat" from "focus arrived via touch/API"
+ * (UX practice: a soft keyboard must only appear on explicit user intent — tapping the
+ * field or pressing A — never because stick navigation landed on a text field).
+ */
+object GamepadNavigationClock {
+    @Volatile
+    var lastMoveAt: Long = 0L
+}
+
+/**
+ * What the [BusGamepadKeyBridge] does with the controller's Home/PS key
+ * (KEYCODE_BUTTON_MODE) while an overlay is open (spec 2026-08-10, §3.5 — G6).
+ *
+ * PS opens the QuickMenu through PhysicalControllerHandler (menu closed); with the menu
+ * open the bridge must close it — toggle behavior, no ambiguous Boolean.
+ */
+enum class ModeKeyBehavior {
+    /** KEYCODE_BUTTON_MODE closes the overlay via [BusGamepadKeyBridge.onCloseOverlay]. */
+    CloseOverlay,
+
+    /** KEYCODE_BUTTON_MODE is consumed and ignored (current behavior for other users). */
+    None,
 }
 
 /**
@@ -99,13 +128,20 @@ fun BusJoystickFocusNavigator(
  * - BUTTON_A -> synthetic DPAD_CENTER (with haptics), same translation as [GamepadKeyBridge].
  * - BUTTON_B / L1 / R1 / L2 / R2 / DPAD_* / ENTER -> re-dispatched raw into the ComposeView
  *   (the surface handlers consume them: hierarchical back, tab switching, page scroll).
+ * - KEYCODE_BUTTON_MODE (Home/PS) -> always consumed; with [ModeKeyBehavior.CloseOverlay]
+ *   the first ACTION_DOWN invokes [onCloseOverlay] (spec 2026-08-10, §3.5 — G6: PS toggles
+ *   the QuickMenu open/closed).
  *
  * [GamepadKeyBridge] (view-level) stays for dialog windows, whose events never hit this bus.
  */
 @Composable
-fun BusGamepadKeyBridge(enabled: Boolean) {
+fun BusGamepadKeyBridge(
+    enabled: Boolean,
+    modeKeyBehavior: ModeKeyBehavior = ModeKeyBehavior.None,
+    onCloseOverlay: () -> Unit = {},
+) {
     val view = LocalView.current
-    DisposableEffect(enabled, view) {
+    DisposableEffect(enabled, view, modeKeyBehavior, onCloseOverlay) {
         if (!enabled) return@DisposableEffect onDispose {}
         val handledKeys = intArrayOf(
             KeyEvent.KEYCODE_BUTTON_B,
@@ -122,6 +158,15 @@ fun BusGamepadKeyBridge(enabled: Boolean) {
         )
         fun handleKey(androidEvent: AndroidEvent.KeyEvent): Boolean {
             val event = androidEvent.event
+            if (event.keyCode == KeyEvent.KEYCODE_BUTTON_MODE) {
+                if (modeKeyBehavior == ModeKeyBehavior.CloseOverlay &&
+                    event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
+                ) {
+                    onCloseOverlay()
+                }
+                // DOWN/UP always consumed: the game never sees the Mode key with an overlay up.
+                return true
+            }
             if (event.keyCode == KeyEvent.KEYCODE_BUTTON_A) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     GamepadHaptics.vibrate(view.context)

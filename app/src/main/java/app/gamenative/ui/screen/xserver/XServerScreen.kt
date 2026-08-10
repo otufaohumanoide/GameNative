@@ -61,6 +61,8 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -106,9 +108,12 @@ import app.gamenative.service.SteamService
 import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
 import app.gamenative.ui.component.dialog.loadShaderConfig
+import app.gamenative.ui.component.BusGamepadKeyBridge
+import app.gamenative.ui.component.BusJoystickFocusNavigator
 import app.gamenative.ui.component.QuickMenu
 import app.gamenative.ui.component.QuickMenuAction
 import app.gamenative.ui.component.SteamInviteState
+import app.gamenative.ui.component.gamepadBackHandler
 import app.gamenative.ui.component.parseBooleanExtra
 import app.gamenative.utils.BionicFgManager
 import app.gamenative.ui.component.parsePositiveFpsLimit
@@ -2549,6 +2554,16 @@ fun XServerScreen(
             }
         }
 
+        // G7 (spec 2026-08-10, §3.6): bus-level gamepad navigation while editing
+        // controls. The toolbar is a Compose surface in the SAME window as the GL
+        // surface, so it uses the bus navigators like the QuickMenu. PS stays mapped to
+        // None: toggling the QuickMenu in the middle of an edit would be surprising.
+        // Disabled while the QuickMenu is up so the two overlays never fight over the bus.
+        if (isEditMode && !showQuickMenu) {
+            BusJoystickFocusNavigator(enabled = true)
+            BusGamepadKeyBridge(enabled = true)
+        }
+
         // Floating toolbar for edit mode (always visible in edit mode)
         if (isEditMode && areControlsVisible) {
             EditModeToolbar(
@@ -2935,6 +2950,22 @@ private fun EditModeToolbar(
     var toolbarOffsetY by remember { mutableStateOf(0f) }
     val density = LocalDensity.current
 
+    // G7 (spec 2026-08-10, §3.6): initial focus lands on the Add button so the stick has
+    // somewhere to start; retries while the toolbar's composition settles. The toolbar is
+    // only composed while `isEditMode && areControlsVisible`, so a Unit-keyed effect runs
+    // once per appearance.
+    val addButtonFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        repeat(3) {
+            try {
+                addButtonFocusRequester.requestFocus()
+                return@LaunchedEffect
+            } catch (_: Exception) {
+                delay(80)
+            }
+        }
+    }
+
     Box(
         contentAlignment = androidx.compose.ui.Alignment.TopCenter,
         modifier = Modifier
@@ -2949,6 +2980,9 @@ private fun EditModeToolbar(
                     toolbarOffsetY += dragAmount.y / density.density
                 }
             }
+            // G7: raw gamepad B = Close (cancels the edit, restores the snapshot) —
+            // parity with the Close button. Physical BACK stays on its own path.
+            .gamepadBackHandler(onClose)
     ) {
         Row(
             modifier = Modifier
@@ -2969,8 +3003,11 @@ private fun EditModeToolbar(
                 modifier = Modifier.padding(end = 4.dp)
             )
 
-            // Add button
-            TextButton(onClick = onAdd) {
+            // Add button (G7: initial gamepad focus target)
+            TextButton(
+                onClick = onAdd,
+                modifier = Modifier.focusRequester(addButtonFocusRequester),
+            ) {
                 Icon(Icons.Default.Add, contentDescription = "Add", tint = androidx.compose.ui.graphics.Color.White)
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(stringResource(R.string.add), color = androidx.compose.ui.graphics.Color.White)
