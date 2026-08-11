@@ -7,6 +7,8 @@ import android.os.SystemClock
 import android.provider.Settings
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
@@ -64,6 +66,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -73,6 +76,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.SoftwareKeyboardControllerCompat
 import app.gamenative.R
+import kotlinx.coroutines.Job
 import app.gamenative.ui.component.dialog.categoryOf
 import app.gamenative.ui.component.dialog.ensureBundledShaders
 import app.gamenative.ui.component.dialog.friendlyCategoryName
@@ -651,6 +655,18 @@ fun ScreenEffectsTabContent(
     }
 
     fun applyShaderPreset(entry: Map.Entry<String, String>) {
+        // Per-shader toggle-off (spec 2026-08-11): selecting the SAME shader that is
+        // already active clears ONLY that preset — the frame renders unshaded, but the
+        // RetroArch shader system stays ENABLED (the main toggle is the only on/off for
+        // the whole system; the redundant "No filter" row was removed).
+        if (shaderEnabled && entry.key == shaderRelativePath) {
+            shaderPresetPath = ""
+            shaderPresetName = ""
+            shaderRelativePath = ""
+            renderer.clearRetroArchShaderPreset()
+            persistShaderState(true, "", "", "")
+            return
+        }
         shaderScope.launch(Dispatchers.IO) {
             val result = importer.importBundledPreset(entry.key)
             withContext(Dispatchers.Main) {
@@ -706,15 +722,6 @@ fun ScreenEffectsTabContent(
         )
 
         if (shaderEnabled) {
-            Spacer(modifier = Modifier.height(8.dp))
-            ShaderPresetRow(
-                title = stringResource(R.string.shader_no_filter),
-                subtitle = null,
-                selected = shaderRelativePath.isEmpty(),
-                onClick = { disableShaders() },
-                focusIndex = nextFocusSlot(),
-                onFocusIndexChanged = onFocusIndexChanged,
-            )
             if (shaderOptions.isEmpty()) {
                 Text(
                     text = stringResource(R.string.shader_loading),
@@ -749,19 +756,29 @@ fun ScreenEffectsTabContent(
                 // loop from hiding it again. Reset whenever the IME closes for any reason,
                 // so X always opens it.
                 var searchImeWanted by remember { mutableStateOf(false) }
-                suspend fun suppressIme() {
-                    // Hide immediately, then re-hide while the field's async startInputMethod
-                    // may still be racing us. Bounded and condition-based: stop as soon as
-                    // the user pressed X or the field lost focus.
-                    keyboard.hide()
-                    var attempt = 0
-                    while (searchFieldFocused && !searchImeWanted && attempt < 3) {
-                        delay(100L)
-                        attempt++
-                        if (searchFieldFocused && !searchImeWanted) {
+                // Continuous suppression (spec 2026-08-11): the field's async
+                // startInputMethod can open the IME hundreds of ms — or seconds on slow
+                // devices — after focus lands, so a short bounded retry still lets the
+                // keyboard flash while the player is navigating. Keep re-hiding for as
+                // long as the field is focused WITHOUT explicit intent; the X and touch
+                // handlers cancel this job before showing, so there is no hide-after-show
+                // race.
+                val imeScope = rememberCoroutineScope()
+                var suppressImeJob by remember { mutableStateOf<Job?>(null) }
+                fun startImeSuppression() {
+                    suppressImeJob?.cancel()
+                    suppressImeJob = imeScope.launch {
+                        keyboard.hide()
+                        while (searchFieldFocused && !searchImeWanted) {
+                            delay(120L)
+                            if (!searchFieldFocused || searchImeWanted) break
                             keyboard.hide()
                         }
                     }
+                }
+                fun stopImeSuppression() {
+                    suppressImeJob?.cancel()
+                    suppressImeJob = null
                 }
                 LaunchedEffect(searchFieldFocused) {
                     if (searchFieldFocused) {
@@ -774,9 +791,10 @@ fun ScreenEffectsTabContent(
                             )
                         ) {
                             Timber.d("QMFocus: search field focused via gamepad - suppressing IME")
-                            suppressIme()
+                            startImeSuppression()
                         }
                     } else {
+                        stopImeSuppression()
                         searchImeWanted = false
                     }
                 }
@@ -797,6 +815,7 @@ fun ScreenEffectsTabContent(
                     ) {
                         SearchFieldImeLogic.KeyAction.OpenIme -> {
                             searchImeWanted = true
+                            stopImeSuppression()
                             keyboard.show()
                             true
                         }
@@ -815,6 +834,19 @@ fun ScreenEffectsTabContent(
                 val searchFieldAccent = PluviaTheme.colors.accentPurple
                 Box(
                     modifier = Modifier
+                        // Touch on the field is explicit intent (spec 2026-08-11): the
+                        // continuous suppression must stop so a tap still opens the keyboard.
+                        // Observed without consuming — the field's own tap handling (focus +
+                        // startInputMethod) keeps working underneath.
+                        .pointerInput(searchFieldFocused) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                if (searchFieldFocused) {
+                                    searchImeWanted = true
+                                    stopImeSuppression()
+                                }
+                            }
+                        }
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                         .clip(RoundedCornerShape(14.dp))

@@ -135,6 +135,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
 
     private native boolean nativeInitLibrashader(long handle);
     private native boolean nativeLoadLibrashaderPreset(long handle, String presetPath);
+    private native void    nativeClearLibrashaderPreset(long handle);
     private native void    nativeEnableLibrashader(long handle, boolean enabled);
     private native void    nativeSetLibrashaderParam(long handle, String name, float value);
     private native String  nativeGetLibrashaderError(long handle);
@@ -910,6 +911,21 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
             }
         }
         return true;
+    }
+
+    /**
+     * Clears the loaded RetroArch shader preset while keeping the shader system ENABLED
+     * (spec 2026-08-11): the frame renders unshaded, but {@link #isRetroArchShaderEnabled()}
+     * stays true — turning the whole system off is the main toggle's job. The chain is
+     * destroyed on the render thread (deferred), so the next preset load starts clean.
+     */
+    public void clearRetroArchShaderPreset() {
+        pendingLibraShaderPresetPath = "";
+        synchronized (lock) {
+            if (nativeHandle != 0) {
+                nativeClearLibrashaderPreset(nativeHandle);
+            }
+        }
     }
 
     public void setRetroArchShaderParam(String name, float value) {

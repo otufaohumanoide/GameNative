@@ -1444,7 +1444,6 @@
     <string name="retroarch_shaders_title">RetroArch Shaders</string>
     <string name="shader_pick_preset">Pick a preset below</string>
     <string name="shader_off">Off</string>
-    <string name="shader_no_filter">No filter</string>
     <string name="shader_loading">Loading bundled presets…</string>
     <string name="shader_search">Search presets…</string>
     <string name="shader_clear_search">Clear search</string>

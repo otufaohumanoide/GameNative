@@ -272,6 +272,12 @@ Java_com_winlator_renderer_VulkanRenderer_nativeInitLibrashader(JNIEnv*, jobject
     return r->isLibrashaderLoaded() ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_winlator_renderer_VulkanRenderer_nativeClearLibrashaderPreset(JNIEnv*, jobject, jlong handle) {
+    VulkanRendererContext* r = reinterpret_cast<VulkanRendererContext*>(handle);
+    if (r) r->clearLibrashaderPreset();
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_winlator_renderer_VulkanRenderer_nativeLoadLibrashaderPreset(JNIEnv* env, jobject, jlong handle, jstring presetPath) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);

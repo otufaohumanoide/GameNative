@@ -1061,9 +1061,21 @@ ok=true;}catch(...){}
     // Running reloads on the render thread also prevents UI-thread queue races (driver crash).
     {
         std::string presetToLoad;
+        bool clearRequested = false;
         {
             std::lock_guard<std::mutex> lk(presetReqMtx);
             if (hasPendingPreset) { presetToLoad = pendingPresetPath; hasPendingPreset = false; }
+            if (hasPendingClear) { hasPendingClear = false; clearRequested = true; }
+        }
+        if (clearRequested) {
+            // Per-shader toggle-off (spec 2026-08-11): destroy the chain so the frame
+            // renders unshaded while librashader stays ENABLED. Render thread only;
+            // destroyFilterChain takes the wrapper's mtx (serialized with applyFrame).
+            RLOG("librashader: clearing preset chain (shader off, system enabled)");
+            libraShader.destroyFilterChain();
+            libraShaderActive.store(false);
+            libraShaderPresetPath.clear();
+            libraChainFailed = false;
         }
         static std::string sLastPresetOverride;
         char pbuf[512] = {0};
@@ -1795,6 +1807,12 @@ void VulkanRendererContext::requestLibrashaderPreset(const std::string& path) {
     pendingPresetPath = path;
     hasPendingPreset = true;
     RLOG("librashader: preset load requested (deferred to render thread): %s", path.c_str());
+}
+
+void VulkanRendererContext::clearLibrashaderPreset() {
+    std::lock_guard<std::mutex> lk(presetReqMtx);
+    hasPendingClear = true;
+    RLOG("librashader: preset clear requested (deferred to render thread)");
 }
 
 void VulkanRendererContext::setLibrashaderParam(const std::string& name, float value) {

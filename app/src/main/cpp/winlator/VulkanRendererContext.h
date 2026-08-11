@@ -190,9 +190,14 @@ public:
     // Deferred preset load: stores the request; the RENDER thread applies it (reloadPreset does
     // queue work that must not race with in-flight frame recording on the render thread).
     void requestLibrashaderPreset(const std::string& presetPath);
+    // Deferred preset CLEAR (per-shader toggle-off, spec 2026-08-11): destroys the filter
+    // chain so the frame renders unshaded while librashader stays ENABLED (the main toggle's
+    // job is the on/off of the whole system; this only clears the selected preset).
+    void clearLibrashaderPreset();
     std::mutex presetReqMtx;
     std::string pendingPresetPath;
     bool hasPendingPreset = false;
+    bool hasPendingClear = false;
     void setLibrashaderParam(const std::string& name, float value);
     void enableLibrashader(bool enabled);
     bool isLibrashaderLoaded() const { return libraShader.isLoaded(); }

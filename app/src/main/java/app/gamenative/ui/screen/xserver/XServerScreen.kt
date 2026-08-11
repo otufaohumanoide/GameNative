@@ -1059,6 +1059,7 @@ fun XServerScreen(
     }
 
     val dismissOverlayMenu: () -> Unit = {
+        Timber.d("XServerScreen: dismissOverlayMenu (keyboardRequestedFromOverlay=%b, showQuickMenu=%b)", keyboardRequestedFromOverlay, showQuickMenu)
         if (!keyboardRequestedFromOverlay) {
             imeInputReceiver?.hideKeyboard()
         }
