@@ -48,7 +48,12 @@ fun DebugGamepadInputHarness(enabled: Boolean) {
         ?: (app.gamenative.PluviaApp.xServerView?.context as? Activity)
     if (activity == null) return
 
-    var lastCommand by remember { mutableStateOf("") }
+    // Baseline = the property value that already exists when the app starts. A stale
+    // harness command left over from a previous session (e.g. "back") would otherwise
+    // fire on the FIRST poll of every new session, making the QuickMenu open itself
+    // at game start (2026-08-11: reproduced on-device — leftover `back:9` opened the
+    // menu ~8 s after launch). Only commands set AFTER the harness starts fire.
+    var lastCommand by remember { mutableStateOf(readInputProperty()) }
     LaunchedEffect(enabled) {
         while (enabled) {
             val command = readInputProperty()
