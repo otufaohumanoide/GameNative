@@ -46,3 +46,52 @@ A navegação por joystick está **implementada e funcional** nos caminhos verif
 busca, categorias fechadas, visual de foco, retry row) não introduzem regressão por
 análise estática; a confirmação final exige o Mi 11 conectado (script
 `tools/quickmenu-verify.sh`).
+
+## Atualização 2026-08-11 (tarde) — verificação on-device CONCLUÍDA
+
+Device: Mi 11X/POCO F3 (M2012K11AG, alioth), APK com o fix do invite (`bac07811`) + fix do
+harness (`82496415`), teste via harness `debug.gamenative.input` (sem controle físico).
+
+### Causa raiz REAL do "QuickMenu abre sozinho ao abrir o jogo" — reproduzida no device
+
+O primeiro launch de teste abriu o QuickMenu ~8 s após o start — **sem nenhum comando
+meu**: a property `debug.gamenative.input` do device estava com o valor **`back:9`
+sobrando da sessão de teste anterior** (a sessão 019fed5f terminou usando o harness). O
+harness age no primeiro poll com qualquer valor não-vazio ≠ lastCommand, então **todo
+launch de jogo disparava BACK** → `gameBack()` → `showQuickMenu=true`. Sintoma idêntico ao
+relatado ("abre sozinho quando eu abro um jogo").
+
+Caminhos de abertura do QuickMenu (mapa completo, HEAD `82496415`):
+
+| Gatilho | Código | Ativo no setup do usuário? |
+|---|---|---|
+| BACK (físico/gesto/IME-hide) | `gameBack()` BackHandler | sim |
+| **Harness `back` (stale property)** | `DebugGamepadInputHarness` | **sim — CAUSA RAIZ do sintoma (reproduzida)** |
+| Invite poll (`onRequestOpen`) | `LaunchedEffect(inviteMenu)` | **não** — todos os containers têm `launchBionicSteam=false` → `inviteMenu==null` |
+| PS (controle físico) | binding `OPEN_NAVIGATION_MENU` | só com controle conectado |
+
+**FIX aplicado e verificado (`82496415`):** o harness agora usa como baseline o valor da
+property **na composição** — comandos stale de sessões anteriores não disparam mais. Teste:
+`back:9` setado ANTES do launch → 25 s sem abertura; `back` setado DEPOIS do launch →
+abre normalmente. O fix do invite (`bac07811`) continua válido e necessário para sessões
+com `launchBionicSteam=true` (host que não limpa o POLL reabriria o menu a cada segundo;
+flag booleana deixava o jogo sem pausa).
+
+### Navegação por joystick — verificação dinâmica (harness, sem controle físico)
+
+| Teste | Resultado |
+|---|---|
+| Abrir via BACK → bootstrap com foco (tab=2, row 0) | ✅ |
+| Stick Down×3 → rows 0→1→2→3; campo de busca com **IME suprimido** | ✅ |
+| Stick Up → row 2 (busca, IME suprimido de novo) | ✅ |
+| Stick Right/Left → rail↔conteúdo | ✅ |
+| L1/R1 → `selectAdjacentTab` cíclico | ✅ |
+| L2/R2 → scroll de página | ✅ |
+| A → ativação | ✅ |
+| B → back hierárquico (conteúdo→rail; rail→fecha) | ✅ |
+| Reabrir 2× (cenário RC2 menu morto) → foco aterrissa e navega | ✅ |
+| 30 s no start do jogo → **0 aberturas não solicitadas** | ✅ |
+| Guardião de foco → 0 restaurações necessárias (nenhuma morte de foco) | ✅ |
+
+Veredito final: **navegação por joystick funcional** (T1–T6 dinâmicos + 26/26 testes JVM);
+T7 (modo edição) e T8 (diálogos) com controle físico seguem pendentes de teste manual.
