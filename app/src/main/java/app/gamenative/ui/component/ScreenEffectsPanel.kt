@@ -40,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -740,24 +741,52 @@ fun ScreenEffectsTabContent(
                         }
                     }
                 }
-                NoExtractOutlinedTextField(
-                    value = shaderQuery,
-                    onValueChange = { shaderQuery = it },
+                // Focus feedback for the search field (spec 2026-08-10-effects-tab-focus-visual-design,
+                // §3.4): the field is reachable via stick, so wrap it in a tinted container and
+                // color the border with the QuickMenu accent while it has focus (the IME may be
+                // suppressed on gamepad navigation, but the visual must still show focus).
+                val searchFieldAccent = PluviaTheme.colors.accentPurple
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
-                        .onFocusChanged { searchFieldFocused = it.hasFocus },
-                    placeholder = { Text(stringResource(R.string.shader_search)) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    trailingIcon = {
-                        if (shaderQuery.isNotEmpty()) {
-                            IconButton(onClick = { shaderQuery = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.shader_clear_search))
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (searchFieldFocused) {
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        searchFieldAccent.copy(alpha = 0.16f),
+                                        searchFieldAccent.copy(alpha = 0.08f),
+                                    ),
+                                )
+                            } else {
+                                Brush.horizontalGradient(
+                                    colors = listOf(Color.Transparent, Color.Transparent),
+                                )
+                            },
+                        ),
+                ) {
+                    NoExtractOutlinedTextField(
+                        value = shaderQuery,
+                        onValueChange = { shaderQuery = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { searchFieldFocused = it.hasFocus },
+                        placeholder = { Text(stringResource(R.string.shader_search)) },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (shaderQuery.isNotEmpty()) {
+                                IconButton(onClick = { shaderQuery = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.shader_clear_search))
+                                }
                             }
-                        }
-                    },
-                    singleLine = true,
-                )
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = searchFieldAccent,
+                        ),
+                    )
+                }
                 Spacer(modifier = Modifier.height(6.dp))
 
                 val query = shaderQuery.trim().lowercase()
@@ -1348,6 +1377,20 @@ private fun NativeEffectsHeader(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
+            .background(
+                if (isFocused) {
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            PluviaTheme.colors.accentPurple.copy(alpha = 0.14f),
+                            PluviaTheme.colors.accentPurple.copy(alpha = 0.07f),
+                        ),
+                    )
+                } else {
+                    Brush.horizontalGradient(
+                        colors = listOf(Color.Transparent, Color.Transparent),
+                    )
+                },
+            )
             .then(
                 if (focusIndex != null && onFocusIndexChanged != null) {
                     Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
@@ -1368,7 +1411,11 @@ private fun NativeEffectsHeader(
         Icon(
             imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = if (isFocused) {
+                PluviaTheme.colors.accentPurple
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
             modifier = Modifier.size(18.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
@@ -1376,6 +1423,7 @@ private fun NativeEffectsHeader(
                 text = stringResource(R.string.shader_renderer_native_title),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Medium,
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -1403,6 +1451,20 @@ private fun ShaderCategoryHeader(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
+            .background(
+                if (isFocused) {
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            PluviaTheme.colors.accentPurple.copy(alpha = 0.14f),
+                            PluviaTheme.colors.accentPurple.copy(alpha = 0.07f),
+                        ),
+                    )
+                } else {
+                    Brush.horizontalGradient(
+                        colors = listOf(Color.Transparent, Color.Transparent),
+                    )
+                },
+            )
             .then(
                 if (focusIndex != null && onFocusIndexChanged != null) {
                     Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
@@ -1429,7 +1491,12 @@ private fun ShaderCategoryHeader(
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
+            color = if (isFocused) {
+                PluviaTheme.colors.accentPurple
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+            fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Medium,
             modifier = Modifier.weight(1f),
         )
         Text(
@@ -1449,7 +1516,10 @@ private fun ShaderPresetRow(
     focusIndex: Int? = null,
     onFocusIndexChanged: ((Int) -> Unit)? = null,
 ) {
-    val accentColor = PluviaTheme.colors.accentCyan
+    // One accent for the whole row (focus + selection): the QuickMenu navigation color.
+    // The shader list must not introduce blue tones — it would diverge from the project's
+    // original proposal (spec 2026-08-10-effects-tab-focus-visual-design).
+    val accentColor = PluviaTheme.colors.accentPurple
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
@@ -1458,10 +1528,25 @@ private fun ShaderPresetRow(
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
-                if (selected) {
-                    accentColor.copy(alpha = 0.15f)
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+                when {
+                    isFocused -> Brush.horizontalGradient(
+                        colors = listOf(
+                            accentColor.copy(alpha = 0.16f),
+                            accentColor.copy(alpha = 0.08f),
+                        ),
+                    )
+                    selected -> Brush.horizontalGradient(
+                        colors = listOf(
+                            accentColor.copy(alpha = 0.15f),
+                            accentColor.copy(alpha = 0.15f),
+                        ),
+                    )
+                    else -> Brush.horizontalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
+                        ),
+                    )
                 },
             )
             .then(
@@ -1486,8 +1571,16 @@ private fun ShaderPresetRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (selected) accentColor else MaterialTheme.colorScheme.onSurface,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (selected || isFocused) {
+                    accentColor
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                fontWeight = if (selected || isFocused) {
+                    FontWeight.SemiBold
+                } else {
+                    FontWeight.Medium
+                },
             )
             if (!subtitle.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(2.dp))
