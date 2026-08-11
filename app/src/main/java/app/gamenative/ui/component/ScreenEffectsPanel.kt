@@ -21,9 +21,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,12 +63,15 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.view.SoftwareKeyboardControllerCompat
 import app.gamenative.R
 import app.gamenative.ui.component.dialog.categoryOf
 import app.gamenative.ui.component.dialog.ensureBundledShaders
@@ -727,18 +732,80 @@ fun ScreenEffectsTabContent(
                 // hasFocus here instead.
                 val searchFieldSlot = nextFocusSlot()
                 var searchFieldFocused by remember { mutableStateOf(false) }
-                // UX practice: the soft keyboard only appears on explicit intent (touch
-                // tap or A/ENTER), never because stick navigation landed on the field —
-                // a surprise keyboard covers the menu and steals input on a gamepad.
-                val keyboard = LocalSoftwareKeyboardController.current
+                // UX practice (spec 2026-08-10-search-field-ime-explicit-design): the soft
+                // keyboard opens ONLY on explicit intent — X (A / DPAD_CENTER / ENTER) opens
+                // it, B closes it — never because gamepad navigation (stick/hat, menu-open
+                // walk-down, guardian restore) landed on the field. The old "hide once on
+                // focus" lost the race against the field's async startInputMethod, so the
+                // keyboard kept popping up; SoftwareKeyboardControllerCompat drives the
+                // InputMethodManager directly and works outside an active input session.
+                val view = LocalView.current
+                val keyboard = remember { SoftwareKeyboardControllerCompat(view) }
+                val density = LocalDensity.current
+                // Recomposes whenever the IME insets change: WindowInsets.ime is backed by
+                // snapshot state, so this boolean stays live without an explicit collector.
+                val imeVisible = WindowInsets.ime.getBottom(density) > 0
+                // Set while the user explicitly asked for the IME; stops the suppression
+                // loop from hiding it again. Reset whenever the IME closes for any reason,
+                // so X always opens it.
+                var searchImeWanted by remember { mutableStateOf(false) }
+                suspend fun suppressIme() {
+                    // Hide immediately, then re-hide while the field's async startInputMethod
+                    // may still be racing us. Bounded and condition-based: stop as soon as
+                    // the user pressed X or the field lost focus.
+                    keyboard.hide()
+                    var attempt = 0
+                    while (searchFieldFocused && !searchImeWanted && attempt < 3) {
+                        delay(100L)
+                        attempt++
+                        if (searchFieldFocused && !searchImeWanted) {
+                            keyboard.hide()
+                        }
+                    }
+                }
                 LaunchedEffect(searchFieldFocused) {
                     if (searchFieldFocused) {
                         Timber.d("QMFocus: row %d focused (search field)", searchFieldSlot)
                         onFocusIndexChanged(searchFieldSlot)
-                        if (SystemClock.uptimeMillis() - GamepadNavigationClock.lastMoveAt < 400L) {
+                        if (!searchImeWanted && SearchFieldImeLogic.arrivedViaGamepad(
+                                now = SystemClock.uptimeMillis(),
+                                lastMoveAt = GamepadNavigationClock.lastMoveAt,
+                                windowMs = 400L,
+                            )
+                        ) {
                             Timber.d("QMFocus: search field focused via gamepad - suppressing IME")
-                            keyboard?.hide()
+                            suppressIme()
                         }
+                    } else {
+                        searchImeWanted = false
+                    }
+                }
+                LaunchedEffect(imeVisible) {
+                    if (!imeVisible) searchImeWanted = false
+                }
+                // X opens the IME, B closes it while it is up (consumed — the menu must not
+                // close; B with the IME closed propagates as the usual hierarchical back).
+                val searchImeKeyModifier = Modifier.onPreviewKeyEvent { keyEvent ->
+                    when (
+                        SearchFieldImeLogic.onKey(
+                            keyCode = keyEvent.nativeKeyEvent.keyCode,
+                            action = keyEvent.nativeKeyEvent.action,
+                            repeatCount = keyEvent.nativeKeyEvent.repeatCount,
+                            isFocused = searchFieldFocused,
+                            isImeVisible = imeVisible,
+                        )
+                    ) {
+                        SearchFieldImeLogic.KeyAction.OpenIme -> {
+                            searchImeWanted = true
+                            keyboard.show()
+                            true
+                        }
+                        SearchFieldImeLogic.KeyAction.CloseIme -> {
+                            searchImeWanted = false
+                            keyboard.hide()
+                            true
+                        }
+                        SearchFieldImeLogic.KeyAction.Propagate -> false
                     }
                 }
                 // Focus feedback for the search field (spec 2026-08-10-effects-tab-focus-visual-design,
@@ -769,7 +836,7 @@ fun ScreenEffectsTabContent(
                     NoExtractOutlinedTextField(
                         value = shaderQuery,
                         onValueChange = { shaderQuery = it },
-                        modifier = Modifier
+                        modifier = searchImeKeyModifier
                             .fillMaxWidth()
                             .onFocusChanged { searchFieldFocused = it.hasFocus },
                         placeholder = { Text(stringResource(R.string.shader_search)) },

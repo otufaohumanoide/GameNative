@@ -1,5 +1,6 @@
 package app.gamenative.ui.component
 
+import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -1010,6 +1011,10 @@ fun QuickMenu(
         // cannot be cleared (the dead-menu accumulation: 1st open works, every reopen
         // after a close can die). A forced clear makes each bootstrap deterministic.
         focusManager.clearFocus(true)
+        // Focus that lands through this bootstrap (walk-down on open, guardian restores) is
+        // programmatic, not user intent on the target row — the search field relies on this
+        // stamp to suppress the soft keyboard (spec 2026-08-10-search-field-ime-explicit-design).
+        GamepadNavigationClock.lastMoveAt = SystemClock.uptimeMillis()
         repeat(3) {
             try {
                 val hadFocus = menuHasFocus
