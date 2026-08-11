@@ -596,7 +596,11 @@ fun ScreenEffectsTabContent(
     }
     var shaderQuery by remember(renderer, container) { mutableStateOf("") }
     var nativeEffectsExpanded by remember(renderer, container) { mutableStateOf(false) }
-    var collapsedCategories by remember(renderer, container) { mutableStateOf(setOf<String>()) }
+    // Shader categories are closed by default on every menu open (spec
+    // 2026-08-10-shader-categories-collapsed-default-design): expandedCategories starts
+    // empty, and the whole panel is disposed when the QuickMenu closes, so each open
+    // starts with every category collapsed.
+    var expandedCategories by remember(renderer, container) { mutableStateOf(setOf<String>()) }
     var shaderPassCounts by remember(renderer, container) {
         mutableStateOf<Map<String, Int>>(emptyMap())
     }
@@ -772,22 +776,22 @@ fun ScreenEffectsTabContent(
                     val ordered = shaderCategoryOrder + (groups.keys - shaderCategoryOrder.toSet()).sorted()
                     ordered.filter { groups.containsKey(it) }.forEach { cat ->
                         val items = groups.getValue(cat)
-                        val collapsed = cat in collapsedCategories
+                        val expanded = cat in expandedCategories
                         ShaderCategoryHeader(
                             label = friendlyCategoryName(cat),
                             count = items.size,
-                            collapsed = collapsed,
+                            collapsed = !expanded,
                             onClick = {
-                                collapsedCategories = if (collapsed) {
-                                    collapsedCategories - cat
+                                expandedCategories = if (expanded) {
+                                    expandedCategories - cat
                                 } else {
-                                    collapsedCategories + cat
+                                    expandedCategories + cat
                                 }
                             },
                             focusIndex = nextFocusSlot(),
                             onFocusIndexChanged = onFocusIndexChanged,
                         )
-                        if (!collapsed) {
+                        if (expanded) {
                             items.forEach { entry ->
                                 ShaderPresetRow(
                                     title = friendlyName(entry.key),
