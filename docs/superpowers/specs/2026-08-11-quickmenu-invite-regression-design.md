@@ -22,15 +22,24 @@ overlay"):
 3. `SteamInviteState.openedForGameRequest = true` (flag **booleana**) faz o
    `XServerScreen` **pular a pausa** na abertura do overlay.
 
-Dois defeitos permitiam abertura não solicitada no start do jogo:
+Evidência do binário (`strings libsteambootstrap.so`): a fila de requests é **em memória**
+(protocolo via socket abstrato; não há strings de persistência em arquivo) e o processo
+host morre a cada troca de sessão (`SteamBootstrap.stopHost()` no exit do jogo e no
+`prepareApp()` do próximo launch) — ou seja, **não existe request persistido entre
+sessões**. O gatilho real é o próprio jogo emitindo o callback "game requested dialog"
+(que o host loga como `overlay: game requested dialog="%s" lobby=%llu`) — alguns jogos
+pedem o diálogo de invite durante o boot da sessão online, e o laço de 1s consumia esse
+request **imediatamente** ao abrir o jogo → menu abria sozinho.
 
-- **Request stale no start:** o request de invite da sessão anterior pode sobreviver ao
-  reinício da sessão (host novo lê estado persistido do container; ou o jogo re-emite o
-  callback durante o boot do wine). O laço de 1s consumia esse request **imediatamente**
-  ao abrir o jogo — menu abria sozinho.
+Dois defeitos permitiam abertura não solicitada:
+
+- **Request no boot da sessão:** o jogo re-emite o callback de invite durante o boot do
+  wine/inicialização da sessão online → o laço de 1s abria o menu nos primeiros segundos,
+  sem input do jogador.
 - **Host que nunca limpa o POLL:** o laço consome via `POLL`, mas se o host não esvazia a
-  fila, o **mesmo** request volta em todo `POLL` → menu reabre sozinho a cada segundo,
-  para sempre, e `openedForGameRequest=true` deixava o jogo permanentemente sem pausa.
+  fila, o **mesmo** request volta em todo `POLL` → depois do 1º open (legítimo, botão do
+  jogo) o menu reabre sozinho a cada segundo, para sempre, e `openedForGameRequest=true`
+  deixava o jogo permanentemente sem pausa.
 
 Além disso, a flag booleana era frágil: qualquer menu aberto depois (mesmo sem relação
 com o jogo) herdava "abertura por request" e pulava a pausa até o menu fechar.
