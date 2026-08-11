@@ -212,7 +212,10 @@ fun ElementEditorDialog(
         mutableFloatStateOf(if (element.buttonOpacity >= 0f) element.buttonOpacity else view.overlayOpacity)
     }
     var currentButtonStrokeScale by remember { mutableFloatStateOf(element.buttonStrokeScale) }
-    var currentShooterLookThrough by remember { mutableStateOf(element.isShooterLookThrough) }
+    var currentLookThrough by remember { mutableStateOf(element.lookThroughSetting) }
+    var currentLegacyShooterLookThrough by remember {
+        mutableStateOf(element.shooterLookThroughSetting)
+    }
     val originalControlAppearances by remember {
         mutableStateOf(
             view.profile?.elements
@@ -231,7 +234,8 @@ fun ElementEditorDialog(
             if (currentButtonOpacityInherited) ControlElement.INHERIT_BUTTON_OPACITY else currentButtonOpacity
         )
         element.setButtonStrokeScale(currentButtonStrokeScale)
-        element.setShooterLookThrough(currentShooterLookThrough)
+        element.setShooterLookThrough(currentLegacyShooterLookThrough)
+        element.lookThroughSetting = currentLookThrough
     }
 
     fun currentAppearance() = ControlAppearance(
@@ -241,7 +245,8 @@ fun ElementEditorDialog(
         activeColorCustom = currentButtonActiveColorCustom,
         opacity = if (currentButtonOpacityInherited) ControlElement.INHERIT_BUTTON_OPACITY else currentButtonOpacity,
         strokeScale = currentButtonStrokeScale,
-        shooterLookThrough = currentShooterLookThrough
+        lookThrough = currentLookThrough,
+        legacyShooterLookThrough = currentLegacyShooterLookThrough,
     )
 
     fun textForSave(): String? {
@@ -302,7 +307,8 @@ fun ElementEditorDialog(
         currentButtonOpacity,
         currentButtonOpacityInherited,
         currentButtonStrokeScale,
-        currentShooterLookThrough,
+        currentLookThrough,
+        currentLegacyShooterLookThrough,
         currentTypeIndex
     ) {
         applyCurrentControlAppearance()
@@ -938,11 +944,11 @@ fun ElementEditorDialog(
 
                         SettingsSwitch(
                             colors = settingsTileColorsAlt(),
-                            title = { Text(stringResource(R.string.button_shooter_look_through)) },
-                            subtitle = { Text(stringResource(R.string.button_shooter_look_through_subtitle)) },
-                            state = currentShooterLookThrough,
+                            title = { Text(stringResource(R.string.button_look_through)) },
+                            subtitle = { Text(stringResource(R.string.button_look_through_subtitle)) },
+                            state = currentLookThrough == true,
                             onCheckedChange = {
-                                currentShooterLookThrough = it
+                                currentLookThrough = it
                                 hasUnsavedChanges = true
                             },
                         )
@@ -966,7 +972,8 @@ fun ElementEditorDialog(
                                     currentButtonOpacityInherited = appearance.opacity < 0f
                                     currentButtonOpacity = if (appearance.opacity >= 0f) appearance.opacity else view.overlayOpacity
                                     currentButtonStrokeScale = appearance.strokeScale
-                                    currentShooterLookThrough = appearance.shooterLookThrough
+                                    currentLookThrough = appearance.lookThrough
+                                    currentLegacyShooterLookThrough = appearance.legacyShooterLookThrough
                                     hasUnsavedChanges = true
                                 }
                             },
@@ -1003,7 +1010,8 @@ fun ElementEditorDialog(
                                 currentScale = 1.0f
                                 element.setScale(1.0f)
                                 currentButtonStrokeScale = ControlElement.DEFAULT_BUTTON_STROKE_SCALE
-                                currentShooterLookThrough = true
+                                currentLookThrough = ControlElement.DEFAULT_LOOK_THROUGH
+                                currentLegacyShooterLookThrough = true
                                 view.invalidate()
                                 hasUnsavedChanges = true
                             },
