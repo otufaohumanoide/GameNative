@@ -31,8 +31,12 @@
   padrão moderno da comunidade. `WindowInsets.isImeVisible` é evitado: retorna `true` na
   primeira composição (issuetracker 388616191).
 - **Supressão:** foco chegando via gamepad (clock < 400ms, incluindo walk-down/guardian)
-  → `hide()` imediato + retry condicionado (0/100/300ms; sai cedo se `selectIntent` ou
-  perdeu o foco) — vence a corrida do `startInputMethod`.
+  → `hide()` imediato + **loop contínuo** (job cancelável, re-hide a cada 120ms) enquanto
+  o campo estiver focado SEM intenção explícita — o retry limitado a 300ms ainda deixava o
+  teclado piscar quando o `startInputMethod` abria tarde (verificado no device 2026-08-11:
+  com o loop contínuo, 25/25 amostras `inputShown=false` navegando; X abre fixo 10/10;
+  B fecha sem fechar o menu). O X cancela o job ANTES do `show()` (sem corrida hide/show);
+  toque no campo também é intenção explícita (pointerInput observa o down sem consumir).
 - **X abre:** `BUTTON_A`/`DPAD_CENTER`/`ENTER` via `GamepadKeyLogic.selectableActivation`
   com o campo focada e teclado fechado → `show()`.
 - **B fecha:** `BUTTON_B` com o teclado aberto → `hide()` **consumido** (o menu não
