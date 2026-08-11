@@ -2084,6 +2084,7 @@
     <string name="steam_invite_no_friends">Nenhum amigo online agora. Convide pela lista de amigos do jogo.</string>
     <string name="steam_invite_joinable">Neste jogo — toque para entrar</string>
     <string name="steam_invite_unavailable">Cliente Steam não está pronto</string>
+    <string name="steam_invite_retry">Pressione X para atualizar</string>
     <string name="steam_invite_failed">Falha ao convidar — sua partida não está em uma sessão que aceite entradas</string>
     <string name="steam_join_failed">Não foi possível entrar — a sessão pode ter sido encerrada</string>
     <string name="steam_invite_sent">Convite enviado</string>

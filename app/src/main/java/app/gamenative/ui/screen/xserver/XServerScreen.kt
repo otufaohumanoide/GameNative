@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.Display
@@ -2689,10 +2690,14 @@ fun XServerScreen(
             onAnimationComplete = { isMenuVisible ->
                 if (isMenuVisible) {
                     // An invite dialog the game asked for must not suspend it -- the game has to
-                    // keep running to receive the peer that's joining.
-                    if (!SteamInviteState.openedForGameRequest) pauseForOverlayIfAllowed()
+                    // keep running to receive the peer that's joining. Only while the auto-open
+                    // request is recent: a stale flag must never leave the game unpaused.
+                    val inviteOpenedAt = SteamInviteState.openedForGameRequest
+                    val inviteFresh = inviteOpenedAt != 0L &&
+                        SystemClock.uptimeMillis() - inviteOpenedAt <= SteamInviteState.OPEN_REQUEST_MAX_AGE_MS
+                    if (!inviteFresh) pauseForOverlayIfAllowed()
                 } else {
-                    SteamInviteState.openedForGameRequest = false
+                    SteamInviteState.openedForGameRequest = 0L
                     if (shouldForceResumeOnMenuClose) {
                         forceResumeIfSuspended()
                         shouldForceResumeOnMenuClose = false

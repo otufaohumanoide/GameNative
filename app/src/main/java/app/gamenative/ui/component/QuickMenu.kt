@@ -418,7 +418,7 @@ fun QuickMenu(
                 if (!isVisible && inviteMenu.consumeGameInviteRequest()) {
                     selectedTab = QuickMenuTab.INVITE
                     PrefManager.quickMenuLastTab = selectedTab
-                    SteamInviteState.openedForGameRequest = true
+                    SteamInviteState.openedForGameRequest = SystemClock.uptimeMillis()
                     onRequestOpen()
                 }
                 delay(1000)
@@ -1143,13 +1143,21 @@ private fun SteamInviteQuickMenuTab(
         )
 
         // G10 (spec 2026-08-10, §3.7): an empty friend list explains itself instead of
-        // silently falling back to rail focus.
-        if (state.friends.isEmpty() && !state.isLoading && !state.hostUnavailable) {
-            Text(
-                text = stringResource(R.string.steam_invite_no_friends),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        // silently falling back to rail focus. It must ALSO stay focusable: with no rows the
+        // menu would be born dead on the INVITE tab, so the empty/unavailable states render a
+        // retry row that owns the tab's focus requester (spec 2026-08-11 quickmenu-invite-regression).
+        if (state.friends.isEmpty() && !state.isLoading) {
+            QuickMenuDetailRow(
+                title = stringResource(
+                    if (state.hostUnavailable) R.string.steam_invite_unavailable
+                    else R.string.steam_invite_no_friends
+                ),
+                subtitle = stringResource(R.string.steam_invite_retry),
+                accentColor = accentColor,
+                onActivate = { scope.launch { state.refresh() } },
+                focusRequester = focusRequester,
+                focusIndex = 0,
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         }
 

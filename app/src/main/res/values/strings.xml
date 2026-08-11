@@ -2079,6 +2079,7 @@
     <string name="steam_invite_no_friends">No friends online right now. Invite from the game\'s friend list instead.</string>
     <string name="steam_invite_joinable">In this game — tap to join</string>
     <string name="steam_invite_unavailable">Steam client not ready</string>
+    <string name="steam_invite_retry">Press X to refresh</string>
     <string name="steam_invite_failed">Invite failed — your game isn\'t in a joinable session</string>
     <string name="steam_join_failed">Couldn\'t join — their session may have closed</string>
     <string name="steam_invite_sent">Invite sent</string>
