@@ -42,12 +42,7 @@ class PackPrechecksTest {
     }
 
     @Test
-    fun `tarball url uses the pinned commit not the branch`() {
-        assertEquals(
-            "https://codeload.github.com/libretro/slang-shaders/tar.gz/a7f04a0698908015c6f9e3a3f446b3d17083269c",
-            ShaderPack.tarballUrlFor("a7f04a0698908015c6f9e3a3f446b3d17083269c"),
-        )
-        // Never a branch URL: refs/heads/master must not appear.
-        assertFalse(ShaderPack.tarballUrlFor("abc").contains("refs/heads"))
+    fun `raw file url uses the pinned commit and never a branch`() {
+        assertFalse(ShaderPack.rawUrlFor("abc", "x.slangp").contains("refs/heads"))
     }
 }

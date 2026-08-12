@@ -1,7 +1,7 @@
 # Spec — libretro/slang-shaders sob demanda (substituição dos presets embarcados)
 
 **Data:** 2026-08-11
-**Status:** implementado e commitado (`f8b39e45`, tag `milestone-2026-08-11-slang-shaders-on-demand`); verificação on-device (§8.2) **pendente — sem dispositivo disponível** (loop adaptado para `files/retroarch_pack` em `tools/shader-test-loop/shader_test_loop.py`).
+**Status:** implementado e commitado (pack único: `f8b39e45`; **download por-preset: próximo commit** — decisão do usuário 2026-08-12); verificação on-device (§8.2) **pendente — sem dispositivo disponível** (loop adaptado para `files/retroarch_pack` em `tools/shader-test-loop/shader_test_loop.py`).
 **Escopo:** apenas os shaders RetroArch (librashader). Os efeitos nativos do renderer (FSR, FXAA, Toon, Vivid, CRT/NTSC nativos, brilho/contraste/gama) e todo o resto do app **não são tocados**.
 
 ---
@@ -10,9 +10,9 @@
 
 O fork embarcava 131 presets em `assets/retroarch` (~2,4 MB no APK) importados em runtime pelo `ShaderImporter.java`. Suportar o catálogo completo do [libretro/slang-shaders](https://github.com/libretro/slang-shaders) — **2.541 presets em 35 famílias** — embarcado é inviável: inflaria o APK e obrigaria o usuário a carregar/rolar uma lista interminável.
 
-**Decisão:** o APK não carrega nenhum arquivo de shader. Carrega apenas um **manifesto de metadados** (`catalog.json`, 604 KB) que torna o catálogo inteiro navegável instantaneamente, inclusive offline. Os arquivos reais vêm de um **único pack baixado sob demanda** (~53 MB, closure de dependências de todos os presets), uma única vez.
+**Decisão (ajustada em 2026-08-12 a pedido do usuário):** o APK não carrega nenhum arquivo de shader. Carrega apenas um **manifesto de metadados** (`catalog.json`, ~6,7 MB com a closure por preset) que torna o catálogo inteiro navegável instantaneamente, inclusive offline. Os arquivos reais são baixados **por preset, sob demanda**: ao escolher um shader, o app baixa **só a closure daquele preset** (o `.slangp` + passes `.slang` + headers `#include` + LUTs + presets `#reference`, tipicamente alguns KB; o maior caso, um Mega_Bezel, ~5,6 MB) de `raw.githubusercontent.com` no commit pinado, reutilizando arquivos já em cache. **Nada é baixado por padrão** — nem o catálogo inteiro, nem um pack.
 
-> Lente Jony Ive: *"decide what you're going to give up"*. Desistimos de shaders-offline-embarcados para ganhar um catálogo 19× maior com APK menor. O custo (um download único) é comunicado com honestidade — tamanho, progresso, retry — nunca escondido.
+> Lente Jony Ive: *"decide what you're going to give up"*. Desistimos de shaders-offline-embarcados para ganhar um catálogo 19× maior com APK menor. O custo (por shader, do tamanho real dele) é comunicado com honestidade — tamanho, progresso, retry — nunca escondido.
 
 ---
 
@@ -25,7 +25,7 @@ O fork embarcava 131 presets em `assets/retroarch` (~2,4 MB no APK) importados e
 | `tools/shaders/sync_slang_shaders.py` | Gera `catalog.json` a partir do repo upstream (closure completa de dependências) |
 | `app/src/main/assets/retroarch/catalog.json` | Manifesto único em assets (604 KB) |
 | `app/src/main/java/app/gamenative/shaders/ShaderCatalog.kt` | Parse/query do manifesto (busca, famílias, subpastas, paginação — só metadados, sem filesystem) |
-| `app/src/main/java/app/gamenative/shaders/ShaderPack.kt` | Download do tarball + extração filtrada por whitelist (`TarGz`, seguro contra path traversal) |
+| `app/src/main/java/app/gamenative/shaders/ShaderPack.kt` | Cache + download por-preset: busca `raw.githubusercontent.com/<commit>/<path>` para cada arquivo da closure faltante (reuso de cache, progresso, cancelamento, pré-checks) |
 | `app/src/main/java/app/gamenative/shaders/ShaderConfigStore.kt` | Load/persist da config nos extras do container |
 | `app/src/main/java/app/gamenative/shaders/ShaderRecents.kt` | Últimos 5 presets usados (SharedPreferences) |
 | `app/src/main/java/app/gamenative/ui/component/ShaderSectionState.kt` | Estado compartilhado QuickMenu ⇄ browser; aplicar/alternar presets |
@@ -75,65 +75,82 @@ Caminhos são resolvidos relativos ao arquivo que referencia e devem permanecer 
   "files": [ "<união de todos os arquivos que qualquer preset precisa>" ],
   "presets": [ { "path": "crt/easymode.slangp", "family": "crt",
                  "subfolder": null, "passes": 8, "bytes": 12345,
+                 "deps": ["crt/easymode.slangp", "crt/shaders/easymode.slang"],
                  "broken": false } ]
 }
 ```
 
-Valores atuais: **2.541 presets · 35 famílias · 1.915 arquivos no pack · 7 presets broken · 53,1 MB**.
+Valores atuais: **2.541 presets · 35 famílias · 2.293 arquivos na união · 7 presets broken · ~55 MB na união**. O `bytes` por preset é o tamanho da **sua** closure (o que o download realmente transfere, ex.: `crt/crt-easymode` = 6,4 KB; `reshade/FilmGrain` = 4,4 KB; Mega_Bezel cheio ≈ 5,6 MB).
 
 Notas:
 
-- `files` é a whitelist exata de extração: nada fora dela é escrito em disco (READMEs, screenshots, LICENSE do repo upstream ficam de fora).
-- `bytes` por preset é o tamanho da **sua** closure (dependências compartilhadas aparecem somadas em vários presets; `packBytes` é o custo real único). A UI exibe `bytes` como indicação de peso do efeito, não como custo de download.
-- O layout do pack preserva os caminhos relativos à raiz do repo, então a resolução de `shaderN`/`#include`/`#reference`/texturas do librashader (inclusive cross-folder `../../crt/shaders/...`) funciona **sem nenhuma mudança**.
+- `deps` por preset é a **closure exata** que o app baixa quando o usuário escolhe aquele shader: o próprio `.slangp`, os passes `.slang`, headers `#include` (recursivo), LUTs/imagens e presets `#reference` (arquivos referenciados também são baixados — o librashader os abre do disco).
+- `files`/`packBytes` são a união de tudo (referência; não são mais usados para extração nem download).
+- `bytes` por preset é o tamanho da sua closure — o custo real do download, exibido na UI como peso do efeito.
+- O cache preserva os caminhos relativos à raiz do repo, então a resolução de `shaderN`/`#include`/`#reference`/texturas do librashader (inclusive cross-folder `../../crt/shaders/...`) funciona **sem nenhuma mudança**.
 
 ### 3.3 Cadência de re-sync
 
-- Rodar o script antes de cada release ou mensalmente (o que vier primeiro); commitar `catalog.json` com a mensagem do novo commit upstream.
+- Rodar o script antes de cada release ou mensalmente (o que vier primeiro); commitar `catalog.json` (inclui `deps` por preset) com a mensagem do novo commit upstream.
 - O catálogo é **imutável dentro de uma versão do app**: o usuário nunca vê o catálogo mudar sob seus pés entre aberturas.
 - `tools/shaders/cache/` é cache local do tarball (não commitar).
 
 ---
 
-## 4. Pack sob demanda (`ShaderPack`)
+## 4. Download por-preset (`ShaderPack`)
 
 ### 4.1 Fluxo
 
 ```
-não instalado ──(intenção do usuário)──► pré-checks ──► download (progresso %)
+não baixado ──(usuário escolhe o preset)──► pré-checks ──► download da closure (progresso %)
      ▲                                                        │
      │                                                        ▼
-excluir pack  ◄──(confirmar)── instalado ◄── rename atômico ◄── extração filtrada
+  (re-pick = retry)  ◄──── falha limpa ◄─────── aplicar automaticamente ◄── cache completo
 ```
 
-- **Download:** `https://codeload.github.com/libretro/slang-shaders/tar.gz/...`, OkHttp, timeouts 30s/60s, progresso por bytes.
-- **Extração:** `TarGz.extract` grava somente arquivos na whitelist `catalog.files`; rejeita path traversal (caminhos absolutos, `..`, escape da raiz).
-- **Atomicidade:** extrai para `filesDir/retroarch_pack.tmp`, só troca para `filesDir/retroarch_pack` após extração completa; falha limpa o tmp.
-- **Marker:** `retroarch_pack/.complete` guarda o commit do catálogo — base para verificação de integridade (§4.3).
-- A instalação roda em `Dispatchers.IO`; a UI continua navegável durante o download.
+- **Download:** para cada arquivo **faltante** da closure do preset (`preset.deps`),
+  `https://raw.githubusercontent.com/libretro/slang-shaders/<commit>/<path>`, OkHttp,
+  timeouts 30s/60s, progresso por bytes. Arquivos já em cache (compartilhados com outros
+  presets) são reutilizados — nunca rebaixados.
+- **Atomicidade por arquivo:** grava em `<arquivo>.tmp` e faz rename; falha remove o `.tmp`.
+  Uma tentativa que falha no meio **deleta só os arquivos novos daquela tentativa** — o cache
+  prévio de outros presets permanece, e o preset volta ao estado "nuvem" para retry.
+- **Localidade:** `isLocal(preset)` = todos os `deps` presentes. O cache é `filesDir/retroarch_pack`
+  com o layout repo-relativo (a resolução de `shaderN`/`#include`/`#reference` do librashader
+  funciona sem mudança).
+- O download roda em `Dispatchers.IO`; a UI continua navegável durante o download.
 
-### 4.2 Correções obrigatórias (gaps do worktree)
+### 4.2 Correções obrigatórias
 
-1. **Download pelo commit pinado, não pelo branch.** Hoje `tarballUrl` usa `refs/heads/master`, mas o catálogo pinou `a7f04a0698`. Se o upstream andar, arquivos novos/renomeados quebram a whitelist. URL correta:
-   `https://codeload.github.com/libretro/slang-shaders/tar.gz/<catalog.source.commit>`
-2. **Pré-check de espaço:** `StatFs(filesDir)` — exigir `packBytes × 2 + 16 MB` (tmp + final) antes de começar; erro claro se faltar.
-3. **Pré-check de rede limitada:** `ConnectivityManager.isActiveNetworkMetered` → diálogo de confirmação com o tamanho (`Download shader pack (53,1 MB)?`) antes de iniciar em dados móveis. Wi-Fi inicia direto.
-4. **Cancelamento:** reter o `Call` do OkHttp; linha de progresso ganha ação de cancelamento que aborta a chamada e apaga `tmpDir`.
-5. **Exclusão do pack:** quando instalado, a Home mostra linha de estado ("Shader pack instalado · 53,1 MB") que abre confirmação e chama `pack.clear()`. A exclusão **não** desliga o shader ativo na config (o preset simplesmente deixa de carregar — fallback já existente do renderer), e a UI volta ao estado "não instalado".
+1. **Commit pinado, nunca branch.** `rawUrlFor(commit, path)` usa o commit do catálogo
+   (`a7f04a06...`); caminhos com espaço são percent-encoded por segmento. Branch `master`
+   andaria e quebraria a closure.
+2. **Pré-check de espaço:** `StatFs(filesDir)` — exigir `closureBytes × 2 + 16 MB` antes de
+   começar; erro claro se faltar.
+3. **Pré-check de rede limitada:** `ConnectivityManager.isActiveNetworkMetered` → diálogo de
+   confirmação com o tamanho real do shader (`Download this shader (6,4 KB)?`) antes de
+   iniciar em dados móveis. Wi-Fi inicia direto.
+4. **Cancelamento:** reter o `Call` do OkHttp; re-pick da linha em download cancela a chamada
+   e limpa o arquivo parcial.
+5. **Sem download automático:** nada é baixado sem intenção explícita do usuário (nem no
+   boot, nem na migração — §6.3).
 
-### 4.3 Integridade e atualização
+### 4.3 Cache e integridade
 
-- Ao carregar, comparar o commit de `.complete` com `catalog.source.commit`. Divergência (usuário restaurou dados, catálogo novo no APK) ⇒ tratar como não instalado.
-- Quando um APK novo traz catálogo com commit diferente do pack instalado: a Home exibe "Atualizar shader pack (X MB)" (mesmo fluxo de instalação; `tmp → rename` substitui o pack inteiro sem janela quebrada — o pack antigo segue funcionando até a troca).
+- Não há marker/estado global: a verificação é **por arquivo** (existência no cache). Um
+  preset só aparece como baixado quando a closure inteira está presente.
+- Catálogo novo (APK atualizado) com commit diferente: os arquivos em cache continuam
+  válidos (paths idênticos no repo); presets cujo closure mude rebaixam o que faltar.
 - Sem atualização automática em segundo plano: download só por intenção explícita.
 
 ### 4.4 Permissão e resiliência
 
 - `INTERNET` já declarado (`AndroidManifest.xml:17`) — nenhuma permissão nova.
-- Falha de rede nunca corrompe estado: ou o pack completo existe (marker) ou não existe.
-- Erro de HTTP/timeout → estado `installFailed` com linha de retry.
-
----
+- Falha de rede nunca corrompe estado: cada arquivo é atômico (tmp → rename); a closure
+  incompleta permanece "na nuvem".
+- Erro de HTTP/timeout → estado `installFailed` na linha do preset com retry (re-pick).
+- `clear()` remove o cache inteiro (reserva para futuro "limpar cache"; a UI atual não
+  expõe — nada é baixado por padrão, então não há o que limpar).
 
 ## 5. Interface — o menu que não causa marasmo
 
@@ -247,26 +264,29 @@ Rodar: `./gradlew :app:testDebugUnitTest --tests "*Shader*" --tests "*TarGz*"`.
 
 | Risco | Mitigação |
 |---|---|
-| `codeload.github.com` indisponível / rate limit | Baixar por commit pinado (§4.2.1); fase 2: URL secundária (asset de Release no repo próprio ou mirror) com fallback em cascata no `ShaderPack` |
+| `raw.githubusercontent.com` indisponível / rate limit | Commit pinado (§4.2.1); fase 2: mirror com fallback em cascata no `ShaderPack` |
 | Upstream renomeia arquivos entre re-syncs | Catálogo pinado por commit; re-sync só com verificação dos warnings do script (presets broken nunca silenciosos) |
-| 53 MB em dados móveis | Confirmação explícita com tamanho (§4.2.3) |
+| Muitos arquivos pequenos por preset (Mega_Bezel: 92) | Progresso agregado por bytes; cache reusa arquivos compartilhados; erro de um arquivo não corrompe os demais |
+| Dados móveis | Confirmação explícita com o tamanho real da closure (§4.2.3) |
 | Catálogo de 2.541 itens | Nunca listado inteiro; paginação + busca + bezel no fim (§5) |
-| Falha no meio do download | tmp + rename atômico; estado binário (marker); retry |
+| Falha no meio do download | Arquivo atômico (tmp → rename); tentativa falha remove só os arquivos novos; retry na linha |
 | Presets quebrados upstream (7 hoje) | Marcados `broken`, visíveis e desabilitados — honestidade em vez de omissão |
+
 
 ## 10. Rollback
 
-A mudança inteira é substituível por revert do(s) commit(s): presets embarcados voltam ao APK (+2,4 MB), `ShaderImporter`/`RetroArchShaderDialog` voltam, shaders offline novamente. Nenhuma dependência nova é introduzida (OkHttp já é usado no app; `kotlinx-serialization` já presente).
+A mudança inteira é substituível por revert do(s) commit(s): presets embarcados voltam ao APK (+1,5 MB), `ShaderImporter`/`RetroArchShaderDialog` voltam, shaders offline novamente. Nenhuma dependência nova é introduzida (OkHttp já é usado no app; `kotlinx-serialization` já presente).
 
 ---
 
 ## 11. Checklist de execução (ordem)
 
-1. `ShaderPack`: URL por commit pinado + pré-checks (espaço/metered) + cancelamento.
-2. UI: linha de estado/exclusão do pack na Home; auto-aplicar preset pedido após install.
+1. `ShaderPack`: download por-preset (closure `deps`) com commit pinado + pré-checks (espaço/metered) + cancelamento; `deps` no catálogo via sync script.
+2. UI: linha do preset com progresso/falha/retry e auto-aplicar após download (sem CTA de pack, sem linha de estado global).
 3. UI: mover `bezel` para o fim da `FAMILY_ORDER`.
 4. Migração: re-resolução de `relativePath` em `ShaderSectionState`/`XServerScreen` + limpeza dos diretórios antigos.
 5. Testes novos (§8.1) verdes + `./gradlew :app:assembleDebug`.
 6. Verificação on-device (§8.2).
 7. Commitar worktree completo (assets deletados, legado removido, sistema novo) + atualização do `README.md` (131 presets embarcados → catálogo sob demanda) e `docs/MILESTONES.md`.
-8. Navegação persistente (§5.6): estado do browser hoisted em `ShaderSectionState` — reabrir volta ao nível do shader escolhido; instalação não morre ao fechar o browser; re-pick de preset migrado (§6.3) carrega em vez de limpar.
+8. Navegação persistente (§5.6): estado do browser hoisted em `ShaderSectionState` — reabrir volta ao nível do shader escolhido; download não morre ao fechar o browser; re-pick de preset migrado (§6.3) carrega em vez de limpar.
+9. Decisão do usuário (2026-08-12): download **por-preset** (só a closure do escolhido; nada por padrão) — substitui o pack único de ~53 MB; validado por smoke test na rede (1.786 arquivos amostrados + 2.541 presets resolvem no commit pinado).

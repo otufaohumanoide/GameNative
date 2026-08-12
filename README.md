@@ -39,7 +39,7 @@ This fork brings **native RetroArch shader support** to GameNative's Vulkan rend
 **What's included:**
 
 - [librashader](https://github.com/SnowflakePowered/librashader) Vulkan runtime (built from source in the Gradle build — no prebuilts)
-- **The full [libretro/slang-shaders](https://github.com/libretro/slang-shaders) catalog on demand** — 2,541 presets across 35 families (CRT, LCD, cel, HDR, NTSC, color grading…). The APK ships no shader files, only a metadata manifest (`catalog.json`, ~600 KB), so the whole catalog is browsable instantly and offline. Picking any preset downloads a single ~53 MB pack once, then applies it automatically
+- **The full [libretro/slang-shaders](https://github.com/libretro/slang-shaders) catalog, downloaded shader-by-shader on demand** — 2,541 presets across 35 families (CRT, LCD, cel, HDR, NTSC, color grading…). The APK ships no shader files, only a metadata manifest (`catalog.json`), so the whole catalog is browsable instantly and offline. **Nothing is downloaded by default**: picking a preset downloads only that shader's files (typically a few KB) from the pinned upstream commit, caches them for reuse, and applies the shader automatically
 - Live preset switching (in-game effects panel or per-container config), verified on Adreno 650 with an automated black-box test loop
 - A hardened pipeline: chain access from the render thread only, failure fallback (a broken preset degrades to the unshaded frame instead of a black screen), create-first preset swap and bounded fence waits
 

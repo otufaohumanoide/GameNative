@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -330,17 +329,31 @@ fun ShaderBrowserOverlay(
     fun PresetRow(preset: ShaderPreset, index: Int) {
         val local = state.pack.isLocal(preset)
         val broken = preset.broken
+        val downloadingThis = state.installing && state.pendingPreset?.path == preset.path
+        val failedThis = state.installFailed && state.pendingPreset?.path == preset.path
         BrowserRow(
             title = friendlyName(preset.path),
-            subtitle = listOfNotNull(
-                friendlyFamilyName(preset.family),
-                preset.passes.takeIf { it > 0 }?.let {
-                    pluralStringResource(R.plurals.quick_menu_n_passes, it, it)
-                },
-                formatBytes(preset.bytes).takeIf { preset.bytes > 0 },
-            ).joinToString(" · "),
+            subtitle = when {
+                downloadingThis -> stringResource(
+                    R.string.shader_downloading,
+                    (state.progress * 100).toInt(),
+                )
+                failedThis && state.installNoSpace -> stringResource(
+                    R.string.shader_download_no_space_hint,
+                    formatBytes(preset.bytes.coerceAtLeast(1) * 2 + PackPrechecks.HEADROOM_BYTES),
+                )
+                failedThis -> stringResource(R.string.shader_download_failed)
+                else -> listOfNotNull(
+                    friendlyFamilyName(preset.family),
+                    preset.passes.takeIf { it > 0 }?.let {
+                        pluralStringResource(R.plurals.quick_menu_n_passes, it, it)
+                    },
+                    formatBytes(preset.bytes).takeIf { preset.bytes > 0 },
+                ).joinToString(" · ")
+            },
             selected = state.isActive(preset),
-            // Cloud rows stay enabled + focusable: selecting one starts the download.
+            // Cloud rows stay enabled + focusable: selecting one downloads ONLY this
+            // preset's closure (user decision 2026-08-12) and applies it automatically.
             enabled = !broken,
             leadingIcon = when {
                 broken -> {
@@ -375,111 +388,17 @@ fun ShaderBrowserOverlay(
             onClick = {
                 when {
                     broken -> Unit
+                    downloadingThis -> state.cancelInstall()
                     !local -> {
-                        // User intent -> fetch the pack now, and remember what they asked
-                        // for: it is applied automatically once the pack is installed.
-                        state.pendingPreset = preset
-                        state.startInstall()
+                        // User intent -> fetch ONLY this shader's files now; it is
+                        // applied automatically once the download completes.
+                        state.startInstall(preset)
                     }
                     else -> state.applyPreset(preset)
                 }
             },
             index = index,
         )
-    }
-
-    @Composable
-    fun DownloadCta(index: Int) {
-        when {
-            state.packInstalled -> {
-                // Pack present and matching the catalog: a status line that opens the
-                // remove confirmation (spec §4.2.5) — removal never disables the active
-                // shader config, the preset just stops loading.
-                BrowserRow(
-                    title = stringResource(
-                        R.string.shader_pack_installed,
-                        formatBytes(catalog.data.source.packBytes),
-                    ),
-                    subtitle = stringResource(R.string.shader_pack_remove),
-                    leadingIcon = {
-                        Icon(
-                            Icons.Default.Check,
-                            contentDescription = null,
-                            tint = PluviaTheme.colors.accentPurple,
-                        )
-                    },
-                    onClick = { state.removeConfirm = true },
-                    index = index,
-                )
-            }
-            state.installing -> {
-                BrowserRow(
-                    title = if (state.extracting) {
-                        stringResource(R.string.shader_pack_extracting)
-                    } else {
-                        stringResource(R.string.shader_pack_downloading, (state.progress * 100).toInt())
-                    },
-                    subtitle = stringResource(R.string.shader_pack_cancel),
-                    onClick = { state.cancelInstall() },
-                    index = index,
-                )
-                if (!state.extracting) {
-                    LinearProgressIndicator(
-                        progress = { state.progress },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 32.dp)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp)),
-                    )
-                }
-            }
-            state.installFailed -> {
-                BrowserRow(
-                    title = if (state.installNoSpace) {
-                        stringResource(R.string.shader_pack_no_space)
-                    } else {
-                        stringResource(R.string.shader_pack_failed)
-                    },
-                    subtitle = if (state.installNoSpace) {
-                        stringResource(
-                            R.string.shader_pack_no_space_hint,
-                            formatBytes(PackPrechecks.requiredFreeBytes(catalog.data.source.packBytes)),
-                        )
-                    } else {
-                        stringResource(R.string.shader_pack_retry)
-                    },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Default.Download,
-                            contentDescription = null,
-                            tint = PluviaTheme.colors.accentDanger,
-                        )
-                    },
-                    onClick = { state.startInstall() },
-                    index = index,
-                )
-            }
-            else -> {
-                val updating = state.packUpdateAvailable
-                BrowserRow(
-                    title = stringResource(
-                        if (updating) R.string.shader_pack_update else R.string.shader_pack_download,
-                        formatBytes(catalog.data.source.packBytes),
-                    ),
-                    subtitle = stringResource(R.string.shader_pack_not_installed),
-                    leadingIcon = {
-                        Icon(
-                            Icons.Default.Download,
-                            contentDescription = null,
-                            tint = PluviaTheme.colors.accentPurple,
-                        )
-                    },
-                    onClick = { state.startInstall() },
-                    index = index,
-                )
-            }
-        }
     }
 
     @Composable
@@ -616,8 +535,6 @@ fun ShaderBrowserOverlay(
                             }
                         }
                     } else {
-                        DownloadCta(nextSlot())
-
                         val recents = state.recents.list()
                             .mapNotNull { catalog.preset(it) }
                             .filter { !it.broken }
@@ -648,7 +565,6 @@ fun ShaderBrowserOverlay(
                 }
 
                 is ShaderBrowserScreen.Family -> {
-                    DownloadCta(nextSlot())
                     val subfolders = if (screen.subfolder == null) catalog.subfolders(screen.name) else emptyList()
                     val showSubfolders = subfolders.size > 1
                     if (showSubfolders) {
@@ -677,35 +593,24 @@ fun ShaderBrowserOverlay(
         }
     }
 
-    // ── Confirmations (spec §4.2.3 metered disclosure, §4.2.5 pack removal) ──
+    // Metered-network disclosure (spec §4.2.3 adapted to per-preset fetches): shown when
+    // downloadPreset signals PackMeteredException — no byte was transferred yet.
     MessageDialog(
         visible = state.meteredConfirm,
         onDismissRequest = { state.meteredConfirm = false },
         onDismissClick = { state.meteredConfirm = false },
         onConfirmClick = {
+            val pending = state.pendingPreset
             state.meteredConfirm = false
-            state.startInstall(allowMetered = true)
+            if (pending != null) state.startInstall(pending, allowMetered = true)
         },
-        confirmBtnText = stringResource(R.string.shader_pack_download_confirm),
+        confirmBtnText = stringResource(R.string.shader_download_confirm),
         dismissBtnText = stringResource(R.string.cancel),
-        title = stringResource(R.string.shader_pack_metered_title),
+        title = stringResource(R.string.shader_metered_title),
         message = stringResource(
-            R.string.shader_pack_metered_body,
-            formatBytes(catalog.data.source.packBytes),
+            R.string.shader_metered_body,
+            formatBytes(state.pendingPreset?.bytes ?: 0),
         ),
-    )
-    MessageDialog(
-        visible = state.removeConfirm,
-        onDismissRequest = { state.removeConfirm = false },
-        onDismissClick = { state.removeConfirm = false },
-        onConfirmClick = {
-            state.removeConfirm = false
-            state.clearPack()
-        },
-        confirmBtnText = stringResource(R.string.shader_pack_remove_confirm),
-        dismissBtnText = stringResource(R.string.cancel),
-        title = stringResource(R.string.shader_pack_remove_title),
-        message = stringResource(R.string.shader_pack_remove_body),
     )
 }
 

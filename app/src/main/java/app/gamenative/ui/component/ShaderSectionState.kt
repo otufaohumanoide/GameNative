@@ -11,7 +11,6 @@ import androidx.compose.ui.platform.LocalContext
 import app.gamenative.shaders.PackCancelledException
 import app.gamenative.shaders.PackMeteredException
 import app.gamenative.shaders.PackNoSpaceException
-import app.gamenative.shaders.PackStatus
 import app.gamenative.shaders.ShaderCatalog
 import app.gamenative.shaders.ShaderPack
 import app.gamenative.shaders.ShaderPreset
@@ -49,45 +48,44 @@ class ShaderSectionState(
      *  the user returns to the same level where the shader was chosen. */
     val browser = ShaderBrowserState()
 
-    // Pack install state lives HERE (not in the browser surface): closing the browser while
-    // a download is in flight must NOT kill the install — the pack finishes, the status
-    // refreshes and the requested preset auto-applies (one decision, not two).
+    // Download state lives HERE (not in the browser surface): closing the browser while a
+    // preset download is in flight must NOT kill it — the files finish caching and the
+    // requested preset auto-applies (one decision, not two).
     private val installScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     var installing by mutableStateOf(false)
-    var extracting by mutableStateOf(false)
     var progress by mutableFloatStateOf(0f)
     var installFailed by mutableStateOf(false)
     var installNoSpace by mutableStateOf(false)
     var pendingPreset by mutableStateOf<ShaderPreset?>(null)
     var meteredConfirm by mutableStateOf(false)
-    var removeConfirm by mutableStateOf(false)
 
-    /** Downloads + extracts the pack. [allowMetered] is the user's explicit consent from the
-     *  metered dialog; on success the preset the user originally asked for is auto-applied. */
-    fun startInstall(allowMetered: Boolean = false) {
+    /**
+     * Downloads ONLY [preset]'s dependency closure (user decision 2026-08-12: nothing is
+     * downloaded by default — only the shader the user picks; shared files already cached
+     * are reused). [allowMetered] is the user's explicit consent from the metered dialog;
+     * on success the preset is applied automatically.
+     */
+    fun startInstall(preset: ShaderPreset, allowMetered: Boolean = false) {
         if (installing) return
-        val cat = catalog ?: return
+        if (catalog == null) return
+        pendingPreset = preset
         installing = true
-        extracting = false
         installFailed = false
         installNoSpace = false
         progress = 0f
         installScope.launch {
-            val result = pack.install(
-                catalog = cat,
+            val result = pack.downloadPreset(
+                preset = preset,
                 allowMetered = allowMetered,
                 onProgress = { downloaded, total ->
                     if (total > 0) progress = downloaded.toFloat() / total
                 },
-                onExtracting = { extracting = true },
             )
             installing = false
-            extracting = false
             when {
                 result.isSuccess -> {
                     installFailed = false
                     installNoSpace = false
-                    refreshPackStatus()
                     // Complete the user's original intent: apply the preset they asked for.
                     pendingPreset?.let { requested -> applyPreset(requested) }
                     pendingPreset = null
@@ -116,28 +114,21 @@ class ShaderSectionState(
         }
     }
 
-    /** Aborts the in-flight download and drops the partial extraction (spec §4.2.4). */
+    /** Aborts the in-flight preset download (partial files are dropped). */
     fun cancelInstall() {
         pack.cancel()
         installing = false
-        extracting = false
     }
 
     // §6 migration: the persisted config may point at the old `retroarch_presets` tree that
     // no longer exists. Resolve it against the installed pack: keep the selection visible,
     // clear unreachable absolute paths, and never touch the network here.
     private val initial = loadShaderConfig(container)
-    private val resolved = resolveShaderConfig(initial, pack.packDir.takeIf { pack.isInstalled() })
+    private val resolved = resolveShaderConfig(initial, pack.packDir)
     var shaderEnabled by mutableStateOf(resolved.enabled)
     var shaderPresetPath by mutableStateOf(resolved.presetPath)
     var shaderPresetName by mutableStateOf(resolved.presetName)
     var shaderRelativePath by mutableStateOf(resolved.relativePath)
-
-    // §4.3 integrity: a pack whose marker commit diverges from the catalog is treated as
-    // not installed (the browser then offers the update flow, same tmp → rename install).
-    var packStatus by mutableStateOf(pack.status())
-    val packInstalled: Boolean get() = packStatus == PackStatus.INSTALLED
-    val packUpdateAvailable: Boolean get() = packStatus == PackStatus.UPDATE_AVAILABLE
 
     init {
         // Case §6.2: absolute path re-resolved inside the pack — persist the new absolute
@@ -149,18 +140,6 @@ class ShaderSectionState(
             )
             container?.saveData()
         }
-    }
-
-    fun refreshPackStatus() {
-        packStatus = pack.status()
-    }
-
-    /** Removes the installed pack (spec §4.2.5). The active shader config is NOT touched:
-     *  the preset simply stops loading (the renderer's existing fallback), and the UI
-     *  returns to the "not installed" state. */
-    fun clearPack() {
-        pack.clear()
-        refreshPackStatus()
     }
 
     fun persistShaderState(enabled: Boolean, path: String, name: String, relative: String) {
@@ -191,10 +170,10 @@ class ShaderSectionState(
     }
 
     /**
-     * Applies a preset from the installed pack. Selecting the SAME preset that is already
+     * Applies a preset from the local cache. Selecting the SAME preset that is already
      * active clears ONLY that preset (spec 2026-08-11): the frame renders unshaded while
      * the shader system stays enabled — the main toggle is the only on/off for the system.
-     * Returns false when the preset's files are not present (pack not installed / broken).
+     * Returns false when the preset's files are not present (not downloaded / broken).
      */
     fun applyPreset(preset: ShaderPreset): Boolean {
         val file = pack.presetFile(preset) ?: return false

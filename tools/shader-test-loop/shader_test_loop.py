@@ -2,10 +2,11 @@
 Black-box: no visual inspection needed; classification from pixel statistics + logs."""
 import subprocess, time, json, csv, sys
 
-# On-demand pack layout (spec 2026-08-11-slang-shaders-on-demand.md): the APK ships no
-# shaders; the pack lives in filesDir/retroarch_pack (repo-root-relative layout) and is
-# downloaded by the user once. The debug preset override points AT THE PACK — if the pack
-# is not installed (no .complete marker), every row will report CHAIN_FAIL/NO_FILE.
+# Per-preset on-demand cache (spec 2026-08-11-slang-shaders-on-demand.md, decisão do
+# usuário 2026-08-12): the APK ships no shaders; choosing a preset downloads ONLY its
+# closure into filesDir/retroarch_pack (repo-root-relative layout). The debug preset
+# override points AT THE CACHE — presets whose closure was not downloaded via the UI
+# (shader browser → pick preset) will report CHAIN_FAIL/NO_FILE: download them first.
 BASE = "/data/user/0/app.gamenative/files/retroarch_pack"
 PRESETS = [
     ("crt/crt-easymode.slangp", "crt-easymode"),

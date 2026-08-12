@@ -665,7 +665,10 @@ fun XServerScreen(
                 // nothing, never download automatically.
                 val catalog = ShaderCatalog.load(context)
                 val pack = ShaderPack(context, catalog?.data?.source?.commit ?: "")
-                val packDir = pack.packDir.takeIf { pack.isInstalled() }
+                // Per-preset cache (user decision 2026-08-12): resolution checks actual
+                // file presence inside the cache — a missing closure simply resolves to
+                // "selection visible, nothing loaded, no automatic download".
+                val packDir = pack.packDir
                 val shaderConfig = loadShaderConfig(container)
                 val resolved = resolveShaderConfig(shaderConfig, packDir)
                 if (resolved.presetPath != shaderConfig.presetPath) {

@@ -33,6 +33,12 @@ data class ShaderPreset(
     val subfolder: String? = null,
     val passes: Int = 0,
     val bytes: Long = 0,
+    /**
+     * Every repo-relative file this preset needs (its own .slangp, .slang passes,
+     * #include headers, LUT images, #reference presets). The app downloads ONLY these
+     * files, on demand, reusing whatever is already cached (user decision 2026-08-12).
+     */
+    val deps: List<String> = emptyList(),
     /** Preset whose upstream closure has unresolved references (missing/escaping files). */
     val broken: Boolean = false,
 )

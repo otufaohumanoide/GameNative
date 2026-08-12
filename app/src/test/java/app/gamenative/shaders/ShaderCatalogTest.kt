@@ -17,8 +17,8 @@ class ShaderCatalogTest {
           ],
           "files": ["crt/easymode.slang", "stock.slang"],
           "presets": [
-            {"path": "crt/easymode.slangp", "family": "crt", "passes": 3, "bytes": 1024, "broken": false},
-            {"path": "crt/guest/advanced.slangp", "family": "crt", "subfolder": "guest", "passes": 5, "bytes": 2048},
+            {"path": "crt/easymode.slangp", "family": "crt", "passes": 3, "bytes": 1024, "deps": ["crt/easymode.slangp", "crt/shaders/easymode.slang"], "broken": false},
+            {"path": "crt/guest/advanced.slangp", "family": "crt", "subfolder": "guest", "passes": 5, "bytes": 2048, "deps": ["crt/guest/advanced.slangp"]},
             {"path": "crt/guest/advanced-ntsc.slangp", "family": "crt", "subfolder": "guest", "passes": 2, "bytes": 512, "broken": true},
             {"path": "bilinear.slangp", "family": "root", "passes": 1, "bytes": 665}
           ]
@@ -71,6 +71,14 @@ class ShaderCatalogTest {
         assertEquals(2, catalog.page(items, 0, 2).size)
         assertEquals(2, catalog.page(items, 1, 2).size)
         assertTrue(catalog.page(items, 5, 2).isEmpty())
+    }
+
+    @Test
+    fun `presets carry their dependency closure`() {
+        val easy = catalog.preset("crt/easymode.slangp")!!
+        assertEquals(listOf("crt/easymode.slangp", "crt/shaders/easymode.slang"), easy.deps)
+        // Missing deps default to empty (old catalogs / presets without deps key).
+        assertEquals(emptyList<String>(), catalog.preset("bilinear.slangp")!!.deps)
     }
 
     @Test

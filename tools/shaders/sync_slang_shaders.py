@@ -19,7 +19,8 @@ Output schema (kotlinx-serialization friendly):
   "families": [{"name": "crt", "count": 123}],
   "files": ["<union of every file any preset needs>"],
   "presets": [{"path": "crt/x.slangp", "family": "crt", "subfolder": null,
-                "passes": 4, "bytes": 12345, "deps": ["crt/x.slang", ...]}]
+                "passes": 4, "bytes": 12345,
+                "deps": ["crt/x.slangp", "crt/x.slang", "crt/include.h", ...]}]
 }
 Usage: python3 tools/shaders/sync_slang_shaders.py [--ref master] [--out PATH] [--fresh]
 """
@@ -198,6 +199,9 @@ class Resolver:
                 self.warnings.append(f"{rel}: #reference escapes root: {target}")
                 continue
             if resolved.endswith(".slangp"):
+                # The referenced preset file itself is a dependency: librashader opens
+                # #reference targets from disk, so it must be downloaded too.
+                out_deps.add(resolved)
                 passes += self.scan_preset(resolved, visited, out_deps)
             elif self.exists(resolved):
                 # Config/shader reference (e.g. Mega_Bezel .params): keep as dependency.
@@ -302,12 +306,15 @@ def main() -> int:
         segs = rel.split("/")
         family = segs[0] if len(segs) > 1 else "root"
         subfolder = segs[1] if len(segs) > 2 else None
+        # The preset's own file is part of its closure (the app must download it too).
+        deps.add(rel)
         presets.append({
             "path": rel,
             "family": family,
             "subfolder": subfolder,
             "passes": passes,
             "bytes": size,
+            "deps": sorted(deps),
             "broken": broken,
         })
 
