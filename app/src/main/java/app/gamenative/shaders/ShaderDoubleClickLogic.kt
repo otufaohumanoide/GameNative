@@ -18,7 +18,8 @@ package app.gamenative.shaders
  */
 object ShaderDoubleClickLogic {
 
-    const val WINDOW_MS = 300L
+    // 400 ms (raised from 300): two comfortable gamepad A presses land ~350-450 ms apart.
+    const val WINDOW_MS = 400L
 
     enum class Action { Activate, ConfirmAndClose }
 

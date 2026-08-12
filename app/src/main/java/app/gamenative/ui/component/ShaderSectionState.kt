@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import app.gamenative.shaders.ApplyPresetResult
 import app.gamenative.shaders.PackCancelledException
 import app.gamenative.shaders.PackMeteredException
 import app.gamenative.shaders.PackNoSpaceException
@@ -173,10 +174,11 @@ class ShaderSectionState(
      * Applies a preset from the local cache. Selecting the SAME preset that is already
      * active clears ONLY that preset (spec 2026-08-11): the frame renders unshaded while
      * the shader system stays enabled — the main toggle is the only on/off for the system.
-     * Returns false when the preset's files are not present (not downloaded / broken).
+     * Returns [ApplyPresetResult] so the browser can tell a LOAD from a toggle-off CLEAR
+     * (the double-click gesture arms only on a real load — spec 2026-08-12, UX fix 3).
      */
-    fun applyPreset(preset: ShaderPreset): Boolean {
-        val file = pack.presetFile(preset) ?: return false
+    fun applyPreset(preset: ShaderPreset): ApplyPresetResult {
+        val file = pack.presetFile(preset) ?: return ApplyPresetResult.Missing
         // Toggle-off only applies to a LOADED preset (see shouldToggleOffActivePreset): a
         // migrated selection (§6.3) keeps relativePath without an absolute path — picking
         // it must LOAD it, not clear it, or the shader "never works" after the download.
@@ -186,7 +188,7 @@ class ShaderSectionState(
             shaderRelativePath = ""
             renderer.clearRetroArchShaderPreset()
             persistShaderState(true, "", "", "")
-            return true
+            return ApplyPresetResult.Cleared
         }
         shaderPresetPath = file.absolutePath
         shaderPresetName = friendlyName(preset.path)
@@ -196,7 +198,7 @@ class ShaderSectionState(
         renderer.setRetroArchShaderEnabled(true)
         persistShaderState(true, file.absolutePath, shaderPresetName, preset.path)
         recents.add(preset.path)
-        return true
+        return ApplyPresetResult.Applied
     }
 
     /** True when [preset] is the currently applied one. */

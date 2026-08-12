@@ -27,7 +27,7 @@ class ShaderDoubleClickLogicTest {
     fun `same path outside the window activates (no close)`() {
         assertEquals(
             Action.Activate,
-            ShaderDoubleClickLogic.decide("crt/crt-easymode.slangp", 1000L, "crt/crt-easymode.slangp", 1350L),
+            ShaderDoubleClickLogic.decide("crt/crt-easymode.slangp", 1000L, "crt/crt-easymode.slangp", 1450L),
         )
     }
 
@@ -40,7 +40,7 @@ class ShaderDoubleClickLogicTest {
     fun `exact boundary of the window confirms`() {
         assertEquals(
             Action.ConfirmAndClose,
-            ShaderDoubleClickLogic.decide("crt/crt-easymode.slangp", 1000L, "crt/crt-easymode.slangp", 1300L),
+            ShaderDoubleClickLogic.decide("crt/crt-easymode.slangp", 1000L, "crt/crt-easymode.slangp", 1400L),
         )
     }
 

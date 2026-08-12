@@ -23,7 +23,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -44,11 +43,13 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.gamenative.R
+import app.gamenative.shaders.ApplyPresetResult
 import app.gamenative.shaders.PackPrechecks
 import app.gamenative.shaders.ShaderDoubleClickLogic
 import app.gamenative.shaders.ShaderPreset
@@ -65,8 +66,8 @@ import java.util.Locale
  * Design (Jony Ive lens — "less, on demand"): the whole libretro/slang-shaders catalog is
  * browsable instantly from the 599 KB manifest, but NO shader file ships in the APK. The
  * UI never renders a full family: presets are paginated (12/page + "Show more") and search
- * is global. The dependency-closure pack (≈53 MB) is downloaded once, on demand, and
- * extracted through the exact whitelist from the catalog.
+ * is global. Clicking a cloud preset downloads ONLY its dependency closure (user decision
+ * 2026-08-12) and auto-applies it when the files finish caching.
  *
  * Gamepad: the overlay installs its own bus navigator + key bridge (the QuickMenu's are
  * gated off while it is open), B/back walks a manual back-stack, PS closes the browser
@@ -198,10 +199,18 @@ fun ShaderBrowserOverlay(
         requesters.getOrPut("$screenKey:$index") { FocusRequester() }
 
     // Double-click gesture (spec 2026-08-12, Missão 5): last preset that was REALLY
-    // applied (cloud rows / failed applies never arm). A second press on the same row
-    // within WINDOW_MS applies-and-closes the whole QuickMenu.
+    // applied (cloud rows / failed applies / toggle-off CLEARS never arm). A second press
+    // on the same row within WINDOW_MS applies-and-closes the whole QuickMenu.
     var armedPath by remember { mutableStateOf<String?>(null) }
     var armedAtMs by remember { mutableLongStateOf(0L) }
+    // The arm expires with the window: the hint on the armed row disappears when the
+    // gesture can no longer fire (keeps the UI honest — no stale "press again" label).
+    LaunchedEffect(armedPath, armedAtMs) {
+        if (armedPath != null) {
+            delay(ShaderDoubleClickLogic.WINDOW_MS)
+            armedPath = null
+        }
+    }
 
     var navTick by remember { mutableIntStateOf(0) }
     var pendingFocus by remember { mutableIntStateOf(-1) }
@@ -271,6 +280,8 @@ fun ShaderBrowserOverlay(
         leadingIcon: (@Composable () -> Unit)? = null,
         trailingIcon: (@Composable () -> Unit)? = null,
         onClick: () -> Unit,
+        onLongClick: (() -> Unit)? = null,
+        onKeyEventOverride: ((android.view.KeyEvent) -> Boolean)? = null,
         index: Int,
     ) {
         val interactionSource = remember { MutableInteractionSource() }
@@ -294,9 +305,19 @@ fun ShaderBrowserOverlay(
                         )
                     },
                 )
+                .then(
+                    if (onKeyEventOverride != null) {
+                        Modifier.onKeyEvent { keyEvent ->
+                            onKeyEventOverride(keyEvent.nativeKeyEvent)
+                        }
+                    } else {
+                        Modifier
+                    },
+                )
                 .gamepadSelectable(
                     selected = selected,
                     onClick = onClick,
+                    onLongClick = onLongClick,
                     enabled = enabled,
                     shape = RoundedCornerShape(14.dp),
                     interactionSource = interactionSource,
@@ -341,18 +362,23 @@ fun ShaderBrowserOverlay(
         val broken = preset.broken
         val downloadingThis = state.installing && state.pendingPreset?.path == preset.path
         val failedThis = state.installFailed && state.pendingPreset?.path == preset.path
+        // Progressive disclosure (spec 2026-08-12, UX fix 2): while the double-click
+        // gesture is armed on THIS row, its subtitle teaches the close-with-shader
+        // accelerator. The arm (and the hint) expires with the window.
+        val gestureArmed = armedPath == preset.path
         BrowserRow(
             title = friendlyName(preset.path),
             subtitle = when {
                 downloadingThis -> stringResource(
                     R.string.shader_downloading,
                     (state.progress * 100).toInt(),
-                )
+                ) + " · " + stringResource(R.string.shader_download_cancel_hint)
                 failedThis && state.installNoSpace -> stringResource(
                     R.string.shader_download_no_space_hint,
                     formatBytes(preset.bytes.coerceAtLeast(1) * 2 + PackPrechecks.HEADROOM_BYTES),
                 )
                 failedThis -> stringResource(R.string.shader_download_failed)
+                gestureArmed -> stringResource(R.string.shader_double_click_hint)
                 else -> listOfNotNull(
                     friendlyFamilyName(preset.family),
                     preset.passes.takeIf { it > 0 }?.let {
@@ -395,10 +421,33 @@ fun ShaderBrowserOverlay(
                     )
                 }
             },
+            // Cancel affordance for an in-flight download on THIS row: raw B while focused
+            // (main phase — the focused row wins over the surface's hierarchical back) or
+            // touch long-press. A plain click while downloading does NOTHING: double-click
+            // habit must never cancel a download by accident (spec 2026-08-12, UX fix 1).
+            onKeyEventOverride = if (downloadingThis) {
+                { event ->
+                    if (event.keyCode == android.view.KeyEvent.KEYCODE_BUTTON_B &&
+                        event.action == android.view.KeyEvent.ACTION_DOWN
+                    ) {
+                        state.cancelInstall()
+                        true
+                    } else {
+                        false
+                    }
+                }
+            } else {
+                null
+            },
+            onLongClick = if (downloadingThis) {
+                { state.cancelInstall() }
+            } else {
+                null
+            },
             onClick = {
                 when {
                     broken -> Unit
-                    downloadingThis -> state.cancelInstall()
+                    downloadingThis -> Unit
                     !local -> {
                         // Cloud row: first click starts the download. NEVER arms the
                         // double-click gesture (spec 2026-08-12 §5.1.3) — the user must
@@ -414,16 +463,23 @@ fun ShaderBrowserOverlay(
                         )
                         when (action) {
                             ShaderDoubleClickLogic.Action.Activate ->
-                                // Only arm when the preset was REALLY applied (a failed
-                                // apply, e.g. missing file, never arms).
-                                if (state.applyPreset(preset)) {
-                                    armedPath = preset.path
-                                    armedAtMs = SystemClock.uptimeMillis()
+                                // Arm ONLY on a real load (Applied). A toggle-off CLEAR of
+                                // the active preset never arms: double-clicking an active
+                                // row then reads as the predictable off-then-on toggle, and
+                                // never surprises the user with "shader off + menu closed"
+                                // (spec 2026-08-12, UX fix 3).
+                                when (state.applyPreset(preset)) {
+                                    ApplyPresetResult.Applied -> {
+                                        armedPath = preset.path
+                                        armedAtMs = SystemClock.uptimeMillis()
+                                    }
+                                    ApplyPresetResult.Cleared -> armedPath = null
+                                    ApplyPresetResult.Missing -> Unit
                                 }
                             ShaderDoubleClickLogic.Action.ConfirmAndClose -> {
-                                // Second press on the same row inside the window: applies
-                                // (already active) AND closes the whole QuickMenu — the
-                                // fast experiment loop PS → pick → A A → see the game.
+                                // Second press on the same row inside the window: the preset
+                                // is already applied — close the whole QuickMenu, the fast
+                                // experiment loop PS → pick → A A → see the game.
                                 armedPath = null
                                 onClose()
                                 onCloseQuickMenu()

@@ -1096,10 +1096,8 @@
     <string name="retroarch_shaders_title">Shaders RetroArch</string>
     <string name="shader_pick_preset">Escolha um preset abaixo</string>
     <string name="shader_off">Desligado</string>
-    <string name="shader_loading">Carregando presets…</string>
     <string name="shader_search">Buscar presets…</string>
     <string name="shader_clear_search">Limpar busca</string>
-    <string name="shader_no_match">Nenhum preset corresponde a "%1$s"</string>
     <string name="shader_renderer_native_title">Efeitos nativos do renderer</string>
     <string name="shader_renderer_native_subtitle">Embutidos no renderer · complementam os shaders RetroArch · FSR · Escala · Toon · FXAA · Vivid · CRT · NTSC</string>
     <string name="shader_cat_crt">CRT</string>
@@ -1114,7 +1112,6 @@
     <string name="shader_cat_nearest">Escala</string>
     <string name="shader_cat_bilinear">Escala</string>
     <string name="shader_cat_stock">Stock</string>
-    <string name="shader_cat_other">Outros</string>
     <!-- Browser de shaders em tela cheia (spec 2026-08-11-shader-browser-design) -->
     <string name="shader_browser_title">Shaders</string>
     <string name="shader_browser_back">Voltar</string>
@@ -1129,13 +1126,12 @@
     <string name="shader_family_sections">Seções</string>
     <string name="shader_catalog_missing">Catálogo de shaders indisponível</string>
     <string name="shader_downloading">Baixando shader… %1$d%%</string>
-    <string name="shader_download_cancel">Cancelar download</string>
+    <string name="shader_download_cancel_hint">B ou toque longo cancela</string>
+    <string name="shader_double_click_hint">Pressione novamente para aplicar e fechar</string>
     <string name="shader_download_failed">Falha no download</string>
-    <string name="shader_download_retry">Tentar novamente</string>
     <string name="shader_metered_title">Baixar usando dados móveis?</string>
     <string name="shader_metered_body">Você está em uma conexão medida. Baixar este shader (%1$s)?</string>
     <string name="shader_download_confirm">Baixar</string>
-    <string name="shader_download_no_space">Espaço insuficiente</string>
     <string name="shader_download_no_space_hint">Libere pelo menos %1$s para instalar este shader</string>
     <string name="action_refresh">Atualizar</string>
     <string name="action_details">Detalhes</string>

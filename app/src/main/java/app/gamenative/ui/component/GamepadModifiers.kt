@@ -103,6 +103,7 @@ object GamepadKeyLogic {
 fun Modifier.gamepadSelectable(
     selected: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
     shape: Shape,
     interactionSource: MutableInteractionSource,
@@ -139,6 +140,7 @@ fun Modifier.gamepadSelectable(
             interactionSource = interactionSource,
             indication = null,
             enabled = enabled,
+            onLongClick = onLongClick,
             onClick = onClick,
         )
         .semantics { this.selected = selected }
