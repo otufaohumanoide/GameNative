@@ -1,5 +1,6 @@
 package app.gamenative.ui.component
 
+import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
@@ -19,8 +20,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.delay
@@ -254,6 +257,17 @@ fun Modifier.gamepadBackHandler(onBack: () -> Unit): Modifier = onKeyEvent { key
  *
  * Installs inside a Box:
  * - [JoystickFocusNavigator] (stick/hat → focus) and [GamepadKeyBridge] (A → DPAD_CENTER);
+ * - a DPAD×hat dedupe guard (spec 2026-08-12, M4 — follow-up C): a preview interceptor on
+ *   the root Box applies [GamepadMoveDedupe] to KEYCODE_DPAD_* BEFORE Compose's focus
+ *   system processes them natively. Without it, controllers emitting BOTH hat-axis motion
+ *   AND KEYCODE_DPAD_* keys move the dialog's focus twice per gesture: the axis channel
+ *   ([JoystickFocusNavigator]) already consults and stamps the shared
+ *   [GamepadNavigationClock.lastMoveAt], but the key channel reached Compose raw. This is
+ *   the dialog-window mirror of the bus path ([BusGamepadKeyBridge] + [BusJoystickFocusNavigator],
+ *   QuickMenu/browser, whose events never reach dialog windows): whichever channel moves
+ *   first stamps the clock, the second is suppressed inside the 120 ms window — in both
+ *   directions (axis suppresses the key here; the key stamps the clock so the axis
+ *   suppresses too);
  * - a physical [BackHandler] wired to [backAction] (touch/back-button parity — apply
  *   `Modifier.gamepadBackHandler(backAction)` to the surface content for the raw-B path);
  * - initial focus via [initialFocusRequester] once [enabled] (retries while the window's
@@ -267,7 +281,41 @@ fun GamepadFocusScope(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    Box(modifier = modifier) {
+    Box(
+        modifier = modifier.onPreviewKeyEvent { keyEvent ->
+            // M4/C (spec 2026-08-12): DPAD keys reach the dialog's Compose focus system
+            // raw, which would move focus WITHOUT consulting/stamping the shared clock —
+            // the axis channel of the same gesture (JoystickFocusNavigator) then moves
+            // focus a second time. Same semantics as BusGamepadKeyBridge: a first press
+            // that wins the gesture window stamps the clock and lets Compose process the
+            // key natively; a press that lost (axis already moved < WINDOW_MS ago) is
+            // consumed. Repeats always pass — the key channel is the continuous-repeat
+            // channel, and the stamp only happens on the first press.
+            val native = keyEvent.nativeKeyEvent
+            val isDpadMove = native.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                native.keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+                native.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                native.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+            if (keyEvent.type != KeyEventType.KeyDown || !isDpadMove) {
+                false
+            } else {
+                val now = SystemClock.uptimeMillis()
+                if (GamepadMoveDedupe.shouldDispatchKeyMove(
+                        now = now,
+                        lastMoveAt = GamepadNavigationClock.lastMoveAt,
+                        repeatCount = native.repeatCount,
+                    )
+                ) {
+                    if (native.repeatCount == 0) {
+                        GamepadNavigationClock.lastMoveAt = now
+                    }
+                    false
+                } else {
+                    true
+                }
+            }
+        },
+    ) {
         JoystickFocusNavigator(enabled = enabled)
         GamepadKeyBridge(enabled = enabled)
         if (backAction != null) {

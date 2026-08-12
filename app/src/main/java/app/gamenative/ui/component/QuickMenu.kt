@@ -1144,7 +1144,9 @@ fun QuickMenu(
             // Focus that lands through this bootstrap (walk-down on open, guardian restores) is
             // programmatic, not user intent on the target row — the search field relies on this
             // stamp to suppress the soft keyboard (spec 2026-08-10-search-field-ime-explicit-design).
-            GamepadNavigationClock.lastMoveAt = SystemClock.uptimeMillis()
+            // Stamps the PROGRAMMATIC clock, never lastMoveAt: a bootstrap stamp on lastMoveAt
+            // would suppress the user's first real move (dedupe window) and re-arm the guardians.
+            GamepadNavigationClock.programmaticFocusAt = SystemClock.uptimeMillis()
             repeat(3) {
                 try {
                     val hadFocus = menuHasFocus

@@ -106,10 +106,23 @@ fun BusJoystickFocusNavigator(
  * targets tell "focus arrived via the stick/hat" from "focus arrived via touch/API"
  * (UX practice: a soft keyboard must only appear on explicit user intent — tapping the
  * field or pressing A — never because stick navigation landed on a text field).
+ *
+ * The two stamps are kept SEPARATE (spec 2026-08-12 follow-ups, Missão B):
+ * [lastMoveAt] is stamped ONLY by real user moves (stick/hat axes, winning DPAD keys) —
+ * the dedupe ([GamepadMoveDedupe]) and the focus guardians read it, so a programmatic
+ * stamp must never reach it (a bootstrap/restore stamp would suppress the first real
+ * move of the user inside the 120 ms dedupe window and re-arm the guardians' 600 ms
+ * gentleness without any gesture). [programmaticFocusAt] is stamped by programmatic
+ * focus bootstraps/restores (QuickMenu walk-down, guardian restores) so the search-field
+ * IME suppression can still tell "focus landed without explicit intent" from "focus
+ * landed by a real gesture".
  */
 object GamepadNavigationClock {
     @Volatile
     var lastMoveAt: Long = 0L
+
+    @Volatile
+    var programmaticFocusAt: Long = 0L
 }
 
 /**
@@ -141,9 +154,11 @@ enum class ModeKeyBehavior {
  * - KEYCODE_BUTTON_MODE (Home/PS) -> always consumed; with [ModeKeyBehavior.CloseOverlay]
  *   the first ACTION_DOWN invokes [onCloseOverlay] (spec 2026-08-10, §3.5 — G6: PS toggles
  *   the QuickMenu open/closed).
- * - BUTTON_START (Options/≡) -> always consumed; with [ModeKeyBehavior.CloseOverlay] it
- *   CLOSES the overlay like PS (P1, spec 2026-08-12: START mirrors HOME as the second
- *   system toggle; the open half is handled by XServerScreen when the menu is closed).
+ * - BUTTON_START (Options/≡) -> always consumed while an overlay is open, but does NOT
+ *   close it (P1 reverted 2026-08-12 by user decision: only Home/PS toggles the QuickMenu,
+ *   START belongs to the game again — the closed-menu half of P1 was removed from
+ *   XServerScreen). Consuming DOWN/UP still guarantees START never reaches the game
+ *   behind the open menu (unexpected pause / in-game UI opening).
  * - BUTTON_SELECT (View/Share) -> always consumed while an overlay is open (P1): neither
  *   START nor SELECT may ever reach the game behind the open menu (unexpected pause / in-
  *   game UI opening).
@@ -198,13 +213,9 @@ fun BusGamepadKeyBridge(
                 return true
             }
             if (event.keyCode == KeyEvent.KEYCODE_BUTTON_START) {
-                // P1 (spec 2026-08-12): START mirrors HOME while an overlay is open —
-                // first ACTION_DOWN closes it; DOWN/UP always consumed.
-                if (modeKeyBehavior == ModeKeyBehavior.CloseOverlay &&
-                    event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
-                ) {
-                    currentOnClose()
-                }
+                // P1 reverted (2026-08-12): START no longer closes the overlay — only
+                // Home/PS toggles the QuickMenu. DOWN/UP stay consumed so the game never
+                // pauses or opens in-game UI behind the open menu.
                 return true
             }
             if (event.keyCode == KeyEvent.KEYCODE_BUTTON_SELECT) {

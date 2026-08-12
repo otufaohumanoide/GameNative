@@ -14,7 +14,16 @@ de diagnóstico QuickMenu/input (hipóteses de foco/event loop/consumo).
    em UM documento.
 3. **Dead code removido** neste escopo.
 4. **P1 mantido** — START continua espelhando HOME (abre com menu fechado, fecha com menu
-   aberto, sempre consumido com overlay aberto).
+   aberto, sempre consumido com overlay aberto). **REVERTIDO no mesmo dia por decisão do
+   usuário:** o QuickMenu só alterna por Home/PS; START voltou ao jogo (ver Missão F do
+   plano de follow-ups).
+
+> **Status:** implementado em `55337822` (ver
+> `docs/spec-2026-08-12-quickmenu-gamepad-pipeline-hardening-impl.md`). Correções pós-revisão
+> (adendo): premissa D1 incorreta — `FocusRing.kt` MANTIDO (callers reais de
+> `Modifier.focusRing` na biblioteca; ver impl doc §2). Follow-ups A–F implementados
+> conforme `docs/superpowers/plans/2026-08-12-gamepad-hardening-followups.md` (reversão do
+> P1 inclusa).
 
 ---
 

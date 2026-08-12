@@ -96,6 +96,7 @@ fun GamepadSearchField(
             if (!searchImeWanted && SearchFieldImeLogic.arrivedViaGamepad(
                     now = SystemClock.uptimeMillis(),
                     lastMoveAt = GamepadNavigationClock.lastMoveAt,
+                    programmaticFocusAt = GamepadNavigationClock.programmaticFocusAt,
                     windowMs = 400L,
                 )
             ) {

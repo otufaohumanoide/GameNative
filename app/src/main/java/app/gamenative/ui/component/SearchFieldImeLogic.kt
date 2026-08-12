@@ -26,12 +26,26 @@ object SearchFieldImeLogic {
     }
 
     /**
-     * True when focus most likely landed on the field through gamepad navigation (stick/hat
-     * move, menu-open walk-down or guardian restore) rather than touch — i.e. when the
-     * soft keyboard must NOT show itself.
+     * True when focus most likely landed on the field through gamepad navigation — either a
+     * REAL move ([lastMoveAt]: stick/hat/DPAD key) or a PROGRAMMATIC bootstrap/restore
+     * ([programmaticFocusAt]: menu-open walk-down or guardian restore) — rather than touch,
+     * i.e. when the soft keyboard must NOT show itself.
+     *
+     * The two clocks are separate (spec 2026-08-12 follow-ups, Missão B): real moves stamp
+     * [GamepadNavigationClock.lastMoveAt] (read by the dedupe and the guardians, which must
+     * never see a programmatic stamp) while bootstraps/restores stamp
+     * [GamepadNavigationClock.programmaticFocusAt]. Either one inside [windowMs] means the
+     * landing was not explicit intent, so the most recent of the two decides.
      */
-    fun arrivedViaGamepad(now: Long, lastMoveAt: Long, windowMs: Long): Boolean =
-        lastMoveAt != 0L && now - lastMoveAt < windowMs
+    fun arrivedViaGamepad(
+        now: Long,
+        lastMoveAt: Long,
+        programmaticFocusAt: Long,
+        windowMs: Long,
+    ): Boolean {
+        val lastActivityAt = maxOf(lastMoveAt, programmaticFocusAt)
+        return lastActivityAt != 0L && now - lastActivityAt < windowMs
+    }
 
     /**
      * Decides what one key event should do on the focused search field.
