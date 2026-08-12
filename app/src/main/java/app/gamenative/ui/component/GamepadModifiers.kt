@@ -4,6 +4,8 @@ import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
@@ -99,6 +101,7 @@ object GamepadKeyLogic {
  *   D7 visual: focused → animated ring, selected → persistent accent border.
  * - Touch taps still activate; semantics keep the a11y "selected" state.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Modifier.gamepadSelectable(
     selected: Boolean,
@@ -136,12 +139,27 @@ fun Modifier.gamepadSelectable(
                 false
             }
         }
-        .clickable(
-            interactionSource = interactionSource,
-            indication = null,
-            enabled = enabled,
-            onLongClick = onLongClick,
-            onClick = onClick,
+        .then(
+            if (onLongClick != null) {
+                // Long-press affordance (shader browser cancel, spec 2026-08-12 UX fix 1):
+                // this Compose version's clickable() has no onLongClick overload, so the
+                // long-press-capable variant is used ONLY when a handler exists (regular
+                // rows keep the plain clickable path unchanged).
+                Modifier.combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    enabled = enabled,
+                    onLongClick = onLongClick,
+                    onClick = onClick,
+                )
+            } else {
+                Modifier.clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    enabled = enabled,
+                    onClick = onClick,
+                )
+            },
         )
         .semantics { this.selected = selected }
 }
