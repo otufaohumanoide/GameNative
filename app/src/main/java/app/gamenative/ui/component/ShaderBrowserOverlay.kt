@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,10 +50,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.gamenative.R
 import app.gamenative.shaders.PackPrechecks
+import app.gamenative.shaders.ShaderDoubleClickLogic
 import app.gamenative.shaders.ShaderPreset
 import app.gamenative.shaders.friendlyName
 import app.gamenative.ui.component.dialog.MessageDialog
 import app.gamenative.ui.theme.PluviaTheme
+import android.os.SystemClock
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -154,6 +157,7 @@ private const val PAGE_SIZE = 12
 fun ShaderBrowserOverlay(
     state: ShaderSectionState,
     onClose: () -> Unit,
+    onCloseQuickMenu: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val catalog = state.catalog
@@ -192,6 +196,12 @@ fun ShaderBrowserOverlay(
     val screenKey = nav.current.key()
     fun requesterFor(index: Int): FocusRequester =
         requesters.getOrPut("$screenKey:$index") { FocusRequester() }
+
+    // Double-click gesture (spec 2026-08-12, Missão 5): last preset that was REALLY
+    // applied (cloud rows / failed applies never arm). A second press on the same row
+    // within WINDOW_MS applies-and-closes the whole QuickMenu.
+    var armedPath by remember { mutableStateOf<String?>(null) }
+    var armedAtMs by remember { mutableLongStateOf(0L) }
 
     var navTick by remember { mutableIntStateOf(0) }
     var pendingFocus by remember { mutableIntStateOf(-1) }
@@ -390,11 +400,36 @@ fun ShaderBrowserOverlay(
                     broken -> Unit
                     downloadingThis -> state.cancelInstall()
                     !local -> {
-                        // User intent -> fetch ONLY this shader's files now; it is
-                        // applied automatically once the download completes.
+                        // Cloud row: first click starts the download. NEVER arms the
+                        // double-click gesture (spec 2026-08-12 §5.1.3) — the user must
+                        // see the shader applied before the close gesture can exist.
                         state.startInstall(preset)
                     }
-                    else -> state.applyPreset(preset)
+                    else -> {
+                        val action = ShaderDoubleClickLogic.decide(
+                            armedPath = armedPath,
+                            armedAtMs = armedAtMs,
+                            path = preset.path,
+                            nowMs = SystemClock.uptimeMillis(),
+                        )
+                        when (action) {
+                            ShaderDoubleClickLogic.Action.Activate ->
+                                // Only arm when the preset was REALLY applied (a failed
+                                // apply, e.g. missing file, never arms).
+                                if (state.applyPreset(preset)) {
+                                    armedPath = preset.path
+                                    armedAtMs = SystemClock.uptimeMillis()
+                                }
+                            ShaderDoubleClickLogic.Action.ConfirmAndClose -> {
+                                // Second press on the same row inside the window: applies
+                                // (already active) AND closes the whole QuickMenu — the
+                                // fast experiment loop PS → pick → A A → see the game.
+                                armedPath = null
+                                onClose()
+                                onCloseQuickMenu()
+                            }
+                        }
+                    }
                 }
             },
             index = index,

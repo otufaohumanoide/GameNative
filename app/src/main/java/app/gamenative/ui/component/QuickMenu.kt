@@ -417,6 +417,10 @@ fun QuickMenu(
         if (renderer != null) ShaderSectionState(renderer, container, context) else null
     }
     var shaderBrowserOpen by remember { mutableStateOf(false) }
+    // Missão 2 (spec 2026-08-12): remembers that the browser was open so the close
+    // transition can restore menu focus exactly once — the opening bootstrap must not
+    // race a duplicate restore on the initial composition.
+    var browserWasOpen by remember { mutableStateOf(false) }
 
     // The game's own "Invite friends" button reaches us as an engine callback the bionic host
     // captures. Open on the invite tab rather than drawing a separate panel, so controller focus
@@ -588,6 +592,7 @@ fun QuickMenu(
             ShaderBrowserOverlay(
                 state = shaderSection,
                 onClose = { shaderBrowserOpen = false },
+                onCloseQuickMenu = onDismiss,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -1097,11 +1102,31 @@ fun QuickMenu(
         if (isVisible) {
             requestMenuFocus()
         } else {
+            // Defensive reset (spec 2026-08-12, Missão 3): a menu closed by ANY path while
+            // the browser was still open must not reopen into the browser — the reopen
+            // lands on the last tab (EFFECTS). The browser flag is scoped to the menu, so
+            // the guard also clears the stale was-open latch.
+            shaderBrowserOpen = false
+            browserWasOpen = false
             // UX practice (focus hygiene): a close must leave a clean slate. If a stale
             // active focus target survives the exit (e.g. a text field with an open IME
             // connection), the next open's requestFocus can be silently dropped by the
             // focus system. Clearing here makes every reopen deterministic.
             focusManager.clearFocus(true)
+        }
+    }
+
+    // Missão 2 (spec 2026-08-12): closing the browser recomposes the menu content; restore
+    // focus immediately (requestMenuFocus walks down to the remembered row) instead of
+    // waiting up to 400 ms for the guardian. The latch skips the initial composition, so
+    // this never races the opening bootstrap (two concurrent walk-downs would double the
+    // effectsFocusIndex offset).
+    LaunchedEffect(shaderBrowserOpen) {
+        if (shaderBrowserOpen) {
+            browserWasOpen = true
+        } else if (browserWasOpen && isVisible) {
+            browserWasOpen = false
+            requestMenuFocus()
         }
     }
 
@@ -1112,11 +1137,15 @@ fun QuickMenu(
     // not a one-shot: a single failed restore must never leave the menu permanently dead
     // (the "abri o menu e não consegui mexer nada" symptom). requestMenuFocus() itself
     // verifies that the focus actually landed and falls back to the rail.
-    LaunchedEffect(isVisible) {
-        if (isVisible) {
+    // Missão 1 (spec 2026-08-12): the guardian must not run while the browser is open —
+    // the menu content is not composed then, so its requesters are gone; the loop would
+    // only spam logs and race the browser's own focus bootstrap. It resumes the moment
+    // the browser closes.
+    LaunchedEffect(isVisible, shaderBrowserOpen) {
+        if (isVisible && !shaderBrowserOpen) {
             // Let the opening bootstrap land first (never fight it).
             delay(150)
-            while (isVisible) {
+            while (isVisible && !shaderBrowserOpen) {
                 if (!menuHasFocus) {
                     Timber.d("QuickMenu guardian: restoring focus (tab=%d)", selectedTab)
                     requestMenuFocus()
