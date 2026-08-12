@@ -77,6 +77,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.SoftwareKeyboardControllerCompat
 import app.gamenative.R
+import app.gamenative.shaders.ShaderToggleSubtitle
+import app.gamenative.shaders.shaderToggleSubtitle
 import app.gamenative.ui.theme.PluviaTheme
 import app.gamenative.ui.util.ScreenEffectsConfig
 import app.gamenative.ui.util.applyScreenEffectsConfig
@@ -611,10 +613,19 @@ fun ScreenEffectsTabContent(
                 focusRequester = firstItemFocusRequester,
                 focusIndex = nextFocusSlot(),
                 onFocusIndexChanged = onFocusIndexChanged,
-                subtitle = when {
-                    shaderSection.shaderEnabled && shaderSection.shaderPresetName.isNotEmpty() -> shaderSection.shaderPresetName
-                    shaderSection.shaderEnabled -> stringResource(R.string.shader_pick_preset)
-                    else -> stringResource(R.string.shader_off)
+                subtitle = when (
+                    shaderToggleSubtitle(
+                        enabled = shaderSection.shaderEnabled,
+                        name = shaderSection.shaderPresetName,
+                        path = shaderSection.shaderPresetPath,
+                    )
+                ) {
+                    ShaderToggleSubtitle.ActivePreset -> shaderSection.shaderPresetName
+                    // Self-heal (2026-08-12): closure incomplete — the selection is visible
+                    // but nothing is loaded; re-picking downloads only the missing files.
+                    ShaderToggleSubtitle.SelectedNotDownloaded -> stringResource(R.string.shader_selected_not_downloaded)
+                    ShaderToggleSubtitle.PickPreset -> stringResource(R.string.shader_pick_preset)
+                    ShaderToggleSubtitle.Off -> stringResource(R.string.shader_off)
                 },
                 enabled = shaderSection.shaderEnabled,
                 onToggle = { shaderSection.toggleShaders() },

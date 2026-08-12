@@ -1095,6 +1095,7 @@
     <!-- RetroArch shader panel -->
     <string name="retroarch_shaders_title">Shaders RetroArch</string>
     <string name="shader_pick_preset">Escolha um preset abaixo</string>
+    <string name="shader_selected_not_downloaded">Não baixado — re-selecione no navegador</string>
     <string name="shader_off">Desligado</string>
     <string name="shader_search">Buscar presets…</string>
     <string name="shader_clear_search">Limpar busca</string>

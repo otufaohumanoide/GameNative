@@ -37,7 +37,7 @@ class ShaderConfigResolveTest {
     fun `case2 missing absolute re-resolves relative path inside installed pack`() {
         val packDir = tmp.newFolder("pack")
         val preset = File(packDir, "crt/easymode.slangp").apply {
-            parentFile.mkdirs()
+            parentFile?.mkdirs()
             writeText("shaders")
         }
         val oldPath = File(tmp.root, "retroarch_presets/crt/easymode.slangp").absolutePath
@@ -121,5 +121,83 @@ class ShaderConfigResolveTest {
         assertFalse(shouldToggleOffActivePreset(false, "reshade/FilmGrain.slangp", "", "reshade/FilmGrain.slangp"))
         // Legacy config without relativePath at all.
         assertFalse(shouldToggleOffActivePreset(true, "", "", "crt/easymode.slangp"))
+    }
+
+    // ── closure-aware resolution (2026-08-12: chain create failed silently when a preset's
+    //    dependency files were not all cached, e.g. technicolor without its LUT texture) ──
+
+    private val closureCatalog = ShaderCatalog.parse(
+        """
+        {
+          "source": {"repo": "r", "ref": "master", "commit": "c", "packBytes": 1},
+          "families": [{"name": "film", "count": 1}],
+          "files": ["film/technicolor.slangp", "film/shaders/film_noise.slang", "reshade/shaders/LUT/cmyk-16.png"],
+          "presets": [
+            {"path": "film/technicolor.slangp", "family": "film", "passes": 2, "bytes": 54665,
+             "deps": ["film/technicolor.slangp", "film/shaders/film_noise.slang", "reshade/shaders/LUT/cmyk-16.png"]}
+          ]
+        }
+        """.trimIndent(),
+    )
+
+    @Test
+    fun `case1 with incomplete closure does not load - selection stays visible`() {
+        val packDir = tmp.newFolder("packc1")
+        // Only the .slangp is cached; the LUT is missing.
+        File(packDir, "film/technicolor.slangp").apply { parentFile?.mkdirs(); writeText("x") }
+        val abs = File(packDir, "film/technicolor.slangp").absolutePath
+        val resolved = resolveShaderConfig(
+            config(presetPath = abs, presetName = "Technicolor", relativePath = "film/technicolor.slangp"),
+            packDir = packDir,
+            catalog = closureCatalog,
+        )
+        assertEquals("", resolved.presetPath)      // nothing is loaded
+        assertEquals("film/technicolor.slangp", resolved.relativePath) // selection kept
+        assertEquals("Technicolor", resolved.presetName)
+        assert(resolved.enabled)
+    }
+
+    @Test
+    fun `case2 with incomplete closure does not re-resolve`() {
+        val packDir = tmp.newFolder("packc2")
+        File(packDir, "film/technicolor.slangp").apply { parentFile?.mkdirs(); writeText("x") }
+        val resolved = resolveShaderConfig(
+            config(presetPath = "/gone.slangp", presetName = "Technicolor", relativePath = "film/technicolor.slangp"),
+            packDir = packDir,
+            catalog = closureCatalog,
+        )
+        assertEquals("", resolved.presetPath)
+        assertEquals("film/technicolor.slangp", resolved.relativePath)
+    }
+
+    @Test
+    fun `complete closure loads normally`() {
+        val packDir = tmp.newFolder("packc3")
+        for (rel in listOf(
+            "film/technicolor.slangp",
+            "film/shaders/film_noise.slang",
+            "reshade/shaders/LUT/cmyk-16.png",
+        )) {
+            File(packDir, rel).apply { parentFile?.mkdirs(); writeText("x") }
+        }
+        val abs = File(packDir, "film/technicolor.slangp").absolutePath
+        val resolved = resolveShaderConfig(
+            config(presetPath = abs, presetName = "Technicolor", relativePath = "film/technicolor.slangp"),
+            packDir = packDir,
+            catalog = closureCatalog,
+        )
+        assertEquals(abs, resolved.presetPath)
+        assert(resolved.enabled)
+    }
+
+    @Test
+    fun `unknown preset path keeps file-existence behavior without catalog`() {
+        val packDir = tmp.newFolder("packc4")
+        val preset = File(packDir, "unknown/x.slangp").apply { parentFile?.mkdirs(); writeText("x") }
+        // No catalog: closure cannot be checked; existing file loads (legacy behavior).
+        assertEquals(
+            preset.absolutePath,
+            resolveShaderConfig(config(presetPath = preset.absolutePath), packDir).presetPath,
+        )
     }
 }

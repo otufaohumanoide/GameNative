@@ -670,7 +670,11 @@ fun XServerScreen(
                 // "selection visible, nothing loaded, no automatic download".
                 val packDir = pack.packDir
                 val shaderConfig = loadShaderConfig(container)
-                val resolved = resolveShaderConfig(shaderConfig, packDir)
+                // Closure-aware: a preset whose dependency files are not all cached
+                // resolves to "selection visible, nothing loaded" — the browser shows it
+                // in the cloud state and a re-pick downloads only the missing files
+                // (2026-08-12: chain create used to fail silently, e.g. technicolor's LUT).
+                val resolved = resolveShaderConfig(shaderConfig, packDir, catalog)
                 if (resolved.presetPath != shaderConfig.presetPath) {
                     persistShaderConfig(
                         container,

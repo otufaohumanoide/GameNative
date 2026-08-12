@@ -46,30 +46,51 @@ data class ResolvedShaderConfig(
  * configs persist an absolute path under `.../retroarch_presets/...` — a directory that no
  * longer exists — plus a repo-relative path. Resolution, in order:
  *
- *  1. `presetPath` exists on disk → load normally (new path, nothing to do).
- *  2. `presetPath` is gone and `relativePath` resolves inside the installed pack →
- *     re-resolve `packDir/relativePath`; the caller persists the new absolute path.
- *  3. `relativePath` does not resolve (pack not installed) → keep `enabled` and the menu
- *     selection visible, but clear the absolute path: nothing is loaded and NOTHING is
- *     downloaded without user intent (the browser shows the download CTA).
+ *  1. `presetPath` exists on disk AND its full closure is cached → load normally.
+ *  2. `presetPath` is gone and `relativePath` resolves inside the cache with a COMPLETE
+ *     closure → re-resolve `packDir/relativePath`; the caller persists the new absolute
+ *     path.
+ *  3. Nothing resolves (closure incomplete / pack not installed) → keep `enabled` and the
+ *     menu selection visible, but clear the absolute path: nothing is loaded and NOTHING
+ *     is downloaded without user intent (the browser shows the preset in the cloud state;
+ *     re-picking downloads ONLY the missing files).
  *  4. Old config without `relativePath` (the legacy dialog wrote only the absolute path) →
  *     same as (3): path cleared, user re-picks a preset.
  *
- * Pure JVM function — unit-testable without Android.
+ * The closure check (2026-08-12) prevents loading a preset whose dependency files are not
+ * all cached: librashader would fail the chain create and the shader would silently not
+ * apply (e.g. technicolor without its LUT texture). Pure JVM function — unit-testable.
  */
-fun resolveShaderConfig(config: RetroArchShaderConfig, packDir: File?): ResolvedShaderConfig {
+fun resolveShaderConfig(
+    config: RetroArchShaderConfig,
+    packDir: File?,
+    catalog: ShaderCatalog? = null,
+): ResolvedShaderConfig {
     val enabled = config.enabled
     val relative = config.relativePath
     val name = config.presetName
     val path = config.presetPath
     return when {
-        path.isNotEmpty() && File(path).isFile ->
+        path.isNotEmpty() && File(path).isFile && closureComplete(path, packDir, catalog) ->
             ResolvedShaderConfig(enabled, path, name, relative)
-        relative.isNotEmpty() && packDir != null && File(packDir, relative).isFile ->
+        relative.isNotEmpty() && packDir != null && File(packDir, relative).isFile &&
+            closureComplete(File(packDir, relative).absolutePath, packDir, catalog) ->
             ResolvedShaderConfig(enabled, File(packDir, relative).absolutePath, name, relative)
         else ->
             ResolvedShaderConfig(enabled, "", name, relative)
     }
+}
+
+/**
+ * True when the preset at [absPath] has every file of its catalog closure in the cache.
+ * Presets unknown to the catalog (or catalogs absent) fall back to file-existence alone —
+ * the pre-closure behavior.
+ */
+fun closureComplete(absPath: String, packDir: File?, catalog: ShaderCatalog?): Boolean {
+    if (catalog == null || packDir == null) return true
+    val rel = absPath.removePrefix(packDir.absolutePath + File.separator)
+    val preset = catalog.preset(rel) ?: return true
+    return missingFiles(preset, packDir).isEmpty()
 }
 
 

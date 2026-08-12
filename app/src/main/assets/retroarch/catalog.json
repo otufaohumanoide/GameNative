@@ -3,7 +3,7 @@
   "repo": "libretro/slang-shaders",
   "ref": "master",
   "commit": "a7f04a0698908015c6f9e3a3f446b3d17083269c",
-  "generated": "2026-08-12T09:32:15+00:00",
+  "generated": "2026-08-12T17:09:36+00:00",
   "packBytes": 55083977
  },
  "families": [
@@ -109660,10 +109660,12 @@
    "family": "downsample",
    "subfolder": null,
    "passes": 10,
-   "bytes": 40698,
+   "bytes": 71059,
    "deps": [
     "crt/shaders/hyllian/crt-hyllian-pass0.slang",
     "crt/shaders/hyllian/crt-hyllian-pass1.slang",
+    "crt/shaders/hyllian/support/LUT/Sony_Wega_29FA310_no_gamma-v2.png",
+    "crt/shaders/hyllian/support/LUT/Sony_Wega_29FA310_no_gamma.png",
     "denoisers/shaders/bilateral-horizontal.slang",
     "denoisers/shaders/bilateral-vertical.slang",
     "downsample/mixed-res-4x-crt-hyllian.slangp",
@@ -110420,7 +110422,7 @@
    "family": "downsample",
    "subfolder": "mixed-res",
    "passes": 7,
-   "bytes": 14723,
+   "bytes": 59726,
    "deps": [
     "denoisers/shaders/bilateral-horizontal.slang",
     "denoisers/shaders/bilateral-vertical.slang",
@@ -110429,7 +110431,9 @@
     "downsample/shaders/mixed-res/blur-gauss-v.slang",
     "downsample/shaders/mixed-res/coder.slang",
     "downsample/shaders/mixed-res/hires-tagger.slang",
-    "downsample/shaders/mixed-res/multiLUT-modified.slang"
+    "downsample/shaders/mixed-res/multiLUT-modified.slang",
+    "reshade/shaders/LUT/grade-composite.png",
+    "reshade/shaders/LUT/grade-rgb.png"
    ],
    "broken": false
   },
@@ -112334,12 +112338,13 @@
    "family": "film",
    "subfolder": null,
    "passes": 2,
-   "bytes": 49592,
+   "bytes": 54665,
    "deps": [
     "film/resources/film_noise1.png",
     "film/shaders/film_noise.slang",
     "film/technicolor.slangp",
-    "reshade/shaders/LUT/LUT.slang"
+    "reshade/shaders/LUT/LUT.slang",
+    "reshade/shaders/LUT/cmyk-16.png"
    ],
    "broken": false
   },
@@ -118680,7 +118685,7 @@
    "family": "presets",
    "subfolder": "crt-plus-signal",
    "passes": 13,
-   "bytes": 1101831,
+   "bytes": 1102318,
    "deps": [
     "blurs/shaders/royale/blur9fast-horizontal.slang",
     "blurs/shaders/royale/blur9fast-vertical.slang",
@@ -118719,6 +118724,7 @@
     "include/gamma-management.h",
     "include/quad-pixel-communication.h",
     "include/special-functions.h",
+    "pal/resources/nes_lut.png",
     "pal/shaders/pal-r57shell.slang",
     "presets/crt-plus-signal/crt-royale-pal-r57shell.slangp"
    ],
@@ -118867,7 +118873,7 @@
    "family": "presets",
    "subfolder": null,
    "passes": 14,
-   "bytes": 1090151,
+   "bytes": 1135154,
    "deps": [
     "blurs/shaders/royale/blur9fast-horizontal.slang",
     "blurs/shaders/royale/blur9fast-vertical.slang",
@@ -118908,6 +118914,8 @@
     "include/special-functions.h",
     "interpolation/shaders/b-spline-4-taps.slang",
     "presets/crt-royale-downsample.slangp",
+    "reshade/shaders/LUT/grade-composite.png",
+    "reshade/shaders/LUT/grade-rgb.png",
     "reshade/shaders/LUT/multiLUT.slang"
    ],
    "broken": false

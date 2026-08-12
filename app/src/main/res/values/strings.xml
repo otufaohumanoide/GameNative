@@ -1452,6 +1452,7 @@
     <!-- RetroArch shader panel (localized per project policy; EN default) -->
     <string name="retroarch_shaders_title">RetroArch Shaders</string>
     <string name="shader_pick_preset">Pick a preset below</string>
+    <string name="shader_selected_not_downloaded">Not downloaded — re-pick in browser</string>
     <string name="shader_off">Off</string>
     <string name="shader_search">Search presets…</string>
     <string name="shader_clear_search">Clear search</string>

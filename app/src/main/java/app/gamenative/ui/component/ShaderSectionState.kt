@@ -125,7 +125,7 @@ class ShaderSectionState(
     // no longer exists. Resolve it against the installed pack: keep the selection visible,
     // clear unreachable absolute paths, and never touch the network here.
     private val initial = loadShaderConfig(container)
-    private val resolved = resolveShaderConfig(initial, pack.packDir)
+    private val resolved = resolveShaderConfig(initial, pack.packDir, catalog)
     var shaderEnabled by mutableStateOf(resolved.enabled)
     var shaderPresetPath by mutableStateOf(resolved.presetPath)
     var shaderPresetName by mutableStateOf(resolved.presetName)

@@ -683,20 +683,20 @@ fun ShaderBrowserOverlay(
                 }
             }
         }
-    }
 
-    // P3 (spec 2026-08-12): the deepest surface needs its key hints the most — the
-    // browser replaces the whole menu content, so its own footer teaches A (select /
-    // download), B (back) and PS/Guide (close browser). Shown only with a gamepad
-    // connected (shouldShowGamepadUI), like the menu's bar.
-    GamepadActionBar(
-        actions = listOf(
-            GamepadAction(GamepadButton.A, R.string.shader_browser_action_select),
-            GamepadAction(GamepadButton.B, R.string.shader_browser_back),
-            GamepadAction(GamepadButton.GUIDE, R.string.shader_browser_action_close),
-        ),
-        modifier = Modifier.padding(horizontal = 4.dp),
-    )
+        // P3 (spec 2026-08-12): the deepest surface needs its key hints the most — the
+        // browser replaces the whole menu content, so its own footer teaches A (select /
+        // download), B (back) and PS/Guide (close browser). Shown only with a gamepad
+        // connected (shouldShowGamepadUI), like the menu's bar.
+        GamepadActionBar(
+            actions = listOf(
+                GamepadAction(GamepadButton.A, R.string.shader_browser_action_select),
+                GamepadAction(GamepadButton.B, R.string.shader_browser_back),
+                GamepadAction(GamepadButton.GUIDE, R.string.shader_browser_action_close),
+            ),
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+    }
 
     // Metered-network disclosure (spec §4.2.3 adapted to per-preset fetches): shown when
     // downloadPreset signals PackMeteredException — no byte was transferred yet.

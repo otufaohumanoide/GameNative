@@ -51,6 +51,12 @@ KEY_VALUE = re.compile(r'^\s*([A-Za-z0-9_]+)\s*=\s*(?:"([^"]*)"|([^\s]+))\s*$')
 REFERENCE = re.compile(r'^\s*#reference\s+"([^"]+)"')
 INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"')
 SHADER_KEY = re.compile(r'^shader(\d+)$')
+# Dedicated capture for the textures list: upstream files sometimes carry MALFORMED
+# lines that KEY_VALUE cannot represent (unterminated quotes, whitespace after
+# separators, inline comments). The raw remainder of the line is parsed separately
+# with quote/comment tolerance — a token that still contains whitespace is WARNED
+# instead of being silently dropped (2026-08-12: technicolor.slangp regression).
+TEXTURES_LINE = re.compile(r'^\s*textures\s*=\s*(.*)$')
 
 
 def fetch(url: str, dest: str) -> None:
@@ -166,6 +172,7 @@ class Resolver:
         text = self.read(rel)
         entries: list[tuple[str, str]] = []
         references: list[str] = []
+        textures_raw: list[str] = []
         for raw in text.splitlines():
             line = raw.strip()
             if not line:
@@ -176,6 +183,13 @@ class Resolver:
                 continue
             if line.startswith("#"):
                 continue
+            m = TEXTURES_LINE.match(line)
+            if m:
+                # Raw capture: tolerant to malformed texture lists that KEY_VALUE
+                # cannot represent (see TEXTURES_LINE above). Accumulated in case a
+                # preset declares the list more than once (union semantics).
+                textures_raw.append(m.group(1))
+                continue
             m = KEY_VALUE.match(line)
             if m and (m.group(2) or m.group(3)):
                 entries.append((m.group(1), m.group(2) if m.group(2) is not None else m.group(3)))
@@ -184,12 +198,30 @@ class Resolver:
         shader_targets: list[str] = []
         texture_names: set[str] = set()
         texture_targets: list[tuple[str, str]] = []
+        for raw_textures in textures_raw:
+            # Parse the raw textures list with quote/comment tolerance. A token that
+            # still contains whitespace cannot be a valid texture key (KEY_VALUE only
+            # matches [A-Za-z0-9_]+) — warn instead of dropping it silently.
+            raw_value = raw_textures.replace('"', "").split("#", 1)[0].rstrip(";")
+            for token in raw_value.split(";"):
+                token = token.strip()
+                if not token:
+                    continue
+                if any(ch.isspace() for ch in token):
+                    self.warnings.append(f"{rel}: texture name contains whitespace: {token!r}")
+                    continue
+                texture_names.add(token)
         for key, value in entries:
             if SHADER_KEY.match(key):
                 passes += 1
                 shader_targets.append(value)
             elif key == "textures":
-                texture_names.update(n.strip() for n in value.split(";") if n.strip())
+                # Fallback for well-formed values parsed by KEY_VALUE (the raw capture
+                # above handles every `textures` line, including malformed ones).
+                for token in value.replace('"', "").split(";"):
+                    token = token.strip()
+                    if token:
+                        texture_names.add(token)
             elif key in texture_names:
                 texture_targets.append((key, value))
 
