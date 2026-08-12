@@ -1,0 +1,720 @@
+package app.gamenative.ui.component
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import app.gamenative.R
+import app.gamenative.shaders.PackPrechecks
+import app.gamenative.shaders.ShaderPreset
+import app.gamenative.shaders.friendlyName
+import app.gamenative.ui.component.dialog.MessageDialog
+import app.gamenative.ui.theme.PluviaTheme
+import kotlinx.coroutines.delay
+import java.util.Locale
+
+/**
+ * Full-screen shader browser (opened from the QuickMenu effects tab).
+ *
+ * Design (Jony Ive lens — "less, on demand"): the whole libretro/slang-shaders catalog is
+ * browsable instantly from the 599 KB manifest, but NO shader file ships in the APK. The
+ * UI never renders a full family: presets are paginated (12/page + "Show more") and search
+ * is global. The dependency-closure pack (≈53 MB) is downloaded once, on demand, and
+ * extracted through the exact whitelist from the catalog.
+ *
+ * Gamepad: the overlay installs its own bus navigator + key bridge (the QuickMenu's are
+ * gated off while it is open), B/back walks a manual back-stack, PS closes the browser
+ * (not the menu), and every row participates in the focus-index protocol with
+ * per-screen remember-selection.
+ */
+sealed interface ShaderBrowserScreen {
+    data object Home : ShaderBrowserScreen
+    data class Family(val name: String, val subfolder: String? = null) : ShaderBrowserScreen
+
+    fun key(): String = when (this) {
+        Home -> "home"
+        is Family -> if (subfolder == null) "family:$name" else "family:$name:$subfolder"
+    }
+}
+
+/** Pure back-stack for the browser (JVM-testable). */
+class ShaderBrowserNav {
+    private val stack = ArrayDeque<ShaderBrowserScreen>().apply { addLast(ShaderBrowserScreen.Home) }
+    val current: ShaderBrowserScreen get() = stack.last()
+    val atRoot: Boolean get() = stack.size == 1
+    val size: Int get() = stack.size
+
+    fun push(screen: ShaderBrowserScreen) {
+        if (stack.last() != screen) stack.addLast(screen)
+    }
+
+    /** @return true when a screen was popped; false when already at root. */
+    fun pop(): Boolean = if (stack.size > 1) {
+        stack.removeLast()
+        true
+    } else {
+        false
+    }
+}
+
+/** Curated family order for the home list; unknown families sort after, alphabetically. */
+// bezel (1.490 presets — screen bezels, not image effects) is deliberately LAST: most
+// users of this app (PC/Steam games via Wine) will never use it (spec §5.3).
+private val FAMILY_ORDER = listOf(
+    "crt", "handheld", "ntsc", "interpolation", "misc", "hdr", "pal", "scanlines",
+    "film", "cel", "pixel-art-scaling", "sharpen", "anti-aliasing", "edge-smoothing",
+    "motionblur", "vhs", "deblur", "denoisers", "dithering", "blurs", "deinterlacing",
+    "downsample", "warp", "stereoscopic-3d", "anamorphic", "linear", "motion-interpolation",
+    "subframe-bfi", "gpu", "nes_raw_palette", "presets", "root", "bezel",
+)
+
+/** Known family label resources; anything else falls back to title-casing the raw name. */
+private val FAMILY_LABEL_RES = mapOf(
+    "crt" to R.string.shader_cat_crt,
+    "lcd" to R.string.shader_cat_lcd,
+    "interpolation" to R.string.shader_cat_interpolation,
+    "misc" to R.string.shader_cat_misc,
+    "film" to R.string.shader_cat_film,
+    "cel" to R.string.shader_cat_cel,
+    "hdr" to R.string.shader_cat_hdr,
+    "ntsc" to R.string.shader_cat_ntsc,
+    "reshade" to R.string.shader_cat_reshade,
+    "nearest" to R.string.shader_cat_nearest,
+    "bilinear" to R.string.shader_cat_bilinear,
+    "stock" to R.string.shader_cat_stock,
+    "root" to R.string.shader_cat_root,
+)
+
+@Composable
+fun friendlyFamilyName(family: String): String {
+    val resId = FAMILY_LABEL_RES[family]
+    if (resId != null) return stringResource(resId)
+    return family.split('_', '-')
+        .filter { it.isNotEmpty() }
+        .joinToString(" ") { part -> part.replaceFirstChar { c -> c.titlecase() } }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1_000_000 -> String.format(Locale.US, "%.1f MB", bytes / 1_000_000f)
+    bytes >= 1_000 -> String.format(Locale.US, "%.0f KB", bytes / 1_000f)
+    else -> "$bytes B"
+}
+
+private const val PAGE_SIZE = 12
+
+/**
+ * Full-screen browser surface. Only composed while open (the QuickMenu replaces its
+ * content with this when [ShaderBrowserOverlay] is shown), so it needs no `visible` flag
+ * and installs its own gamepad scope without competing with the menu's.
+ */
+@Composable
+fun ShaderBrowserOverlay(
+    state: ShaderSectionState,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val catalog = state.catalog
+    if (catalog == null) {
+        // Manifest missing — should never happen (it ships in assets).
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(stringResource(R.string.shader_catalog_missing))
+        }
+        return
+    }
+
+    // Own gamepad scope: the QuickMenu's navigator/bridge are gated off while open.
+    BusJoystickFocusNavigator(enabled = true)
+    BusGamepadKeyBridge(
+        enabled = true,
+        modeKeyBehavior = ModeKeyBehavior.CloseOverlay,
+        onCloseOverlay = onClose,
+    )
+
+    // Navigation, search and pagination are CACHED (state.browser): reopening the browser
+    // restores the exact level where the user chose a shader (family/subfolder screen,
+    // search query, page, remembered focus row) instead of resetting to Home.
+    val nav = state.browser.nav
+    val query = state.browser.query
+    val pages = state.browser.pages
+    fun pageOf(key: String): Int = pages[key] ?: 0
+
+    // Install/download state lives in ShaderSectionState (hoisted): closing the browser
+    // mid-download does not kill the install, and the requested preset auto-applies when
+    // the pack finishes. Browser navigation also persists there (state.browser) so the
+    // user returns to the same level where the shader was chosen.
+
+    // --- focus protocol: per-screen remembered index + per-row requesters ---
+    val focusIndices = state.browser.focusIndices
+    val requesters = remember { mutableStateMapOf<String, FocusRequester>() }
+    val screenKey = nav.current.key()
+    fun requesterFor(index: Int): FocusRequester =
+        requesters.getOrPut("$screenKey:$index") { FocusRequester() }
+
+    var navTick by remember { mutableIntStateOf(0) }
+    var pendingFocus by remember { mutableIntStateOf(-1) }
+    fun goTo(screen: ShaderBrowserScreen) {
+        nav.push(screen)
+        pendingFocus = 0
+        navTick++
+    }
+
+    fun navigateBack() {
+        // Search is a mode, not a screen: B with an active query clears it first.
+        if (nav.current == ShaderBrowserScreen.Home && query.isNotBlank()) {
+            state.browser.query = ""
+            pendingFocus = 0
+            navTick++
+            return
+        }
+        if (nav.pop()) {
+            pendingFocus = focusIndices[nav.current.key()] ?: 0
+            navTick++
+        } else {
+            onClose()
+        }
+    }
+
+    // Initial focus when the browser opens: restore the remembered row of the restored
+    // screen (the cached navigation state may not be Home), falling back to row 0.
+    LaunchedEffect(Unit) {
+        pendingFocus = focusIndices[nav.current.key()] ?: 0
+        navTick++
+    }
+    LaunchedEffect(navTick) {
+        if (navTick > 0 && pendingFocus >= 0) {
+            val target = pendingFocus
+            var landed = false
+            repeat(3) {
+                try {
+                    requesterFor(target).requestFocus()
+                    landed = true
+                    return@LaunchedEffect
+                } catch (_: Exception) {
+                    delay(80)
+                }
+            }
+            // Target row unavailable (e.g. remembered index for the search field slot
+            // on a different screen) — fall back to the first row rather than losing
+            // focus entirely.
+            if (!landed && target != 0) {
+                try {
+                    requesterFor(0).requestFocus()
+                } catch (_: Exception) {
+                    // Focus guardian in the menu restores focus on next open.
+                }
+            }
+        }
+    }
+
+    BackHandler(enabled = true, onBack = { navigateBack() })
+
+    // --- shared row builder ---
+    @Composable
+    fun BrowserRow(
+        title: String,
+        subtitle: String? = null,
+        selected: Boolean = false,
+        enabled: Boolean = true,
+        leadingIcon: (@Composable () -> Unit)? = null,
+        trailingIcon: (@Composable () -> Unit)? = null,
+        onClick: () -> Unit,
+        index: Int,
+    ) {
+        val interactionSource = remember { MutableInteractionSource() }
+        val isFocused by interactionSource.collectIsFocusedAsState()
+        val accent = PluviaTheme.colors.accentPurple
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 2.dp)
+                .focusRequester(requesterFor(index))
+                .gamepadFocusIndex(index) { focusIndices[screenKey] = it }
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    if (isFocused) {
+                        Brush.horizontalGradient(
+                            colors = listOf(accent.copy(alpha = 0.16f), accent.copy(alpha = 0.08f)),
+                        )
+                    } else {
+                        Brush.horizontalGradient(
+                            colors = listOf(Color.Transparent, Color.Transparent),
+                        )
+                    },
+                )
+                .gamepadSelectable(
+                    selected = selected,
+                    onClick = onClick,
+                    enabled = enabled,
+                    shape = RoundedCornerShape(14.dp),
+                    interactionSource = interactionSource,
+                    accentColor = accent,
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (leadingIcon != null) {
+                Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                    leadingIcon()
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Medium,
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (trailingIcon != null) {
+                Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                    trailingIcon()
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun PresetRow(preset: ShaderPreset, index: Int) {
+        val local = state.pack.isLocal(preset)
+        val broken = preset.broken
+        BrowserRow(
+            title = friendlyName(preset.path),
+            subtitle = listOfNotNull(
+                friendlyFamilyName(preset.family),
+                preset.passes.takeIf { it > 0 }?.let {
+                    pluralStringResource(R.plurals.quick_menu_n_passes, it, it)
+                },
+                formatBytes(preset.bytes).takeIf { preset.bytes > 0 },
+            ).joinToString(" · "),
+            selected = state.isActive(preset),
+            // Cloud rows stay enabled + focusable: selecting one starts the download.
+            enabled = !broken,
+            leadingIcon = when {
+                broken -> {
+                    {
+                        Icon(
+                            Icons.Default.CloudOff,
+                            contentDescription = stringResource(R.string.shader_broken),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                !local -> {
+                    {
+                        Icon(
+                            Icons.Default.Cloud,
+                            contentDescription = stringResource(R.string.shader_not_downloaded),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                else -> null
+            },
+            trailingIcon = {
+                if (state.isActive(preset)) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = PluviaTheme.colors.accentPurple,
+                    )
+                }
+            },
+            onClick = {
+                when {
+                    broken -> Unit
+                    !local -> {
+                        // User intent -> fetch the pack now, and remember what they asked
+                        // for: it is applied automatically once the pack is installed.
+                        state.pendingPreset = preset
+                        state.startInstall()
+                    }
+                    else -> state.applyPreset(preset)
+                }
+            },
+            index = index,
+        )
+    }
+
+    @Composable
+    fun DownloadCta(index: Int) {
+        when {
+            state.packInstalled -> {
+                // Pack present and matching the catalog: a status line that opens the
+                // remove confirmation (spec §4.2.5) — removal never disables the active
+                // shader config, the preset just stops loading.
+                BrowserRow(
+                    title = stringResource(
+                        R.string.shader_pack_installed,
+                        formatBytes(catalog.data.source.packBytes),
+                    ),
+                    subtitle = stringResource(R.string.shader_pack_remove),
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = null,
+                            tint = PluviaTheme.colors.accentPurple,
+                        )
+                    },
+                    onClick = { state.removeConfirm = true },
+                    index = index,
+                )
+            }
+            state.installing -> {
+                BrowserRow(
+                    title = if (state.extracting) {
+                        stringResource(R.string.shader_pack_extracting)
+                    } else {
+                        stringResource(R.string.shader_pack_downloading, (state.progress * 100).toInt())
+                    },
+                    subtitle = stringResource(R.string.shader_pack_cancel),
+                    onClick = { state.cancelInstall() },
+                    index = index,
+                )
+                if (!state.extracting) {
+                    LinearProgressIndicator(
+                        progress = { state.progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                    )
+                }
+            }
+            state.installFailed -> {
+                BrowserRow(
+                    title = if (state.installNoSpace) {
+                        stringResource(R.string.shader_pack_no_space)
+                    } else {
+                        stringResource(R.string.shader_pack_failed)
+                    },
+                    subtitle = if (state.installNoSpace) {
+                        stringResource(
+                            R.string.shader_pack_no_space_hint,
+                            formatBytes(PackPrechecks.requiredFreeBytes(catalog.data.source.packBytes)),
+                        )
+                    } else {
+                        stringResource(R.string.shader_pack_retry)
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = null,
+                            tint = PluviaTheme.colors.accentDanger,
+                        )
+                    },
+                    onClick = { state.startInstall() },
+                    index = index,
+                )
+            }
+            else -> {
+                val updating = state.packUpdateAvailable
+                BrowserRow(
+                    title = stringResource(
+                        if (updating) R.string.shader_pack_update else R.string.shader_pack_download,
+                        formatBytes(catalog.data.source.packBytes),
+                    ),
+                    subtitle = stringResource(R.string.shader_pack_not_installed),
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = null,
+                            tint = PluviaTheme.colors.accentPurple,
+                        )
+                    },
+                    onClick = { state.startInstall() },
+                    index = index,
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun LoadMoreRow(remaining: Int, index: Int, onLoadMore: () -> Unit) {
+        if (remaining <= 0) return
+        BrowserRow(
+            title = stringResource(R.string.shader_load_more, remaining),
+            onClick = onLoadMore,
+            index = index,
+        )
+    }
+
+    // --- content per screen ---
+    val scrollState = rememberScrollState()
+    var focusSlot = 0
+    fun nextSlot(): Int = focusSlot++
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
+            .statusBarsPadding()
+            .gamepadBackHandler(::navigateBack),
+    ) {
+        // Header: back chip + title.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 20.dp, top = 12.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (!nav.atRoot) {
+                val backIndex = nextSlot()
+                val backInteraction = remember { MutableInteractionSource() }
+                val backFocused by backInteraction.collectIsFocusedAsState()
+                Row(
+                    modifier = Modifier
+                        .focusRequester(requesterFor(backIndex))
+                        .gamepadFocusIndex(backIndex) { focusIndices[screenKey] = it }
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            if (backFocused) {
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        PluviaTheme.colors.accentPurple.copy(alpha = 0.14f),
+                                        PluviaTheme.colors.accentPurple.copy(alpha = 0.07f),
+                                    ),
+                                )
+                            } else {
+                                Brush.horizontalGradient(
+                                    colors = listOf(Color.Transparent, Color.Transparent),
+                                )
+                            },
+                        )
+                        .gamepadSelectable(
+                            selected = false,
+                            onClick = ::navigateBack,
+                            shape = RoundedCornerShape(10.dp),
+                            interactionSource = backInteraction,
+                        )
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.shader_browser_back),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.shader_browser_back),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+            Text(
+                text = when (val screen = nav.current) {
+                    ShaderBrowserScreen.Home -> stringResource(R.string.shader_browser_title)
+                    is ShaderBrowserScreen.Family ->
+                        if (screen.subfolder == null) {
+                            friendlyFamilyName(screen.name)
+                        } else {
+                            friendlyName(screen.subfolder)
+                        }
+                },
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(vertical = 8.dp),
+        ) {
+            when (val screen = nav.current) {
+                ShaderBrowserScreen.Home -> {
+                    // Search-first: the field is the first focusable row of the surface.
+                    GamepadSearchField(
+                        query = query,
+                        onQueryChange = { state.browser.query = it },
+                        placeholder = stringResource(R.string.shader_search),
+                        focusIndex = nextSlot(),
+                        onFocusIndexChanged = { focusIndices["home"] = it },
+                        focusRequester = requesterFor(0),
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (query.isNotBlank()) {
+                        val results = catalog.search(query)
+                        if (results.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.shader_no_results, query.trim()),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            )
+                        } else {
+                            val page = pageOf("search")
+                            val slice = catalog.page(results, page, PAGE_SIZE)
+                            slice.forEach { PresetRow(it, nextSlot()) }
+                            LoadMoreRow(results.size - (page + 1) * PAGE_SIZE, nextSlot()) {
+                                pages["search"] = page + 1
+                            }
+                        }
+                    } else {
+                        DownloadCta(nextSlot())
+
+                        val recents = state.recents.list()
+                            .mapNotNull { catalog.preset(it) }
+                            .filter { !it.broken }
+                        if (recents.isNotEmpty()) {
+                            SectionHeader(stringResource(R.string.shader_recents))
+                            recents.forEach { PresetRow(it, nextSlot()) }
+                            Spacer(modifier = Modifier.height(6.dp))
+                        }
+
+                        val ordered = FAMILY_ORDER + catalog.families.map { it.name }
+                            .filter { it !in FAMILY_ORDER }
+                            .sorted()
+                        SectionHeader(stringResource(R.string.shader_browse))
+                        ordered.forEach { name ->
+                            val family = catalog.families.firstOrNull { it.name == name } ?: return@forEach
+                            BrowserRow(
+                                title = friendlyFamilyName(name),
+                                subtitle = pluralStringResource(
+                                    R.plurals.quick_menu_n_presets,
+                                    family.count,
+                                    family.count,
+                                ),
+                                onClick = { goTo(ShaderBrowserScreen.Family(name)) },
+                                index = nextSlot(),
+                            )
+                        }
+                    }
+                }
+
+                is ShaderBrowserScreen.Family -> {
+                    DownloadCta(nextSlot())
+                    val subfolders = if (screen.subfolder == null) catalog.subfolders(screen.name) else emptyList()
+                    val showSubfolders = subfolders.size > 1
+                    if (showSubfolders) {
+                        SectionHeader(stringResource(R.string.shader_family_sections))
+                        subfolders.forEach { sub ->
+                            val count = catalog.presetsIn(screen.name, sub).size
+                            BrowserRow(
+                                title = friendlyName(sub),
+                                subtitle = pluralStringResource(R.plurals.quick_menu_n_presets, count, count),
+                                onClick = { goTo(ShaderBrowserScreen.Family(screen.name, sub)) },
+                                index = nextSlot(),
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                    val familyKey = screen.key()
+                    val page = pageOf(familyKey)
+                    val items = catalog.presetsIn(screen.name, screen.subfolder)
+                    val slice = catalog.page(items, page, PAGE_SIZE)
+                    slice.forEach { PresetRow(it, nextSlot()) }
+                    LoadMoreRow(items.size - (page + 1) * PAGE_SIZE, nextSlot()) {
+                        pages[familyKey] = page + 1
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Confirmations (spec §4.2.3 metered disclosure, §4.2.5 pack removal) ──
+    MessageDialog(
+        visible = state.meteredConfirm,
+        onDismissRequest = { state.meteredConfirm = false },
+        onDismissClick = { state.meteredConfirm = false },
+        onConfirmClick = {
+            state.meteredConfirm = false
+            state.startInstall(allowMetered = true)
+        },
+        confirmBtnText = stringResource(R.string.shader_pack_download_confirm),
+        dismissBtnText = stringResource(R.string.cancel),
+        title = stringResource(R.string.shader_pack_metered_title),
+        message = stringResource(
+            R.string.shader_pack_metered_body,
+            formatBytes(catalog.data.source.packBytes),
+        ),
+    )
+    MessageDialog(
+        visible = state.removeConfirm,
+        onDismissRequest = { state.removeConfirm = false },
+        onDismissClick = { state.removeConfirm = false },
+        onConfirmClick = {
+            state.removeConfirm = false
+            state.clearPack()
+        },
+        confirmBtnText = stringResource(R.string.shader_pack_remove_confirm),
+        dismissBtnText = stringResource(R.string.cancel),
+        title = stringResource(R.string.shader_pack_remove_title),
+        message = stringResource(R.string.shader_pack_remove_body),
+    )
+}
+
+@Composable
+private fun SectionHeader(title: String) {
+    Text(
+        text = title.uppercase(),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 2.dp),
+    )
+}

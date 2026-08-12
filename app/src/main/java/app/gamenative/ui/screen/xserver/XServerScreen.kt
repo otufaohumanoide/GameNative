@@ -108,7 +108,13 @@ import app.gamenative.service.AchievementWatcher
 import app.gamenative.service.SteamService
 import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
-import app.gamenative.ui.component.dialog.loadShaderConfig
+import app.gamenative.shaders.ShaderCatalog
+import app.gamenative.shaders.ShaderLegacyMigration
+import app.gamenative.shaders.ShaderPack
+import app.gamenative.shaders.loadShaderConfig
+import app.gamenative.shaders.persistShaderConfig
+import app.gamenative.shaders.resolveShaderConfig
+import com.winlator.renderer.RetroArchShaderConfig
 import app.gamenative.ui.component.BusGamepadKeyBridge
 import app.gamenative.ui.component.BusJoystickFocusNavigator
 import app.gamenative.ui.component.QuickMenu
@@ -638,6 +644,10 @@ fun XServerScreen(
     }
 
     LaunchedEffect(xServerView?.renderer) {
+        // One-time best-effort cleanup of the old embedded-shader trees (spec §6):
+        // `retroarch` / `retroarch_presets` were materialized by the removed
+        // ShaderImporter and no longer exist in the app — frees ~2.4 MB user storage.
+        ShaderLegacyMigration.cleanupOnce(context)
         val screenEffectsConfig = loadScreenEffectsConfig(container)
         when (val renderer = xServerView?.renderer) {
             is VulkanRenderer -> {
@@ -646,9 +656,29 @@ fun XServerScreen(
                 // Without this the shader stays "selected" in the menu but is never
                 // sent to the renderer, so the game opens with the shader off until
                 // the user toggles it in the effects panel.
+                //
+                // §6 migration rule: configs from the old embedded system may point at
+                // `.../retroarch_presets/...` paths that no longer exist. Resolve against
+                // the on-demand pack: absolute path exists → load; gone but relative path
+                // resolves inside the installed pack → re-resolve + persist the new
+                // absolute path + load; nothing resolves (pack not installed) → load
+                // nothing, never download automatically.
+                val catalog = ShaderCatalog.load(context)
+                val pack = ShaderPack(context, catalog?.data?.source?.commit ?: "")
+                val packDir = pack.packDir.takeIf { pack.isInstalled() }
                 val shaderConfig = loadShaderConfig(container)
-                if (shaderConfig.enabled && shaderConfig.presetPath.isNotEmpty()) {
-                    renderer.loadRetroArchShaderPreset(shaderConfig.presetPath)
+                val resolved = resolveShaderConfig(shaderConfig, packDir)
+                if (resolved.presetPath != shaderConfig.presetPath) {
+                    persistShaderConfig(
+                        container,
+                        RetroArchShaderConfig(
+                            resolved.enabled, resolved.presetPath, resolved.presetName, "", resolved.relativePath,
+                        ),
+                    )
+                    container?.saveData()
+                }
+                if (resolved.enabled && resolved.presetPath.isNotEmpty()) {
+                    renderer.loadRetroArchShaderPreset(resolved.presetPath)
                     renderer.setRetroArchShaderEnabled(true)
                 }
             }

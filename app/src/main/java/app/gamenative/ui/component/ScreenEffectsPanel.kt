@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
@@ -76,14 +77,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.SoftwareKeyboardControllerCompat
 import app.gamenative.R
-import kotlinx.coroutines.Job
-import app.gamenative.ui.component.dialog.categoryOf
-import app.gamenative.ui.component.dialog.ensureBundledShaders
-import app.gamenative.ui.component.dialog.friendlyCategoryName
-import app.gamenative.ui.component.dialog.friendlyName
-import app.gamenative.ui.component.dialog.resolvePassCount
-import app.gamenative.ui.component.dialog.loadShaderConfig
-import app.gamenative.ui.component.dialog.persistShaderConfig
 import app.gamenative.ui.theme.PluviaTheme
 import app.gamenative.ui.util.ScreenEffectsConfig
 import app.gamenative.ui.util.applyScreenEffectsConfig
@@ -93,8 +86,6 @@ import app.gamenative.utils.BrightnessManager
 import com.winlator.container.Container
 import timber.log.Timber
 import com.winlator.renderer.GLRenderer
-import com.winlator.renderer.RetroArchShaderConfig
-import com.winlator.renderer.ShaderImporter
 import com.winlator.renderer.VulkanRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -512,6 +503,8 @@ fun ScreenEffectsTabContent(
     initialFocusIndex: Int = 0,
     onFocusIndexChanged: (Int) -> Unit = {},
     scrollState: ScrollState = rememberScrollState(),
+    shaderSection: ShaderSectionState? = null,
+    onOpenShaderBrowser: () -> Unit = {},
 ) {
     val initialConfig = remember(renderer, container) { loadScreenEffectsConfig(container) }
 
@@ -584,104 +577,9 @@ fun ScreenEffectsTabContent(
         container?.saveData()
     }
 
-    val context = LocalContext.current
-    val importer = remember { ShaderImporter(context) }
-    val shaderScope = rememberCoroutineScope()
-
-    val initialShaderConfig = remember(renderer, container) { loadShaderConfig(container) }
-    var shaderEnabled by remember(renderer, container) {
-        mutableStateOf(initialShaderConfig.enabled)
-    }
-    var shaderPresetPath by remember(renderer, container) {
-        mutableStateOf(initialShaderConfig.presetPath)
-    }
-    var shaderPresetName by remember(renderer, container) {
-        mutableStateOf(initialShaderConfig.presetName)
-    }
-    var shaderRelativePath by remember(renderer, container) {
-        mutableStateOf(initialShaderConfig.relativePath)
-    }
-    var shaderOptions by remember(renderer, container) {
-        mutableStateOf<List<Map.Entry<String, String>>>(emptyList())
-    }
-    var shaderQuery by remember(renderer, container) { mutableStateOf("") }
+    // RetroArch shader state is hoisted into the QuickMenu (shared with the full-screen
+    // browser); only the renderer-native effects state lives here.
     var nativeEffectsExpanded by remember(renderer, container) { mutableStateOf(false) }
-    // Shader categories are closed by default on every menu open (spec
-    // 2026-08-10-shader-categories-collapsed-default-design): expandedCategories starts
-    // empty, and the whole panel is disposed when the QuickMenu closes, so each open
-    // starts with every category collapsed.
-    var expandedCategories by remember(renderer, container) { mutableStateOf(setOf<String>()) }
-    var shaderPassCounts by remember(renderer, container) {
-        mutableStateOf<Map<String, Int>>(emptyMap())
-    }
-
-    LaunchedEffect(Unit) {
-        val presets = withContext(Dispatchers.IO) {
-            ensureBundledShaders(context)
-            importer.listBundledPresets()
-        }
-        shaderOptions = presets
-        shaderPassCounts = withContext(Dispatchers.IO) {
-            val bundledDir = importer.bundledPresetsDir
-            presets.associate { entry -> entry.key to resolvePassCount(entry.key, bundledDir) }
-        }
-    }
-
-    fun persistShaderState(enabled: Boolean, path: String, name: String, relative: String) {
-        persistShaderConfig(container, RetroArchShaderConfig(enabled, path, name, "", relative))
-        container?.saveData()
-    }
-
-    fun disableShaders() {
-        shaderEnabled = false
-        renderer.setRetroArchShaderEnabled(false)
-        persistShaderState(false, "", "", "")
-    }
-
-    fun toggleShaders() {
-        if (shaderEnabled) {
-            disableShaders()
-        } else {
-            shaderEnabled = true
-            if (shaderRelativePath.isNotEmpty() && shaderPresetPath.isNotEmpty()) {
-                renderer.loadRetroArchShaderPreset(shaderPresetPath)
-                renderer.setRetroArchShaderEnabled(true)
-                persistShaderState(true, shaderPresetPath, shaderPresetName, shaderRelativePath)
-            } else {
-                renderer.setRetroArchShaderEnabled(true)
-                persistShaderState(true, "", "", "")
-            }
-        }
-    }
-
-    fun applyShaderPreset(entry: Map.Entry<String, String>) {
-        // Per-shader toggle-off (spec 2026-08-11): selecting the SAME shader that is
-        // already active clears ONLY that preset — the frame renders unshaded, but the
-        // RetroArch shader system stays ENABLED (the main toggle is the only on/off for
-        // the whole system; the redundant "No filter" row was removed).
-        if (shaderEnabled && entry.key == shaderRelativePath) {
-            shaderPresetPath = ""
-            shaderPresetName = ""
-            shaderRelativePath = ""
-            renderer.clearRetroArchShaderPreset()
-            persistShaderState(true, "", "", "")
-            return
-        }
-        shaderScope.launch(Dispatchers.IO) {
-            val result = importer.importBundledPreset(entry.key)
-            withContext(Dispatchers.Main) {
-                if (result.success) {
-                    shaderPresetPath = result.presetPath
-                    shaderPresetName = entry.value
-                    shaderRelativePath = entry.key
-                    shaderEnabled = true
-                    renderer.loadRetroArchShaderPreset(result.presetPath)
-                    renderer.setRetroArchShaderEnabled(true)
-                    persistShaderState(true, result.presetPath, entry.value, entry.key)
-                }
-            }
-        }
-    }
 
     fun resetEffects() {
         scalingMode = ScreenEffectsConfig.SCALING_MODE_NONE
@@ -707,256 +605,30 @@ fun ScreenEffectsTabContent(
         fun nextFocusSlot(): Int = focusSlot++
 
         // ═══ RETROARCH SHADERS — priority section (spec 2026-08-08) ═══
-        ScreenEffectToggleRow(
-            title = stringResource(R.string.retroarch_shaders_title),
-            focusRequester = firstItemFocusRequester,
-            focusIndex = nextFocusSlot(),
-            onFocusIndexChanged = onFocusIndexChanged,
-            subtitle = when {
-                shaderEnabled && shaderPresetName.isNotEmpty() -> shaderPresetName
-                shaderEnabled -> stringResource(R.string.shader_pick_preset)
-                else -> stringResource(R.string.shader_off)
-            },
-            enabled = shaderEnabled,
-            onToggle = { toggleShaders() },
-        )
-
-        if (shaderEnabled) {
-            if (shaderOptions.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.shader_loading),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        if (shaderSection != null) {
+            ScreenEffectToggleRow(
+                title = stringResource(R.string.retroarch_shaders_title),
+                focusRequester = firstItemFocusRequester,
+                focusIndex = nextFocusSlot(),
+                onFocusIndexChanged = onFocusIndexChanged,
+                subtitle = when {
+                    shaderSection.shaderEnabled && shaderSection.shaderPresetName.isNotEmpty() -> shaderSection.shaderPresetName
+                    shaderSection.shaderEnabled -> stringResource(R.string.shader_pick_preset)
+                    else -> stringResource(R.string.shader_off)
+                },
+                enabled = shaderSection.shaderEnabled,
+                onToggle = { shaderSection.toggleShaders() },
+            )
+            if (shaderSection.shaderEnabled) {
+                // Full-screen browser: search-first, paginated, on-demand pack download
+                // (nothing ships pre-installed — spec 2026-08-11-shader-browser-design).
+                ShaderBrowseRow(
+                    title = stringResource(R.string.shader_browse),
+                    subtitle = stringResource(R.string.shader_browse_subtitle),
+                    focusIndex = nextFocusSlot(),
+                    onFocusIndexChanged = onFocusIndexChanged,
+                    onClick = onOpenShaderBrowser,
                 )
-            } else {
-                Spacer(modifier = Modifier.height(4.dp))
-                // The search field is focusable too — it consumes one focus slot. G4
-                // (spec 2026-08-10, §3.3): the field must also REPORT its index when
-                // focused, or the remembered slot diverges from the real focus. The
-                // framework's gamepadFocusIndex keys on isFocused, which never fires for
-                // a text field (the internal CoreTextField node owns focus), so track
-                // hasFocus here instead.
-                val searchFieldSlot = nextFocusSlot()
-                var searchFieldFocused by remember { mutableStateOf(false) }
-                // UX practice (spec 2026-08-10-search-field-ime-explicit-design): the soft
-                // keyboard opens ONLY on explicit intent — X (A / DPAD_CENTER / ENTER) opens
-                // it, B closes it — never because gamepad navigation (stick/hat, menu-open
-                // walk-down, guardian restore) landed on the field. The old "hide once on
-                // focus" lost the race against the field's async startInputMethod, so the
-                // keyboard kept popping up; SoftwareKeyboardControllerCompat drives the
-                // InputMethodManager directly and works outside an active input session.
-                val view = LocalView.current
-                val keyboard = remember { SoftwareKeyboardControllerCompat(view) }
-                val density = LocalDensity.current
-                // Recomposes whenever the IME insets change: WindowInsets.ime is backed by
-                // snapshot state, so this boolean stays live without an explicit collector.
-                val imeVisible = WindowInsets.ime.getBottom(density) > 0
-                // Set while the user explicitly asked for the IME; stops the suppression
-                // loop from hiding it again. Reset whenever the IME closes for any reason,
-                // so X always opens it.
-                var searchImeWanted by remember { mutableStateOf(false) }
-                // Continuous suppression (spec 2026-08-11): the field's async
-                // startInputMethod can open the IME hundreds of ms — or seconds on slow
-                // devices — after focus lands, so a short bounded retry still lets the
-                // keyboard flash while the player is navigating. Keep re-hiding for as
-                // long as the field is focused WITHOUT explicit intent; the X and touch
-                // handlers cancel this job before showing, so there is no hide-after-show
-                // race.
-                val imeScope = rememberCoroutineScope()
-                var suppressImeJob by remember { mutableStateOf<Job?>(null) }
-                fun startImeSuppression() {
-                    suppressImeJob?.cancel()
-                    suppressImeJob = imeScope.launch {
-                        keyboard.hide()
-                        while (searchFieldFocused && !searchImeWanted) {
-                            delay(120L)
-                            if (!searchFieldFocused || searchImeWanted) break
-                            keyboard.hide()
-                        }
-                    }
-                }
-                fun stopImeSuppression() {
-                    suppressImeJob?.cancel()
-                    suppressImeJob = null
-                }
-                LaunchedEffect(searchFieldFocused) {
-                    if (searchFieldFocused) {
-                        Timber.d("QMFocus: row %d focused (search field)", searchFieldSlot)
-                        onFocusIndexChanged(searchFieldSlot)
-                        if (!searchImeWanted && SearchFieldImeLogic.arrivedViaGamepad(
-                                now = SystemClock.uptimeMillis(),
-                                lastMoveAt = GamepadNavigationClock.lastMoveAt,
-                                windowMs = 400L,
-                            )
-                        ) {
-                            Timber.d("QMFocus: search field focused via gamepad - suppressing IME")
-                            startImeSuppression()
-                        }
-                    } else {
-                        stopImeSuppression()
-                        searchImeWanted = false
-                    }
-                }
-                LaunchedEffect(imeVisible) {
-                    if (!imeVisible) searchImeWanted = false
-                }
-                // X opens the IME, B closes it while it is up (consumed — the menu must not
-                // close; B with the IME closed propagates as the usual hierarchical back).
-                val searchImeKeyModifier = Modifier.onPreviewKeyEvent { keyEvent ->
-                    when (
-                        SearchFieldImeLogic.onKey(
-                            keyCode = keyEvent.nativeKeyEvent.keyCode,
-                            action = keyEvent.nativeKeyEvent.action,
-                            repeatCount = keyEvent.nativeKeyEvent.repeatCount,
-                            isFocused = searchFieldFocused,
-                            isImeVisible = imeVisible,
-                        )
-                    ) {
-                        SearchFieldImeLogic.KeyAction.OpenIme -> {
-                            searchImeWanted = true
-                            stopImeSuppression()
-                            keyboard.show()
-                            true
-                        }
-                        SearchFieldImeLogic.KeyAction.CloseIme -> {
-                            searchImeWanted = false
-                            keyboard.hide()
-                            true
-                        }
-                        SearchFieldImeLogic.KeyAction.Propagate -> false
-                    }
-                }
-                // Focus feedback for the search field (spec 2026-08-10-effects-tab-focus-visual-design,
-                // §3.4): the field is reachable via stick, so wrap it in a tinted container and
-                // color the border with the QuickMenu accent while it has focus (the IME may be
-                // suppressed on gamepad navigation, but the visual must still show focus).
-                val searchFieldAccent = PluviaTheme.colors.accentPurple
-                Box(
-                    modifier = Modifier
-                        // Touch on the field is explicit intent (spec 2026-08-11): the
-                        // continuous suppression must stop so a tap still opens the keyboard.
-                        // Observed without consuming — the field's own tap handling (focus +
-                        // startInputMethod) keeps working underneath.
-                        .pointerInput(searchFieldFocused) {
-                            awaitEachGesture {
-                                awaitFirstDown(requireUnconsumed = false)
-                                if (searchFieldFocused) {
-                                    searchImeWanted = true
-                                    stopImeSuppression()
-                                }
-                            }
-                        }
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(
-                            if (searchFieldFocused) {
-                                Brush.horizontalGradient(
-                                    colors = listOf(
-                                        searchFieldAccent.copy(alpha = 0.16f),
-                                        searchFieldAccent.copy(alpha = 0.08f),
-                                    ),
-                                )
-                            } else {
-                                Brush.horizontalGradient(
-                                    colors = listOf(Color.Transparent, Color.Transparent),
-                                )
-                            },
-                        ),
-                ) {
-                    NoExtractOutlinedTextField(
-                        value = shaderQuery,
-                        onValueChange = { shaderQuery = it },
-                        modifier = searchImeKeyModifier
-                            .fillMaxWidth()
-                            .onFocusChanged { searchFieldFocused = it.hasFocus },
-                        placeholder = { Text(stringResource(R.string.shader_search)) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        trailingIcon = {
-                            if (shaderQuery.isNotEmpty()) {
-                                IconButton(onClick = { shaderQuery = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.shader_clear_search))
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = searchFieldAccent,
-                        ),
-                    )
-                }
-                Spacer(modifier = Modifier.height(6.dp))
-
-                val query = shaderQuery.trim().lowercase()
-                val filtered = if (query.isEmpty()) {
-                    shaderOptions
-                } else {
-                    shaderOptions.filter { entry ->
-                        friendlyName(entry.key).lowercase().contains(query) ||
-                            categoryOf(entry.key)?.lowercase()?.contains(query) == true ||
-                            entry.key.lowercase().contains(query)
-                    }
-                }
-                if (query.isEmpty()) {
-                    // Grouped by family (folder), collapsible sections.
-                    val groups = filtered.groupBy { categoryOf(it.key) ?: "outros" }
-                    val ordered = shaderCategoryOrder + (groups.keys - shaderCategoryOrder.toSet()).sorted()
-                    ordered.filter { groups.containsKey(it) }.forEach { cat ->
-                        val items = groups.getValue(cat)
-                        val expanded = cat in expandedCategories
-                        ShaderCategoryHeader(
-                            label = friendlyCategoryName(cat),
-                            count = items.size,
-                            collapsed = !expanded,
-                            onClick = {
-                                expandedCategories = if (expanded) {
-                                    expandedCategories - cat
-                                } else {
-                                    expandedCategories + cat
-                                }
-                            },
-                            focusIndex = nextFocusSlot(),
-                            onFocusIndexChanged = onFocusIndexChanged,
-                        )
-                        if (expanded) {
-                            items.forEach { entry ->
-                                ShaderPresetRow(
-                                    title = friendlyName(entry.key),
-                                    subtitle = passCountSubtitle(entry.key, cat, shaderPassCounts),
-                                    selected = shaderEnabled && entry.key == shaderRelativePath,
-                                    onClick = { applyShaderPreset(entry) },
-                                    focusIndex = nextFocusSlot(),
-                                    onFocusIndexChanged = onFocusIndexChanged,
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    if (filtered.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.shader_no_match, shaderQuery.trim()),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                    } else {
-                        filtered.forEach { entry ->
-                            ShaderPresetRow(
-                                title = friendlyName(entry.key),
-                                subtitle = passCountSubtitle(
-                                    entry.key,
-                                    categoryOf(entry.key) ?: "outros",
-                                    shaderPassCounts,
-                                ),
-                                selected = shaderEnabled && entry.key == shaderRelativePath,
-                                onClick = { applyShaderPreset(entry) },
-                                focusIndex = nextFocusSlot(),
-                                onFocusIndexChanged = onFocusIndexChanged,
-                            )
-                        }
-                    }
-                }
             }
         }
 
@@ -1439,24 +1111,78 @@ private fun ScreenEffectToggleRow(
     }
 }
 
-/** Display order for the bundled preset families; unknown categories sort after these. */
-private val shaderCategoryOrder = listOf(
-    "crt", "lcd", "interpolation", "misc", "film", "cel", "hdr", "ntsc", "reshade", "nearest",
-    "bilinear", "stock", "outros",
-)
-
-/** Row subtitle for a preset: friendly category + pass count when known (e.g. "CRT · 4 passes"). */
+/** Entry row that opens the full-screen shader browser (chevron, no switch). */
 @Composable
-private fun passCountSubtitle(
-    entryKey: String,
-    category: String,
-    passCounts: Map<String, Int>,
-): String? {
-    val parts = mutableListOf(friendlyCategoryName(category))
-    passCounts[entryKey]?.takeIf { it > 0 }?.let { n ->
-        parts += pluralStringResource(R.plurals.quick_menu_n_passes, n, n)
+private fun ShaderBrowseRow(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    focusIndex: Int? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val accentColor = PluviaTheme.colors.accentPurple
+
+    Row(
+        modifier = Modifier
+            .then(
+                if (focusIndex != null && onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
+                } else {
+                    Modifier
+                }
+            )
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                if (isFocused) {
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            accentColor.copy(alpha = 0.16f),
+                            accentColor.copy(alpha = 0.08f),
+                        ),
+                    )
+                } else {
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f),
+                        ),
+                    )
+                },
+            )
+            .gamepadSelectable(
+                selected = false,
+                onClick = onClick,
+                shape = RoundedCornerShape(14.dp),
+                interactionSource = interactionSource,
+                accentColor = accentColor,
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Medium,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = if (isFocused) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
-    return parts.joinToString(" · ").ifBlank { null }
 }
 
 /** Collapsible section header for renderer-native effects (FSR, scaling, FXAA, brightness…).
@@ -1529,174 +1255,6 @@ private fun NativeEffectsHeader(
                 text = stringResource(R.string.shader_renderer_native_subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ShaderCategoryHeader(
-    label: String,
-    count: Int,
-    collapsed: Boolean,
-    onClick: () -> Unit,
-    focusIndex: Int? = null,
-    onFocusIndexChanged: ((Int) -> Unit)? = null,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(
-                if (isFocused) {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            PluviaTheme.colors.accentPurple.copy(alpha = 0.14f),
-                            PluviaTheme.colors.accentPurple.copy(alpha = 0.07f),
-                        ),
-                    )
-                } else {
-                    Brush.horizontalGradient(
-                        colors = listOf(Color.Transparent, Color.Transparent),
-                    )
-                },
-            )
-            .then(
-                if (focusIndex != null && onFocusIndexChanged != null) {
-                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
-                } else {
-                    Modifier
-                }
-            )
-            .gamepadSelectable(
-                selected = false,
-                onClick = onClick,
-                shape = RoundedCornerShape(10.dp),
-                interactionSource = interactionSource,
-            )
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(
-            imageVector = if (collapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (isFocused) {
-                PluviaTheme.colors.accentPurple
-            } else {
-                MaterialTheme.colorScheme.primary
-            },
-            fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = count.toString(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun ShaderPresetRow(
-    title: String,
-    subtitle: String?,
-    selected: Boolean,
-    onClick: () -> Unit,
-    focusIndex: Int? = null,
-    onFocusIndexChanged: ((Int) -> Unit)? = null,
-) {
-    // One accent for the whole row (focus + selection): the QuickMenu navigation color.
-    // The shader list must not introduce blue tones — it would diverge from the project's
-    // original proposal (spec 2026-08-10-effects-tab-focus-visual-design).
-    val accentColor = PluviaTheme.colors.accentPurple
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-
-    Row(
-        modifier = Modifier
-            .padding(horizontal = 8.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(
-                when {
-                    isFocused -> Brush.horizontalGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.16f),
-                            accentColor.copy(alpha = 0.08f),
-                        ),
-                    )
-                    selected -> Brush.horizontalGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.15f),
-                            accentColor.copy(alpha = 0.15f),
-                        ),
-                    )
-                    else -> Brush.horizontalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-                        ),
-                    )
-                },
-            )
-            .then(
-                if (focusIndex != null && onFocusIndexChanged != null) {
-                    Modifier.gamepadFocusIndex(focusIndex, onFocusIndexChanged)
-                } else {
-                    Modifier
-                }
-            )
-            .gamepadSelectable(
-                selected = selected,
-                onClick = onClick,
-                shape = RoundedCornerShape(14.dp),
-                interactionSource = interactionSource,
-                accentColor = accentColor,
-            )
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (selected || isFocused) {
-                    accentColor
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-                fontWeight = if (selected || isFocused) {
-                    FontWeight.SemiBold
-                } else {
-                    FontWeight.Medium
-                },
-            )
-            if (!subtitle.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        if (selected) {
-            Icon(
-                imageVector = Icons.Default.Check,
-                contentDescription = null,
-                tint = accentColor,
-                modifier = Modifier.size(20.dp),
             )
         }
     }

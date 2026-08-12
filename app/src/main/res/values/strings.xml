@@ -263,6 +263,10 @@
         <item quantity="one">%d pass</item>
         <item quantity="other">%d passes</item>
     </plurals>
+    <plurals name="quick_menu_n_presets">
+        <item quantity="one">%d preset</item>
+        <item quantity="other">%d presets</item>
+    </plurals>
     <string name="action_back">Back</string>
     <string name="action_switch_tab">Tab</string>
     <string name="action_page_scroll">Page</string>
@@ -1468,6 +1472,37 @@
     <string name="shader_cat_bilinear">Scaling</string>
     <string name="shader_cat_stock">Stock</string>
     <string name="shader_cat_other">Other</string>
+    <!-- Full-screen shader browser (spec 2026-08-11-shader-browser-design) -->
+    <string name="shader_browser_title">Shaders</string>
+    <string name="shader_browser_back">Back</string>
+    <string name="shader_browse">Browse shaders</string>
+    <string name="shader_browse_subtitle">Explore the full catalog — nothing is pre-installed</string>
+    <string name="shader_pack_download">Download shader pack (%1$s)</string>
+    <string name="shader_pack_downloading">Downloading shaders… %1$d%%</string>
+    <string name="shader_pack_extracting">Installing shaders…</string>
+    <string name="shader_pack_failed">Download failed</string>
+    <string name="shader_pack_retry">Retry download</string>
+    <string name="shader_pack_not_installed">Shaders are not pre-installed — download once, then pick</string>
+    <string name="shader_load_more">Show more (%1$d more)</string>
+    <string name="shader_no_results">No shaders match "%1$s"</string>
+    <string name="shader_recents">Recently used</string>
+    <string name="shader_not_downloaded">Not downloaded</string>
+    <string name="shader_broken">Unavailable</string>
+    <string name="shader_cat_root">Essentials</string>
+    <string name="shader_family_sections">Sections</string>
+    <string name="shader_catalog_missing">Shader catalog unavailable</string>
+    <string name="shader_pack_installed">Shader pack installed · %1$s</string>
+    <string name="shader_pack_remove">Remove pack</string>
+    <string name="shader_pack_remove_title">Remove shader pack?</string>
+    <string name="shader_pack_remove_body">All downloaded shader files will be deleted and need to be downloaded again. The selected shader stays configured but stops rendering.</string>
+    <string name="shader_pack_remove_confirm">Remove</string>
+    <string name="shader_pack_update">Update shader pack (%1$s)</string>
+    <string name="shader_pack_cancel">Cancel download</string>
+    <string name="shader_pack_metered_title">Download on mobile data?</string>
+    <string name="shader_pack_metered_body">You are on a metered connection. Download the shader pack (%1$s)?</string>
+    <string name="shader_pack_download_confirm">Download</string>
+    <string name="shader_pack_no_space">Not enough free space</string>
+    <string name="shader_pack_no_space_hint">Free at least %1$s to install the shader pack</string>
     <string name="action_refresh">Refresh</string>
     <string name="action_details">Details</string>
     <string name="action_add_game">Add Game</string>

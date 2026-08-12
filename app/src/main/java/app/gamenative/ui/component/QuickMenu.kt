@@ -90,6 +90,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -409,6 +410,14 @@ fun QuickMenu(
     var toolsFocusIndex by rememberSaveable { mutableIntStateOf(0) }
     var inviteFocusIndex by rememberSaveable { mutableIntStateOf(0) }
 
+    // Full-screen shader browser: hoisted shader state shared with the effects tab, and
+    // the open flag that swaps the menu content for the browser surface while open.
+    val context = LocalContext.current
+    val shaderSection = remember(renderer, container) {
+        if (renderer != null) ShaderSectionState(renderer, container, context) else null
+    }
+    var shaderBrowserOpen by remember { mutableStateOf(false) }
+
     // The game's own "Invite friends" button reaches us as an engine callback the bionic host
     // captures. Open on the invite tab rather than drawing a separate panel, so controller focus
     // and back-to-dismiss behave like the rest of the menu.
@@ -536,7 +545,7 @@ fun QuickMenu(
                 // RetroArch/Ozone-style fast navigation (spec 2026-08-09): L1/R1 switch tabs,
                 // L2/R2 page-scroll the active tab's list. Preview phase runs before the
                 // focused node, so this works wherever the focus is.
-                if (keyEvent.type == KeyEventType.KeyDown && isVisible) {
+                if (keyEvent.type == KeyEventType.KeyDown && isVisible && !shaderBrowserOpen) {
                     Timber.d("QuickMenu: root preview key=%d", keyEvent.nativeKeyEvent.keyCode)
                     when (keyEvent.nativeKeyEvent.keyCode) {
                         KeyEvent.KEYCODE_BUTTON_L1 -> {
@@ -572,6 +581,16 @@ fun QuickMenu(
                 }
             },
     ) {
+        if (shaderBrowserOpen && shaderSection != null) {
+            // Full-screen shader browser: replaces the menu content (no focusable rows
+            // behind it), owns the gamepad scope while open (the menu navigator/bridge
+            // below are not composed), and closes via B/back/PS.
+            ShaderBrowserOverlay(
+                state = shaderSection,
+                onClose = { shaderBrowserOpen = false },
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
         // Gamepad stick/hat axis -> Compose focus navigation. Bus-level (LibraryScreen
         // pattern): the QuickMenu shares the game window with the GL surface, where
         // view-level generic-motion listeners are unreliable (spec 2026-08-09, §2.1).
@@ -581,7 +600,7 @@ fun QuickMenu(
         // closes the menu (spec 2026-08-10, §3.5 — G6): PS opens it via
         // PhysicalControllerHandler when closed, the bridge closes it when open.
         BusGamepadKeyBridge(
-            enabled = isVisible,
+            enabled = isVisible && !shaderBrowserOpen,
             modeKeyBehavior = ModeKeyBehavior.CloseOverlay,
             onCloseOverlay = onDismiss,
         )
@@ -888,6 +907,8 @@ fun QuickMenu(
                                                 initialFocusIndex = effectsFocusIndex,
                                                 onFocusIndexChanged = { effectsFocusIndex = it },
                                                 scrollState = effectsScrollState,
+                                                shaderSection = shaderSection,
+                                                onOpenShaderBrowser = { shaderBrowserOpen = true },
                                             )
                                         } else if (glRenderer != null) {
                                             GLScreenEffectsTabContent(
@@ -991,6 +1012,7 @@ fun QuickMenu(
                     }
                 }
             }
+        }
         }
     }
 

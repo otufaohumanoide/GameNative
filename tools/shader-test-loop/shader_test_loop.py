@@ -2,25 +2,22 @@
 Black-box: no visual inspection needed; classification from pixel statistics + logs."""
 import subprocess, time, json, csv, sys
 
-BASE = "/data/user/0/app.gamenative/files/retroarch_presets"
+# On-demand pack layout (spec 2026-08-11-slang-shaders-on-demand.md): the APK ships no
+# shaders; the pack lives in filesDir/retroarch_pack (repo-root-relative layout) and is
+# downloaded by the user once. The debug preset override points AT THE PACK — if the pack
+# is not installed (no .complete marker), every row will report CHAIN_FAIL/NO_FILE.
+BASE = "/data/user/0/app.gamenative/files/retroarch_pack"
 PRESETS = [
-    ("misc/invert.slangp", "invert (control+)"),
-    ("misc/color-mangler.slangp", "color-mangler"),
-    ("misc/chroma.slangp", "chroma"),
-    ("misc/colorimetry.slangp", "colorimetry"),
-    ("misc/ega.slangp", "ega"),
-    ("misc/ascii.slangp", "ascii"),
-    ("misc/cmyk-halftone-dot.slangp", "cmyk-halftone"),
-    ("misc/bead.slangp", "bead"),
-    ("misc/glass.slangp", "glass"),
-    ("misc/edge-detect.slangp", "edge-detect"),
-    ("misc/grade.slangp", "grade"),
-    ("misc/deband.slangp", "deband"),
-    ("film/technicolor.slangp", "technicolor"),
-    ("cel/MMJ_Cel_Shader.slangp", "cel-shader"),
-    ("hdr/hdr_inverse_tonemap.slangp", "hdr-inverse-tonemap"),
-    ("ntsc/artifact-colors.slangp", "ntsc-artifact-colors"),
+    ("crt/crt-easymode.slangp", "crt-easymode"),
+    ("film/technicolor.slangp", "film-technicolor"),
     ("ntsc/blargg.slangp", "ntsc-blargg"),
+    ("ntsc/ntsc-simple.slangp", "ntsc-simple"),
+    ("ntsc/shaders/decoupled-guest/decoupled-guest-advanced-ntsc 3.slangp", "ntsc-guest-advanced"),
+    ("hdr/crt-sony-megatron-default-hdr.slangp", "hdr-megatron-default"),
+    ("hdr/crt-sony-megatron-v2-default.slangp", "hdr-megatron-v2"),
+    ("misc/color-mangler.slangp", "misc-color-mangler"),
+    ("misc/glass.slangp", "misc-glass"),
+    ("cel/MMJ_Cel_Shader.slangp", "cel-shader"),
     ("nearest.slangp", "nearest (control-)"),
 ]
 
