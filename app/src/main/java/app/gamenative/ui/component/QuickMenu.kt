@@ -112,6 +112,8 @@ import com.winlator.renderer.VulkanRenderer
 import com.winlator.winhandler.ProcessInfo
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.math.roundToInt
 
 object QuickMenuAction {
@@ -469,6 +471,10 @@ fun QuickMenu(
     val quickMenuScope = rememberCoroutineScope()
     // Focus manager for the menu's own navigation (L2/R2 page-by-focus, tab-switch walk).
     val focusManager = LocalFocusManager.current
+    // M5 (spec 2026-08-12 — C5): ONE mutex serializes every focus bootstrap (opening
+    // effect, browser-close restore, guardian). Two concurrent walk-downs would double the
+    // remembered-index offset and land the focus on the wrong row ("menu morto" feel).
+    val focusMutex = remember { Mutex() }
     val density = LocalDensity.current
 
     // RetroArch/Ozone-inspired helpers (spec 2026-08-09): the ordered tab list for L1/R1
@@ -1125,69 +1131,76 @@ fun QuickMenu(
     // landed, not stale/absent focus (RC3 race: the old code walked the same frame the
     // request was issued, so the remembered index landed on the wrong row).
     suspend fun requestMenuFocus() {
-        // UX practice (focus hygiene): clear any stale active focus target FIRST.
-        // Compose 1.8 silently drops a requestFocus when the previously active node
-        // cannot be cleared (the dead-menu accumulation: 1st open works, every reopen
-        // after a close can die). A forced clear makes each bootstrap deterministic.
-        focusManager.clearFocus(true)
-        // Focus that lands through this bootstrap (walk-down on open, guardian restores) is
-        // programmatic, not user intent on the target row — the search field relies on this
-        // stamp to suppress the soft keyboard (spec 2026-08-10-search-field-ime-explicit-design).
-        GamepadNavigationClock.lastMoveAt = SystemClock.uptimeMillis()
-        repeat(3) {
-            try {
-                val hadFocus = menuHasFocus
-                when (selectedTab) {
-                    QuickMenuTab.HUD -> hudItemFocusRequester.requestFocus()
-                    QuickMenuTab.LSFG -> lsfgItemFocusRequester.requestFocus()
-                    QuickMenuTab.BFG -> bfgItemFocusRequester.requestFocus()
-                    QuickMenuTab.INVITE -> inviteItemFocusRequester.requestFocus()
-                    QuickMenuTab.TOOLS -> toolsItemFocusRequester.requestFocus()
-                    QuickMenuTab.EFFECTS -> effectsItemFocusRequester.requestFocus()
-                    else -> controllerItemFocusRequester.requestFocus()
-                }
-                // Wait one frame for the request to actually land (RC3: the walk must
-                // never act on stale/absent focus).
-                withFrameNanos { }
-                if (hadFocus || menuHasFocus) {
-                    // Focus is in the menu. Only walk when THIS request landed it — a
-                    // pre-existing focus (fast reopen during the exit animation) must
-                    // not be displaced.
-                    if (selectedTab == QuickMenuTab.EFFECTS && !hadFocus) {
-                        // G9 remember-selection: walk down to the last focused row
-                        // (moveFocus clamps naturally at the last focusable).
-                        repeat(effectsFocusIndex) {
-                            focusManager.moveFocus(FocusDirection.Down)
-                        }
+        // M5 (spec 2026-08-12 — C5): every bootstrap goes through the SAME mutex, so two
+        // walk-downs can never run concurrently (opening effect x guardian x browser-close
+        // restore would double the effectsFocusIndex offset and land focus on the wrong row).
+        Timber.d("QuickMenu bootstrap: mutex enter (tab=%d)", selectedTab)
+        focusMutex.withLock {
+            // UX practice (focus hygiene): clear any stale active focus target FIRST.
+            // Compose 1.8 silently drops a requestFocus when the previously active node
+            // cannot be cleared (the dead-menu accumulation: 1st open works, every reopen
+            // after a close can die). A forced clear makes each bootstrap deterministic.
+            focusManager.clearFocus(true)
+            // Focus that lands through this bootstrap (walk-down on open, guardian restores) is
+            // programmatic, not user intent on the target row — the search field relies on this
+            // stamp to suppress the soft keyboard (spec 2026-08-10-search-field-ime-explicit-design).
+            GamepadNavigationClock.lastMoveAt = SystemClock.uptimeMillis()
+            repeat(3) {
+                try {
+                    val hadFocus = menuHasFocus
+                    when (selectedTab) {
+                        QuickMenuTab.HUD -> hudItemFocusRequester.requestFocus()
+                        QuickMenuTab.LSFG -> lsfgItemFocusRequester.requestFocus()
+                        QuickMenuTab.BFG -> bfgItemFocusRequester.requestFocus()
+                        QuickMenuTab.INVITE -> inviteItemFocusRequester.requestFocus()
+                        QuickMenuTab.TOOLS -> toolsItemFocusRequester.requestFocus()
+                        QuickMenuTab.EFFECTS -> effectsItemFocusRequester.requestFocus()
+                        else -> controllerItemFocusRequester.requestFocus()
                     }
-                    Timber.d("QuickMenu bootstrap: focus landed (tab=%d)", selectedTab)
-                    return
+                    // Wait one frame for the request to actually land (RC3: the walk must
+                    // never act on stale/absent focus).
+                    withFrameNanos { }
+                    if (hadFocus || menuHasFocus) {
+                        // Focus is in the menu. Only walk when THIS request landed it — a
+                        // pre-existing focus (fast reopen during the exit animation) must
+                        // not be displaced.
+                        if (selectedTab == QuickMenuTab.EFFECTS && !hadFocus) {
+                            // G9 remember-selection: walk down to the last focused row
+                            // (moveFocus clamps naturally at the last focusable).
+                            repeat(effectsFocusIndex) {
+                                focusManager.moveFocus(FocusDirection.Down)
+                            }
+                        }
+                        Timber.d("QuickMenu bootstrap: focus landed (tab=%d)", selectedTab)
+                        return@withLock
+                    }
+                    // The request was silently dropped (Compose can drop requests while the
+                    // enter transition / IME settle — the dead-menu symptom). Retry.
+                    Timber.d("QuickMenu bootstrap: request did not land, retry %d", it)
+                    delay(60)
+                } catch (error: Exception) {
+                    Timber.w(error, "QuickMenu bootstrap: focus retry (tab=%d)", selectedTab)
+                    delay(80)
                 }
-                // The request was silently dropped (Compose can drop requests while the
-                // enter transition / IME settle — the dead-menu symptom). Retry.
-                Timber.d("QuickMenu bootstrap: request did not land, retry %d", it)
-                delay(60)
-            } catch (error: Exception) {
-                Timber.w(error, "QuickMenu bootstrap: focus retry (tab=%d)", selectedTab)
-                delay(80)
+            }
+            // Content focus failed entirely (e.g. TOOLS with no wine processes, or a focus
+            // system that keeps dropping requests) — fall back to the rail so the menu is
+            // never born dead (the original bug: menu opened with no focus anywhere, so the
+            // joystick did nothing). From the rail the stick can still navigate (Right
+            // enters the content, Down/Up cycle the rail).
+            try {
+                hudTabFocusRequester.requestFocus()
+                withFrameNanos { }
+                if (menuHasFocus) {
+                    railFocused = true
+                    Timber.d("QuickMenu bootstrap: fallback to rail focus")
+                } else {
+                    Timber.w("QuickMenu bootstrap: rail fallback also failed")
+                }
+            } catch (_: Exception) {
             }
         }
-        // Content focus failed entirely (e.g. TOOLS with no wine processes, or a focus
-        // system that keeps dropping requests) — fall back to the rail so the menu is
-        // never born dead (the original bug: menu opened with no focus anywhere, so the
-        // joystick did nothing). From the rail the stick can still navigate (Right
-        // enters the content, Down/Up cycle the rail).
-        try {
-            hudTabFocusRequester.requestFocus()
-            withFrameNanos { }
-            if (menuHasFocus) {
-                railFocused = true
-                Timber.d("QuickMenu bootstrap: fallback to rail focus")
-            } else {
-                Timber.w("QuickMenu bootstrap: rail fallback also failed")
-            }
-        } catch (_: Exception) {
-        }
+        Timber.d("QuickMenu bootstrap: mutex exit (tab=%d)", selectedTab)
     }
 
     LaunchedEffect(isVisible) {
@@ -1239,8 +1252,16 @@ fun QuickMenu(
             delay(150)
             while (isVisible && !shaderBrowserOpen) {
                 if (!menuHasFocus) {
-                    Timber.d("QuickMenu guardian: restoring focus (tab=%d)", selectedTab)
-                    requestMenuFocus()
+                    // M5 (spec 2026-08-12): gentle guardian — while the user is actively
+                    // navigating (a move < 600 ms ago), skip the cycle. requestMenuFocus()
+                    // starts with clearFocus(true), which must never land mid-gesture.
+                    val now = SystemClock.uptimeMillis()
+                    if (now - GamepadNavigationClock.lastMoveAt < 600L) {
+                        Timber.d("QuickMenu guardian: user navigating, skipping cycle")
+                    } else {
+                        Timber.d("QuickMenu guardian: restoring focus (tab=%d)", selectedTab)
+                        requestMenuFocus()
+                    }
                 }
                 delay(400)
             }

@@ -24,15 +24,19 @@ import kotlinx.coroutines.delay
  * `adb shell input` (INJECT_EVENTS denied).
  *
  * Protocol via the `debug.gamenative.input` system property (empty = idle):
- *   key:<keycode>            press + release (e.g. key:96 = BUTTON_A, key:188 = BUTTON_MODE/PS)
+ *   key:<keycode>            press + release (e.g. key:96 = BUTTON_A, key:110 = BUTTON_MODE/PS)
  *   key:<keycode>:down       press and hold (repeat events arrive like a held button)
  *   key:<keycode>:up         release
  *   stick:<x>:<y>            hold the left stick at x/y (e.g. stick:0:0.8 = down); repeated
  *                            ACTION_MOVE until `stick:0:0`
  *   hat:<x>:<y>              same for the D-pad hat
  *
+ * NOTE (2026-08-12, spec pipeline-hardening): the PS/Home button is KEYCODE_BUTTON_MODE =
+ * 110 — NOT 188 (KEYCODE_BUTTON_1, a generic pad button that neither the XServerScreen
+ * nor the bus bridge recognizes). The DS4 keylayout maps BTN_MODE -> BUTTON_MODE (110).
+ *
  * Example session (open menu, move down twice, press A, B):
- *   adb shell setprop debug.gamenative.input key:188
+ *   adb shell setprop debug.gamenative.input key:110
  *   adb shell setprop debug.gamenative.input stick:0:0.8 ; sleep 0.5 ; setprop ... stick:0:0
  *   ... (repeat) ; adb shell setprop debug.gamenative.input key:96
  *   adb shell setprop debug.gamenative.input key:97   (BUTTON_B)

@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -58,6 +59,7 @@ import app.gamenative.ui.component.dialog.MessageDialog
 import app.gamenative.ui.theme.PluviaTheme
 import android.os.SystemClock
 import kotlinx.coroutines.delay
+import timber.log.Timber
 import java.util.Locale
 
 /**
@@ -265,6 +267,53 @@ fun ShaderBrowserOverlay(
                     // Focus guardian in the menu restores focus on next open.
                 }
             }
+        }
+    }
+
+    // M6 (spec 2026-08-12 — C6): the browser tracks its own focus (the QuickMenu guardian
+    // is gated OFF while this surface is composed) so a lost focus can be restored here
+    // without waiting for PS/B.
+    var browserHasFocus by remember { mutableStateOf(false) }
+
+    // M6 focus guardian: continuous loop. If the focused row leaves the composition
+    // ("Show more" repages, search clear swaps the list, an async install refreshes rows,
+    // a category collapse), Compose clears the focus and NOTHING else would restore it —
+    // a dead browser. Gentle like the menu guardian: while the user is actively navigating
+    // (< 600 ms since the last focus move) the cycle is skipped, so a restore (which starts
+    // with clearFocus) never lands mid-gesture.
+    // NOTE: this block must NOT capture the composition-scoped `requesterFor` — it is
+    // re-created per composition with the screenKey of THAT composition. The guardian
+    // computes the key from nav.current at CALL time, like the rows do.
+    LaunchedEffect(Unit) {
+        delay(150) // let the opening bootstrap land first (never fight it).
+        while (true) {
+            if (!browserHasFocus) {
+                val now = SystemClock.uptimeMillis()
+                if (now - GamepadNavigationClock.lastMoveAt < 600L) {
+                    Timber.d("ShaderBrowser guardian: user navigating, skipping cycle")
+                } else {
+                    val screen = nav.current.key()
+                    val remembered = focusIndices[screen] ?: 0
+                    Timber.d("ShaderBrowser guardian: restoring focus row=%d screen=%s", remembered, screen)
+                    fun requesterForCurrent(index: Int): FocusRequester =
+                        requesters.getOrPut("$screen:$index") { FocusRequester() }
+                    try {
+                        requesterForCurrent(remembered).requestFocus()
+                        delay(60) // let the request land before verifying
+                        if (!browserHasFocus && remembered != 0) {
+                            Timber.d("ShaderBrowser guardian: fallback to row 0")
+                            requesterForCurrent(0).requestFocus()
+                        }
+                    } catch (_: Exception) {
+                        try {
+                            requesterForCurrent(0).requestFocus()
+                        } catch (_: Exception) {
+                            // Next loop iteration retries; never leave the browser dead.
+                        }
+                    }
+                }
+            }
+            delay(400)
         }
     }
 
@@ -510,6 +559,12 @@ fun ShaderBrowserOverlay(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .onFocusChanged { focusState ->
+                if (browserHasFocus != focusState.hasFocus) {
+                    browserHasFocus = focusState.hasFocus
+                    Timber.d("ShaderBrowser root focus: %b", focusState.hasFocus)
+                }
+            }
             .background(MaterialTheme.colorScheme.surface)
             .statusBarsPadding()
             .gamepadBackHandler(::navigateBack),

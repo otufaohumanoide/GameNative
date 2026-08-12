@@ -6,6 +6,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import app.gamenative.PluviaApp
@@ -76,9 +78,15 @@ fun BusJoystickFocusNavigator(
             )
             stickState = decision.state
             decision.direction?.let { dir ->
-                Timber.d("BusJoystick: moveFocus(%s) mag=%.2f", dir, magnitude)
-                GamepadNavigationClock.lastMoveAt = SystemClock.uptimeMillis()
-                focusManager.moveFocus(dir.focusDirection)
+                // M4 (spec 2026-08-12): the axis channel must not double-move when a DPAD
+                // key of the same gesture already moved the focus inside the window.
+                if (GamepadMoveDedupe.shouldDispatchAxisMove(now, GamepadNavigationClock.lastMoveAt)) {
+                    Timber.d("BusJoystick: moveFocus(%s) mag=%.2f", dir, magnitude)
+                    GamepadNavigationClock.lastMoveAt = now
+                    focusManager.moveFocus(dir.focusDirection)
+                } else {
+                    Timber.d("BusJoystick: axis move suppressed (dedupe window)")
+                }
             }
             return true
         }
@@ -87,6 +95,8 @@ fun BusJoystickFocusNavigator(
         Timber.d("BusJoystick: listening")
         onDispose {
             PluviaApp.events.off<AndroidEvent.MotionEvent, Boolean>(handler)
+            val remaining = PluviaApp.events.listenerCount()[AndroidEvent.MotionEvent::class.simpleName] ?: 0
+            Timber.d("BusJoystick: stopped remaining=%d", remaining)
         }
     }
 }
@@ -147,7 +157,12 @@ fun BusGamepadKeyBridge(
     onCloseOverlay: () -> Unit = {},
 ) {
     val view = LocalView.current
-    DisposableEffect(enabled, view, modeKeyBehavior, onCloseOverlay) {
+    // M3 (spec 2026-08-12 — C3): onCloseOverlay is re-created by the caller on every
+    // recomposition; using it as a DisposableEffect key would off/on the bus listener in
+    // bursts (each process poll / HUD update). rememberUpdatedState keeps the handler on
+    // the LATEST callback without re-registering the listener.
+    val currentOnClose by rememberUpdatedState(onCloseOverlay)
+    DisposableEffect(enabled, view, modeKeyBehavior) {
         if (!enabled) return@DisposableEffect onDispose {}
         val handledKeys = intArrayOf(
             KeyEvent.KEYCODE_BUTTON_B,
@@ -162,13 +177,22 @@ fun BusGamepadKeyBridge(
             KeyEvent.KEYCODE_DPAD_CENTER,
             KeyEvent.KEYCODE_ENTER,
         )
+        // M4 (spec 2026-08-12 — C4): DPAD moves race the axis channel. A key press wins
+        // the gesture window by stamping the shared clock when it dispatches; a key press
+        // that lost (axis already moved < WINDOW_MS ago) is consumed WITHOUT re-dispatch.
+        val moveKeys = intArrayOf(
+            KeyEvent.KEYCODE_DPAD_UP,
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+        )
         fun handleKey(androidEvent: AndroidEvent.KeyEvent): Boolean {
             val event = androidEvent.event
             if (event.keyCode == KeyEvent.KEYCODE_BUTTON_MODE) {
                 if (modeKeyBehavior == ModeKeyBehavior.CloseOverlay &&
                     event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
                 ) {
-                    onCloseOverlay()
+                    currentOnClose()
                 }
                 // DOWN/UP always consumed: the game never sees the Mode key with an overlay up.
                 return true
@@ -179,7 +203,7 @@ fun BusGamepadKeyBridge(
                 if (modeKeyBehavior == ModeKeyBehavior.CloseOverlay &&
                     event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
                 ) {
-                    onCloseOverlay()
+                    currentOnClose()
                 }
                 return true
             }
@@ -197,7 +221,26 @@ fun BusGamepadKeyBridge(
             }
             if (event.keyCode in handledKeys) {
                 if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
-                    view.dispatchKeyEvent(event)
+                    if (event.action == KeyEvent.ACTION_DOWN && event.keyCode in moveKeys) {
+                        val now = SystemClock.uptimeMillis()
+                        if (GamepadMoveDedupe.shouldDispatchKeyMove(
+                                now = now,
+                                lastMoveAt = GamepadNavigationClock.lastMoveAt,
+                                repeatCount = event.repeatCount,
+                            )
+                        ) {
+                            if (event.repeatCount == 0) {
+                                // First press that wins the gesture stamps the shared clock
+                                // so the axis channel of the same gesture is suppressed.
+                                GamepadNavigationClock.lastMoveAt = now
+                            }
+                            view.dispatchKeyEvent(event)
+                        } else {
+                            Timber.d("BusGamepadKeyBridge: DPAD=%d suppressed (dedupe window)", event.keyCode)
+                        }
+                    } else {
+                        view.dispatchKeyEvent(event)
+                    }
                 }
                 return true
             }
@@ -208,6 +251,8 @@ fun BusGamepadKeyBridge(
         Timber.d("BusGamepadKeyBridge: listening")
         onDispose {
             PluviaApp.events.off<AndroidEvent.KeyEvent, Boolean>(handler)
+            val remaining = PluviaApp.events.listenerCount()[AndroidEvent.KeyEvent::class.simpleName] ?: 0
+            Timber.d("BusGamepadKeyBridge: stopped remaining=%d", remaining)
         }
     }
 }

@@ -57,6 +57,7 @@ import app.gamenative.ui.util.SnackbarManager
 import com.posthog.PostHog
 import com.skydoves.landscapist.coil.LocalCoilImageLoader
 import com.winlator.core.AppUtils
+import com.winlator.inputcontrols.ExternalController
 import com.winlator.inputcontrols.ControllerManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -574,6 +575,14 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // M8 (spec 2026-08-12): GamepadTrace — every gamepad key entering the bus, with the
+        // device/source identity the routing decision uses. Debug-only (Timber.d).
+        if (ExternalController.isGameController(event.device)) {
+            Timber.d(
+                "GamepadTrace: key dev=%s src=0x%x action=%d code=%d repeat=%d",
+                event.device?.name, event.device?.sources ?: 0, event.action, event.keyCode, event.repeatCount,
+            )
+        }
         // Log.d("MainActivity$index", "dispatchKeyEvent(${event.keyCode}):\n$event")
 
         var eventDispatched = PluviaApp.events.emit(AndroidEvent.KeyEvent(event)) { keyEvent ->
@@ -604,6 +613,15 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchGenericMotionEvent(ev: MotionEvent?): Boolean {
+        // M8 (spec 2026-08-12): GamepadTrace — every gamepad motion entering the bus.
+        if (ev != null && ExternalController.isGameController(ev.device)) {
+            Timber.d(
+                "GamepadTrace: motion dev=%s src=0x%x action=%d axes=[x=%.2f y=%.2f hatX=%.2f hatY=%.2f]",
+                ev.device?.name, ev.device?.sources ?: 0, ev.actionMasked,
+                ev.getAxisValue(MotionEvent.AXIS_X), ev.getAxisValue(MotionEvent.AXIS_Y),
+                ev.getAxisValue(MotionEvent.AXIS_HAT_X), ev.getAxisValue(MotionEvent.AXIS_HAT_Y),
+            )
+        }
         // Log.d("MainActivity$index", "dispatchGenericMotionEvent(${ev?.deviceId}:${ev?.device?.name}):\n$ev")
 
         val eventDispatched = PluviaApp.events.emit(AndroidEvent.MotionEvent(ev)) { event ->

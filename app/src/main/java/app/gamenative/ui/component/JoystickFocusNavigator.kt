@@ -75,8 +75,13 @@ fun JoystickFocusNavigator(
                 // Neutral samples are not consumed; disarmed/cooldown pushes are.
                 return@OnGenericMotionListener direction != null
             }
-            GamepadNavigationClock.lastMoveAt = SystemClock.uptimeMillis()
-            focusManager.moveFocus(decision.direction.focusDirection)
+            // M4 (spec 2026-08-12): a DPAD key of the same gesture that already moved the
+            // focus inside the window wins — the axis move is dropped (dialog windows can
+            // receive both channels from the same controller, exactly like the bus path).
+            if (GamepadMoveDedupe.shouldDispatchAxisMove(now, GamepadNavigationClock.lastMoveAt)) {
+                GamepadNavigationClock.lastMoveAt = now
+                focusManager.moveFocus(decision.direction.focusDirection)
+            }
             true
         }
         view.setOnGenericMotionListener(listener)

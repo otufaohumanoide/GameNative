@@ -239,7 +239,9 @@ import app.gamenative.ui.component.DebugGamepadInputHarness
 import app.gamenative.ui.component.GamepadFocusScope
 import app.gamenative.ui.component.GamepadKeyBridge
 import app.gamenative.ui.component.JoystickFocusNavigator
+import app.gamenative.ui.component.ModeKeyBehavior
 import app.gamenative.ui.component.OverlayInputContext
+import app.gamenative.ui.component.OverlayInputState
 
 // Always re-extract drivers and DXVK on every launch to handle cases of container corruption
 // where games randomly stop working. Set to false once corruption issues are resolved.
@@ -1095,14 +1097,23 @@ fun XServerScreen(
         }
     }
 
-    val dismissOverlayMenu: () -> Unit = {
-        Timber.d("XServerScreen: dismissOverlayMenu (keyboardRequestedFromOverlay=%b, showQuickMenu=%b)", keyboardRequestedFromOverlay, showQuickMenu)
-        if (!keyboardRequestedFromOverlay) {
-            imeInputReceiver?.hideKeyboard()
+    // M3 (spec 2026-08-12 — C3): stable identity. Re-creating this lambda on every
+    // recomposition (process polls / HUD updates) propagated instability to the QuickMenu's
+    // bus bridge (onCloseOverlay was a DisposableEffect key -> off/on churn). The lambda
+    // reads only state-backed values (keyboardRequestedFromOverlay, imeInputReceiver,
+    // shouldForceResumeOnMenuClose, showQuickMenu are mutableStateOf delegates; manualResumeMode
+    // derives from suspendPolicy, stable per container session), so the remembered instance
+    // always reads CURRENT values at call time.
+    val dismissOverlayMenu: () -> Unit = remember {
+        {
+            Timber.d("XServerScreen: dismissOverlayMenu (keyboardRequestedFromOverlay=%b, showQuickMenu=%b)", keyboardRequestedFromOverlay, showQuickMenu)
+            if (!keyboardRequestedFromOverlay) {
+                imeInputReceiver?.hideKeyboard()
+            }
+            shouldForceResumeOnMenuClose = keyboardRequestedFromOverlay && manualResumeMode && !keepPausedForEditor
+            keyboardRequestedFromOverlay = false
+            showQuickMenu = false
         }
-        shouldForceResumeOnMenuClose = keyboardRequestedFromOverlay && manualResumeMode && !keepPausedForEditor
-        keyboardRequestedFromOverlay = false
-        showQuickMenu = false
     }
 
     LaunchedEffect(showQuickMenu, quickMenuToolsVisible, xServerView) {
@@ -1497,7 +1508,14 @@ fun XServerScreen(
     // the full input pipeline on devices where `input keyevent` is blocked (MIUI).
     DebugGamepadInputHarness(enabled = true)
 
-    val overlayInputContext = if (
+    // M1 (spec 2026-08-12 — C1): the routing context is now a MUTABLE holder written here
+    // during composition and READ by the bus handlers at EVENT time. The handlers are
+    // registered once (DisposableEffect(Unit)) and must never capture the derived value:
+    // a captured `val` from the first composition would be stale forever (NONE), leaking
+    // gamepad input to the game behind an open menu. The holder instance is stable
+    // (remember), so the once-registered closures always read the CURRENT context.
+    val overlayInputState = remember { OverlayInputState() }
+    overlayInputState.context = if (
         showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode ||
         showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
         showPlayingBlockedDialog
@@ -1507,6 +1525,16 @@ fun XServerScreen(
         OverlayInputContext.NONE
     }
 
+    // M2 (spec 2026-08-12): emit = MULTICAST — every bus listener runs, no early stop;
+    // "consumption" is only the window decision (MainActivity returns true when ANY
+    // listener returned true). Each listener owns ONE surface and must be INERT outside it:
+    //   - OVERLAY (menu/browser/edit): BusJoystickFocusNavigator + BusGamepadKeyBridge
+    //     (Compose surfaces in the same window as the GL).
+    //   - NONE: this handler routes to the game (PhysicalControllerHandler/WinHandler).
+    //   - Dialog windows: separate windows — never reach this bus (existing invariant).
+    // With an overlay open the game branch BELOW MUST NEVER run: no noteGamepadButton,
+    // no refreshControllerMappingsForHotplug, no winHandler/physicalControllerHandler —
+    // those are game-side effects that would corrupt the paused session (C2).
     val onKeyEvent: (AndroidEvent.KeyEvent) -> Boolean = {
         val isKeyboard = Keyboard.isKeyboardDevice(it.event.device)
         val isPhysicalKeyboard = isKeyboard && it.event.device?.isVirtual != true
@@ -1516,6 +1544,14 @@ fun XServerScreen(
                 PluviaApp.isOverlayPaused &&
                 !showQuickMenu &&
                 !keepPausedForEditor
+        // M1: read the holder at EVENT time — never a value captured at registration.
+        val inputContext = overlayInputState.context
+        if (isGamepad) {
+            Timber.d(
+                "GamepadRoute: key code=%d action=%d ctx=%s manualResume=%b",
+                it.event.keyCode, it.event.action, inputContext, waitingForManualResume,
+            )
+        }
         // logD("onKeyEvent(${it.event.device.sources})\n\tisGamepad: $isGamepad\n\tisKeyboard: $isKeyboard\n\t${it.event}")
 
         if (waitingForManualResume) {
@@ -1530,7 +1566,7 @@ fun XServerScreen(
                 }
                 else -> false
             }
-        } else if (overlayInputContext != OverlayInputContext.NONE && (isGamepad || isKeyboard)) {
+        } else if (inputContext != OverlayInputContext.NONE && (isGamepad || isKeyboard)) {
             val escPressed = !keepPausedForEditor &&
                 isKeyboard &&
                 it.event.keyCode == KeyEvent.KEYCODE_ESCAPE
@@ -1555,6 +1591,9 @@ fun XServerScreen(
                 if (it.event.action == KeyEvent.ACTION_DOWN && it.event.repeatCount == 0 &&
                     ControllerManager.getInstance().noteGamepadButton(it.event.device.id)
                 ) {
+                    // M8: game-side effect — the M2 acceptance greps this tag: with an
+                    // overlay open (ctx=OVERLAY) this branch never runs.
+                    Timber.d("GamepadRoute: refreshControllerMappingsForHotplug (game branch)")
                     winHandler.refreshControllerMappingsForHotplug()
                 }
                 val assignedSlot = ControllerManager.getInstance().getSlotForDevice(it.event.device.id)
@@ -1614,8 +1653,14 @@ fun XServerScreen(
 
     val onMotionEvent: (AndroidEvent.MotionEvent) -> Boolean = {
         val isGamepad = ExternalController.isGameController(it.event?.device)
+        // M1: read the holder at EVENT time (see onKeyEvent). M2: with an overlay open the
+        // motion is consumed here and the game branch below NEVER runs.
+        val inputContext = overlayInputState.context
+        if (isGamepad) {
+            Timber.d("GamepadRoute: motion action=%d ctx=%s", it.event?.actionMasked ?: -1, inputContext)
+        }
 
-        if (overlayInputContext != OverlayInputContext.NONE && isGamepad) {
+        if (inputContext != OverlayInputContext.NONE && isGamepad) {
             // The overlay owns the stick: consume it so the game never receives gamepad
             // motion while a menu/dialog is up. Overlay navigation (QuickMenu) reads the
             // same event from this bus (BusJoystickFocusNavigator); dialog windows are
@@ -2613,7 +2658,9 @@ fun XServerScreen(
         // Disabled while the QuickMenu is up so the two overlays never fight over the bus.
         if (isEditMode && !showQuickMenu) {
             BusJoystickFocusNavigator(enabled = true)
-            BusGamepadKeyBridge(enabled = true)
+            // M3/M7 (spec 2026-08-12): explicit API — ModeKeyBehavior.None was only used via
+            // the DEFAULT parameter here; declaring it makes the edit-mode contract visible.
+            BusGamepadKeyBridge(enabled = true, modeKeyBehavior = ModeKeyBehavior.None)
         }
 
         // Floating toolbar for edit mode (always visible in edit mode)
