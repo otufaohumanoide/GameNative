@@ -1558,10 +1558,23 @@ fun XServerScreen(
                     handled = winHandler.onKeyEvent(it.event)
                 } else {
                     winHandler.setCurrentController(it.event.device.id)
-                    handled = physicalControllerHandler?.onKeyEvent(it.event) == true
-                    if (!handled) handled = PluviaApp.inputControlsView?.onKeyEvent(it.event) == true
-                    // Final fallback to WinHandler passthrough
-                    if (!handled) handled = winHandler.onKeyEvent(it.event)
+                    // P1 (spec 2026-08-12): START mirrors HOME as the second QuickMenu
+                    // toggle — with the menu closed it OPENS it instead of reaching the
+                    // game (the close half is the bus bridge while the menu is open).
+                    // Manual resume (paused overlay) keeps priority and still uses START.
+                    if (it.event.keyCode == KeyEvent.KEYCODE_BUTTON_START &&
+                        it.event.action == KeyEvent.ACTION_DOWN && it.event.repeatCount == 0 &&
+                        !showElementEditor && !keepPausedForEditor && !showQuickMenu && !isEditMode
+                    ) {
+                        Timber.i("XServerScreen: START opens QuickMenu (P1 toggle)")
+                        gameBack()
+                        handled = true
+                    } else {
+                        handled = physicalControllerHandler?.onKeyEvent(it.event) == true
+                        if (!handled) handled = PluviaApp.inputControlsView?.onKeyEvent(it.event) == true
+                        // Final fallback to WinHandler passthrough
+                        if (!handled) handled = winHandler.onKeyEvent(it.event)
+                    }
                 }
             }
             if (!handled && isKeyboard) {

@@ -78,6 +78,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -91,6 +92,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -248,6 +250,7 @@ private fun matchesPerformanceHudPreset(
 // fpsLimiterSteps / fpsLimiterCurrentIndex / fpsLimiterProgress /
 // nextFpsLimiterValue / previousFpsLimiterValue live in FpsLimiterUtils.kt
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun QuickMenu(
     isVisible: Boolean,
@@ -404,6 +407,9 @@ fun QuickMenu(
     val toolsScrollState = rememberScrollState()
     val inviteScrollState = rememberScrollState()
     val exitItemFocusRequester = remember { FocusRequester() }
+    // P6 (spec 2026-08-12): the header close (X) becomes a real gamepad target — routed
+    // explicitly from the rail/content tops via focusProperties (see routeToCloseButton).
+    val closeButtonFocusRequester = remember { FocusRequester() }
     // G9 remember-selection: per-tab index of the last focused item, restored on reopen.
     var effectsFocusIndex by rememberSaveable { mutableIntStateOf(0) }
     var controllerFocusIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -459,8 +465,11 @@ fun QuickMenu(
     // this flips to false — the guardian re-bootstraps instead of leaving a dead menu.
     var menuHasFocus by remember { mutableStateOf(false) }
 
-    // Coroutine scope for L2/R2 page scrolling (ScrollState.scrollBy is a suspend fun).
+    // Coroutine scope for L2/R2 page scrolling / tab-switch focus (suspend funs).
     val quickMenuScope = rememberCoroutineScope()
+    // Focus manager for the menu's own navigation (L2/R2 page-by-focus, tab-switch walk).
+    val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
 
     // RetroArch/Ozone-inspired helpers (spec 2026-08-09): the ordered tab list for L1/R1
     // cycling and the per-tab scroll states for L2/R2 page scrolling.
@@ -481,25 +490,6 @@ fun QuickMenu(
             }
         }
     }
-    fun selectAdjacentTab(delta: Int) {
-        val idx = orderedTabs.indexOf(selectedTab)
-        Timber.d("QuickMenu: selectAdjacentTab(delta=%d) idx=%d tabs=%s", delta, idx, orderedTabs)
-        if (idx < 0) return
-        val next = orderedTabs[(idx + delta + orderedTabs.size) % orderedTabs.size]
-        selectedTab = next
-        PrefManager.quickMenuLastTab = next
-        // Focus the newly selected tab's rail button (predictable start point).
-        when (next) {
-            QuickMenuTab.HUD -> hudTabFocusRequester.requestFocus()
-            QuickMenuTab.LSFG -> lsfgTabFocusRequester.requestFocus()
-            QuickMenuTab.BFG -> bfgTabFocusRequester.requestFocus()
-            QuickMenuTab.EFFECTS -> effectsTabFocusRequester.requestFocus()
-            QuickMenuTab.TOOLS -> toolsTabFocusRequester.requestFocus()
-            QuickMenuTab.INVITE -> inviteTabFocusRequester.requestFocus()
-            else -> controllerTabFocusRequester.requestFocus()
-        }
-        railFocused = true
-    }
     val currentTabScrollState: ScrollState? = when (selectedTab) {
         QuickMenuTab.HUD -> hudScrollState
         QuickMenuTab.LSFG -> lsfgScrollState
@@ -510,6 +500,103 @@ fun QuickMenu(
         QuickMenuTab.INVITE -> inviteScrollState
         else -> null
     }
+
+    /** Focuses [tab]'s content list (first row, then walk-down to the remembered index). */
+    suspend fun focusTabContentOrRail(tab: Int) {
+        val itemRequester = when (tab) {
+            QuickMenuTab.HUD -> hudItemFocusRequester
+            QuickMenuTab.LSFG -> lsfgItemFocusRequester
+            QuickMenuTab.BFG -> bfgItemFocusRequester
+            QuickMenuTab.EFFECTS -> effectsItemFocusRequester
+            QuickMenuTab.TOOLS -> toolsItemFocusRequester
+            QuickMenuTab.INVITE -> inviteItemFocusRequester
+            else -> controllerItemFocusRequester
+        }
+        var landed = false
+        repeat(3) {
+            runCatching { itemRequester.requestFocus() }.getOrDefault(false).let { ok ->
+                if (ok) {
+                    landed = true
+                    return@repeat
+                }
+            }
+            withFrameNanos { }
+            if (menuHasFocus) {
+                landed = true
+                return@repeat
+            }
+            delay(60)
+        }
+        if (landed) {
+            // G9 remember-selection: walk down to the tab's last focused row.
+            val remembered = when (tab) {
+                QuickMenuTab.EFFECTS -> effectsFocusIndex
+                QuickMenuTab.CONTROLLER -> controllerFocusIndex
+                QuickMenuTab.TOOLS -> toolsFocusIndex
+                QuickMenuTab.INVITE -> inviteFocusIndex
+                else -> 0
+            }
+            repeat(remembered) { focusManager.moveFocus(FocusDirection.Down) }
+            return
+        }
+        // Tab with no focusable content — fall back to its rail button.
+        val railRequester = when (tab) {
+            QuickMenuTab.HUD -> hudTabFocusRequester
+            QuickMenuTab.LSFG -> lsfgTabFocusRequester
+            QuickMenuTab.BFG -> bfgTabFocusRequester
+            QuickMenuTab.EFFECTS -> effectsTabFocusRequester
+            QuickMenuTab.TOOLS -> toolsTabFocusRequester
+            QuickMenuTab.INVITE -> inviteTabFocusRequester
+            else -> controllerTabFocusRequester
+        }
+        runCatching { railRequester.requestFocus() }
+        railFocused = true
+    }
+
+    /**
+     * P5 (spec 2026-08-12): L2/R2 page the active tab's list by MOVING FOCUS instead of
+     * pure scrollBy — the selection follows the scroll, so a later DPAD move can never
+     * jump to a row outside the viewport (Compose auto-scrolls the focused row into
+     * view). From the rail (always visible) the legacy pure scroll is kept.
+     */
+    fun pageTabList(delta: Int) {
+        val state: ScrollState? = currentTabScrollState
+        if (state == null) return
+        if (railFocused) {
+            quickMenuScope.launch {
+                state.scrollBy(delta * (state.viewportSize / 2).coerceAtLeast(240).toFloat())
+            }
+            return
+        }
+        val rowPx = with(density) { 56.dp.toPx() }
+        val halfViewportPx = (state.viewportSize / 2).coerceAtLeast(240).toFloat()
+        val steps = (halfViewportPx / rowPx).coerceAtLeast(1f).toInt()
+        val direction = if (delta > 0) FocusDirection.Down else FocusDirection.Up
+        repeat(steps) { focusManager.moveFocus(direction) }
+    }
+
+    /** P6: routes Up from the rail/content tops to the header close (X) button. */
+    fun routeToCloseButton(): Boolean =
+        runCatching { closeButtonFocusRequester.requestFocus() }.getOrDefault(false)
+
+    fun selectAdjacentTab(delta: Int) {
+        val idx = orderedTabs.indexOf(selectedTab)
+        Timber.d("QuickMenu: selectAdjacentTab(delta=%d) idx=%d tabs=%s", delta, idx, orderedTabs)
+        if (idx < 0) return
+        val next = orderedTabs[(idx + delta + orderedTabs.size) % orderedTabs.size]
+        selectedTab = next
+        PrefManager.quickMenuLastTab = next
+        // P4 (spec 2026-08-12): tab switch keeps the focus INSIDE the content (console /
+        // Ozone pattern — one press less per switch). The new tab's list is focused at
+        // its remembered row; the rail button is only the fallback when the tab has no
+        // focusable content (e.g. TOOLS with no processes).
+        railFocused = false
+        quickMenuScope.launch {
+            withFrameNanos { } // let the new tab's content compose first
+            focusTabContentOrRail(next)
+        }
+    }
+
 
     // One lambda for both back paths (parity gamepad/touch): the physical BackHandler
     // (OnBackPressedDispatcher) and the raw gamepad B (gamepadBackHandler on the root box).
@@ -553,29 +640,22 @@ fun QuickMenu(
                     Timber.d("QuickMenu: root preview key=%d", keyEvent.nativeKeyEvent.keyCode)
                     when (keyEvent.nativeKeyEvent.keyCode) {
                         KeyEvent.KEYCODE_BUTTON_L1 -> {
-                            selectAdjacentTab(-1)
+                            // P2 (spec 2026-08-12): tab switch is a SINGLE action — the
+                            // Android key repeat (hold L1/R1 ~20/s) must not cycle tabs.
+                            if (keyEvent.nativeKeyEvent.repeatCount == 0) selectAdjacentTab(-1)
                             true
                         }
                         KeyEvent.KEYCODE_BUTTON_R1 -> {
-                            selectAdjacentTab(+1)
+                            if (keyEvent.nativeKeyEvent.repeatCount == 0) selectAdjacentTab(+1)
                             true
                         }
+                        // L2/R2 keep repeating: continuous paging is the desired behavior.
                         KeyEvent.KEYCODE_BUTTON_L2 -> {
-                            val state: ScrollState? = currentTabScrollState
-                            if (state != null) {
-                                quickMenuScope.launch {
-                                    state.scrollBy(-(state.viewportSize / 2).coerceAtLeast(240).toFloat())
-                                }
-                            }
+                            pageTabList(-1)
                             true
                         }
                         KeyEvent.KEYCODE_BUTTON_R2 -> {
-                            val state: ScrollState? = currentTabScrollState
-                            if (state != null) {
-                                quickMenuScope.launch {
-                                    state.scrollBy((state.viewportSize / 2).coerceAtLeast(240).toFloat())
-                                }
-                            }
+                            pageTabList(+1)
                             true
                         }
                         else -> false
@@ -667,7 +747,10 @@ fun QuickMenu(
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
-                        QuickMenuCloseButton(onClick = onDismiss)
+                        QuickMenuCloseButton(
+                            onClick = onDismiss,
+                            focusRequester = closeButtonFocusRequester,
+                        )
                     }
 
                     HorizontalDivider(
@@ -685,7 +768,12 @@ fun QuickMenu(
                             modifier = Modifier
                                 .width(64.dp)
                                 .fillMaxHeight()
-                                .focusGroup(),
+                                .focusGroup()
+                                // P6: Up from the rail (top) exits to the header close (X)
+                                // — explicit route, independent of focus-group geometry.
+                                .focusProperties {
+                                    up = closeButtonFocusRequester
+                                },
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             val tabScrollState = rememberScrollState()
@@ -836,7 +924,13 @@ fun QuickMenu(
                             )
 
                             Box(
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    // P6: Up from the content's first row reaches the
+                                    // header close (X) button.
+                                    .focusProperties {
+                                        up = closeButtonFocusRequester
+                                    },
                             ) {
                                 when (selectedTab) {
                                     QuickMenuTab.HUD -> {
@@ -1024,8 +1118,6 @@ fun QuickMenu(
     LaunchedEffect(isVisible, selectedTab) {
         onToolsVisibilityChanged(isVisible && selectedTab == QuickMenuTab.TOOLS)
     }
-
-    val focusManager = LocalFocusManager.current
 
     // RC2/RC3 (spec 2026-08-10, §3.2/§3.3): the ONE focus bootstrap, shared by the opening
     // effect and the focus guardian (composition instead of duplication). For EFFECTS the
@@ -1864,6 +1956,7 @@ private fun QuickMenuSectionHeader(
 @Composable
 private fun QuickMenuCloseButton(
     onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -1872,6 +1965,7 @@ private fun QuickMenuCloseButton(
 
     Box(
         modifier = modifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .size(44.dp)
             .clip(shape)
             .background(

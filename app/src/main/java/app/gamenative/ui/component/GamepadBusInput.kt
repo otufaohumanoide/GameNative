@@ -131,6 +131,12 @@ enum class ModeKeyBehavior {
  * - KEYCODE_BUTTON_MODE (Home/PS) -> always consumed; with [ModeKeyBehavior.CloseOverlay]
  *   the first ACTION_DOWN invokes [onCloseOverlay] (spec 2026-08-10, §3.5 — G6: PS toggles
  *   the QuickMenu open/closed).
+ * - BUTTON_START (Options/≡) -> always consumed; with [ModeKeyBehavior.CloseOverlay] it
+ *   CLOSES the overlay like PS (P1, spec 2026-08-12: START mirrors HOME as the second
+ *   system toggle; the open half is handled by XServerScreen when the menu is closed).
+ * - BUTTON_SELECT (View/Share) -> always consumed while an overlay is open (P1): neither
+ *   START nor SELECT may ever reach the game behind the open menu (unexpected pause / in-
+ *   game UI opening).
  *
  * [GamepadKeyBridge] (view-level) stays for dialog windows, whose events never hit this bus.
  */
@@ -165,6 +171,20 @@ fun BusGamepadKeyBridge(
                     onCloseOverlay()
                 }
                 // DOWN/UP always consumed: the game never sees the Mode key with an overlay up.
+                return true
+            }
+            if (event.keyCode == KeyEvent.KEYCODE_BUTTON_START) {
+                // P1 (spec 2026-08-12): START mirrors HOME while an overlay is open —
+                // first ACTION_DOWN closes it; DOWN/UP always consumed.
+                if (modeKeyBehavior == ModeKeyBehavior.CloseOverlay &&
+                    event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
+                ) {
+                    onCloseOverlay()
+                }
+                return true
+            }
+            if (event.keyCode == KeyEvent.KEYCODE_BUTTON_SELECT) {
+                // P1: consumed so the game never reacts behind the open overlay.
                 return true
             }
             if (event.keyCode == KeyEvent.KEYCODE_BUTTON_A) {

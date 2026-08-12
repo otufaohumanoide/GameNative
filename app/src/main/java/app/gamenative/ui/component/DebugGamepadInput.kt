@@ -84,17 +84,29 @@ private fun gamepadDeviceId(): Int? {
             Integer.toHexString(device.sources)
     }
     Log.d("DebugGamepad", "devices: ${all.joinToString(" | ")}")
-    // Exclude virtual devices: the app's controller routing rejects them
-    // (ExternalController.isGameController), and Android's virtual device (id -1)
-    // also advertises SOURCE_GAMEPAD. The fingerprint reader (uinput-fpc) also
-    // advertises GAMEPAD; a real controller uniquely has GAMEPAD + JOYSTICK + axes.
-    return ids.firstOrNull { id ->
-        val device = InputDevice.getDevice(id)
-        device != null && !device.isVirtual &&
-            (device.sources and InputDevice.SOURCE_GAMEPAD) != 0 &&
-            (device.sources and InputDevice.SOURCE_JOYSTICK) != 0 &&
+    // Prefer the REAL controller, not peripheral sub-devices: a DS4 exposes three
+    // devices ("Wireless Controller" + Touchpad + Motion Sensors) and the touchpad also
+    // advertises GAMEPAD — but only the main controller has gamepad BUTTON keys, which
+    // is what the app's routing (ExternalController.isGameController) actually accepts.
+    // Score: +2 for gamepad source with button keys, +1 for joystick + axes.
+    data class Candidate(val id: Int, val score: Int)
+    val best = ids.toList().mapNotNull { id ->
+        val device = InputDevice.getDevice(id) ?: return@mapNotNull null
+        if (device.isVirtual) return@mapNotNull null
+        var score = 0
+        val hasGamepadKeys = device.hasKeys(
+            KeyEvent.KEYCODE_BUTTON_A,
+            KeyEvent.KEYCODE_BUTTON_B,
+            KeyEvent.KEYCODE_BUTTON_X,
+            KeyEvent.KEYCODE_BUTTON_Y,
+        ).any { it }
+        if ((device.sources and InputDevice.SOURCE_GAMEPAD) != 0 && hasGamepadKeys) score += 2
+        if ((device.sources and InputDevice.SOURCE_JOYSTICK) != 0 &&
             device.getMotionRange(MotionEvent.AXIS_X) != null
-    }
+        ) score += 1
+        if (score > 0) Candidate(id, score) else null
+    }.maxByOrNull { it.score }
+    return best?.id
 }
 
 private fun handleCommand(command: String, activity: Activity) {

@@ -1472,6 +1472,8 @@
     <!-- Full-screen shader browser (spec 2026-08-11-shader-browser-design) -->
     <string name="shader_browser_title">Shaders</string>
     <string name="shader_browser_back">Back</string>
+    <string name="shader_browser_action_select">Select shader</string>
+    <string name="shader_browser_action_close">Close browser</string>
     <string name="shader_browse">Browse shaders</string>
     <string name="shader_browse_subtitle">Explore the full catalog — nothing is pre-installed</string>
     <string name="shader_load_more">Show more (%1$d more)</string>
