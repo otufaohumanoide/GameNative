@@ -1,7 +1,7 @@
 # Spec — libretro/slang-shaders sob demanda (substituição dos presets embarcados)
 
 **Data:** 2026-08-11
-**Status:** implementação em andamento no worktree (não commitada); este documento especifica o desenho completo e o que falta.
+**Status:** implementado e commitado (`f8b39e45`, tag `milestone-2026-08-11-slang-shaders-on-demand`); verificação on-device (§8.2) **pendente — sem dispositivo disponível** (loop adaptado para `files/retroarch_pack` em `tools/shader-test-loop/shader_test_loop.py`).
 **Escopo:** apenas os shaders RetroArch (librashader). Os efeitos nativos do renderer (FSR, FXAA, Toon, Vivid, CRT/NTSC nativos, brilho/contraste/gama) e todo o resto do app **não são tocados**.
 
 ---
