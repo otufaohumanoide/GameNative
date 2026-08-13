@@ -1111,6 +1111,8 @@
     <string name="settings_interface_show_gamepad_hints_subtitle">Show the controller button hints bar at the bottom of the screen</string>
     <string name="settings_interface_home_straight_to_game_title">Home button returns to the game</string>
     <string name="settings_interface_home_straight_to_game_subtitle">With the in-game menu open, Home closes everything and resumes the game instead of showing the Play screen</string>
+    <string name="settings_interface_ignore_controller_touchpad_title">Ignore controller touchpad</string>
+    <string name="settings_interface_ignore_controller_touchpad_subtitle">Silences keys and motion from the controller touchpad — useful when a worn controller sends phantom inputs</string>
     <string name="settings_interface_icon_style">Icon style</string>
     <string name="settings_interface_custom_games">Custom Games</string>
     <string name="settings_interface_custom_game_import_as_steam">Import custom games as Steam games</string>

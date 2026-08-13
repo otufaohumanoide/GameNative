@@ -1,10 +1,12 @@
 package app.gamenative.ui.component
 
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.View
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalView
+import app.gamenative.PrefManager
 
 /**
  * Bridges gamepad buttons that Compose does not understand natively.
@@ -27,6 +29,14 @@ fun GamepadKeyBridge(enabled: Boolean) {
     DisposableEffect(enabled, view) {
         if (!enabled) return@DisposableEffect onDispose {}
         val listener = View.OnKeyListener { _, keyCode, event ->
+            // Ghost gate (spec 2026-08-13): dialog windows are separate surfaces that never
+            // pass through MainActivity's dispatcher — consume phantom touchpad keys silently
+            // so a worn controller can't activate dialog rows (A -> DPAD_CENTER below).
+            if ((event.source and InputDevice.SOURCE_CLASS_POINTER) != 0 &&
+                PrefManager.ignoreControllerTouchpad
+            ) {
+                return@OnKeyListener true
+            }
             when (keyCode) {
                 KeyEvent.KEYCODE_BUTTON_A -> {
                     if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {

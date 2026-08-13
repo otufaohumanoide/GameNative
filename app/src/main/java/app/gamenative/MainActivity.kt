@@ -11,6 +11,7 @@ import android.graphics.Color.TRANSPARENT
 import android.hardware.input.InputManager
 import android.os.Build
 import android.os.Bundle
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.OrientationEventListener
@@ -588,6 +589,20 @@ class MainActivity : ComponentActivity() {
         }
         // Log.d("MainActivity$index", "dispatchKeyEvent(${event.keyCode}):\n$event")
 
+        // Ghost-input gate (evidence: logcat 2026-08-13 — "Wireless Controller Touchpad"
+        // emitted 63 phantom DPAD/B/BACK keys in ~9 min with the real stick idle; a worn
+        // DS4 touchpad reports a mixed JOYSTICK|POINTER source). Pointer-class streams on a
+        // game controller are never physical buttons: consume BEFORE the bus so ghosts
+        // can't reach the game, the overlay or the activity back path. Gated by
+        // PrefManager.ignoreControllerTouchpad (default ON) so a working touchpad can be
+        // re-exposed; a future touchpad→mouse feature plugs into this exact point.
+        if (PrefManager.ignoreControllerTouchpad &&
+            ExternalController.isGameController(event.device) &&
+            (event.source and InputDevice.SOURCE_CLASS_POINTER) != 0
+        ) {
+            return true
+        }
+
         var eventDispatched = PluviaApp.events.emit(AndroidEvent.KeyEvent(event)) { keyEvent ->
             keyEvent.any { it }
         } == true
@@ -626,6 +641,16 @@ class MainActivity : ComponentActivity() {
             )
         }
         // Log.d("MainActivity$index", "dispatchGenericMotionEvent(${ev?.deviceId}:${ev?.device?.name}):\n$ev")
+
+        // Ghost-input gate (same rule and evidence as dispatchKeyEvent): the touchpad's
+        // absolute finger position arrives on AXIS_X/AXIS_Y and would be routed to the
+        // game as phantom stick motion (mag 1.0) while the user isn't touching anything.
+        if (PrefManager.ignoreControllerTouchpad && ev != null &&
+            ExternalController.isGameController(ev.device) &&
+            (ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0
+        ) {
+            return true
+        }
 
         val eventDispatched = PluviaApp.events.emit(AndroidEvent.MotionEvent(ev)) { event ->
             event.any { it }

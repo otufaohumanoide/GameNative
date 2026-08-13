@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
+import app.gamenative.PrefManager
 
 /**
  * Converts gamepad analog-stick (AXIS_X/AXIS_Y) and hat-switch D-pad (AXIS_HAT_X/AXIS_HAT_Y)
@@ -39,6 +40,14 @@ fun JoystickFocusNavigator(
         var stickState = GamepadStickState()
         val listener = View.OnGenericMotionListener { _, ev ->
             if (ev.actionMasked != MotionEvent.ACTION_MOVE) return@OnGenericMotionListener false
+            // Ghost gate (spec 2026-08-13): dialog windows are separate surfaces that never
+            // pass through MainActivity's dispatcher, so the rule is repeated here — the
+            // controller touchpad (CLASS_POINTER on a JOYSTICK device) never navigates dialogs.
+            if ((ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0 &&
+                PrefManager.ignoreControllerTouchpad
+            ) {
+                return@OnGenericMotionListener false
+            }
             val isGamepad = (ev.source and InputDevice.SOURCE_JOYSTICK) != 0 ||
                 (ev.source and InputDevice.SOURCE_DPAD) != 0
             if (!isGamepad) return@OnGenericMotionListener false

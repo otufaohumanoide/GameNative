@@ -357,6 +357,16 @@ object PrefManager {
             setPref(HOME_BUTTON_STRAIGHT_TO_GAME, value)
         }
 
+    // Ghost-input gate (spec 2026-08-13): worn DS4 touchpads emit phantom DPAD/B/BACK
+    // keys and constant motion with a mixed JOYSTICK|POINTER source. Default ON silences
+    // the touchpad stream; users with a working touchpad can opt out here.
+    private val IGNORE_CONTROLLER_TOUCHPAD = booleanPreferencesKey("ignore_controller_touchpad")
+    var ignoreControllerTouchpad: Boolean
+        get() = getPref(IGNORE_CONTROLLER_TOUCHPAD, true)
+        set(value) {
+            setPref(IGNORE_CONTROLLER_TOUCHPAD, value)
+        }
+
     private val SHOW_FPS = booleanPreferencesKey("show_fps")
     var showFps: Boolean
         get() = getPref(SHOW_FPS, false)

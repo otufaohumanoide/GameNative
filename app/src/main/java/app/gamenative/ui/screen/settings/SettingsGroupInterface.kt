@@ -364,6 +364,21 @@ fun SettingsGroupInterface(
             },
         )
 
+        // Ghost-input gate (spec 2026-08-13): a worn controller touchpad sends phantom
+        // DPAD/B/BACK keys and constant motion (mixed JOYSTICK|POINTER source). Default
+        // ON silences it; users with a working touchpad can opt out here.
+        var ignoreControllerTouchpad by rememberSaveable { mutableStateOf(PrefManager.ignoreControllerTouchpad) }
+        SettingsSwitch(
+            colors = settingsTileColorsAlt(),
+            title = { Text(text = stringResource(R.string.settings_interface_ignore_controller_touchpad_title)) },
+            subtitle = { Text(text = stringResource(R.string.settings_interface_ignore_controller_touchpad_subtitle)) },
+            state = ignoreControllerTouchpad,
+            onCheckedChange = {
+                ignoreControllerTouchpad = it
+                PrefManager.ignoreControllerTouchpad = it
+            },
+        )
+
         var showRecommendations by rememberSaveable { mutableStateOf(PrefManager.showRecommendations) }
         SettingsSwitch(
             colors = settingsTileColorsAlt(),
