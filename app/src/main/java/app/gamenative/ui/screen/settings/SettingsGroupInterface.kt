@@ -349,6 +349,21 @@ fun SettingsGroupInterface(
             },
         )
 
+        // Home/START straight to the game (spec 2026-08-13-home-button-overlay-exit, M2):
+        // with the in-game menu open, Home closes everything and resumes the game
+        // instead of showing the manual Play screen.
+        var homeStraightToGame by rememberSaveable { mutableStateOf(PrefManager.homeButtonStraightToGame) }
+        SettingsSwitch(
+            colors = settingsTileColorsAlt(),
+            title = { Text(text = stringResource(R.string.settings_interface_home_straight_to_game_title)) },
+            subtitle = { Text(text = stringResource(R.string.settings_interface_home_straight_to_game_subtitle)) },
+            state = homeStraightToGame,
+            onCheckedChange = {
+                homeStraightToGame = it
+                PrefManager.homeButtonStraightToGame = it
+            },
+        )
+
         var showRecommendations by rememberSaveable { mutableStateOf(PrefManager.showRecommendations) }
         SettingsSwitch(
             colors = settingsTileColorsAlt(),

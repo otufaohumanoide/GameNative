@@ -259,6 +259,7 @@ private fun matchesPerformanceHudPreset(
 fun QuickMenu(
     isVisible: Boolean,
     onDismiss: () -> Unit,
+    onHomeFromOverlay: () -> Unit = onDismiss,
     onItemSelected: (Int) -> Boolean,
     renderer: VulkanRenderer? = null,
     glRenderer: GLRenderer? = null,
@@ -688,11 +689,13 @@ fun QuickMenu(
         if (shaderBrowserOpen && shaderSection != null) {
             // Full-screen shader browser: replaces the menu content (no focusable rows
             // behind it), owns the gamepad scope while open (the menu navigator/bridge
-            // below are not composed), and closes via B/back/PS.
+            // below are not composed), and closes via B/back; Home closes everything
+            // through onHome (spec 2026-08-13-home-button-overlay-exit, M1).
             ShaderBrowserOverlay(
                 state = shaderSection,
                 onClose = { shaderBrowserOpen = false },
                 onCloseQuickMenu = onDismiss,
+                onHome = onHomeFromOverlay,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -702,12 +705,13 @@ fun QuickMenu(
         BusJoystickFocusNavigator(enabled = isVisible)
         // Gamepad A/B/L1/R1/L2/R2 -> Compose, delivered directly to this ComposeView and
         // consumed so the game never sees them while the overlay is open. PS (Mode key)
-        // closes the menu (spec 2026-08-10, §3.5 — G6): PS opens it via
-        // PhysicalControllerHandler when closed, the bridge closes it when open.
+        // routes through onHomeFromOverlay (spec 2026-08-10, §3.5 — G6): PS opens the
+        // menu via PhysicalControllerHandler when closed; when open, it closes it (and
+        // with the Home-straight-to-game option, resumes the game — M2).
         BusGamepadKeyBridge(
             enabled = isVisible && !shaderBrowserOpen,
             modeKeyBehavior = ModeKeyBehavior.CloseOverlay,
-            onCloseOverlay = onDismiss,
+            onCloseOverlay = onHomeFromOverlay,
         )
 
         AnimatedVisibility(

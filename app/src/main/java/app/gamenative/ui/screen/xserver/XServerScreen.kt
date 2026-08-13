@@ -1125,6 +1125,18 @@ fun XServerScreen(
         }
     }
 
+    // Home/START exit (spec 2026-08-13-home-button-overlay-exit): closes every overlay
+    // layer in one press. With the opt-in pref ON (and a manual-resume container), the
+    // game resumes straight away instead of landing on the Play screen. The flag must be
+    // set AFTER dismissOverlayMenu() — that lambda overwrites it with the keyboard path.
+    val dismissOverlayToGame: () -> Unit = remember {
+        {
+            dismissOverlayMenu()
+            shouldForceResumeOnMenuClose =
+                PrefManager.homeButtonStraightToGame && manualResumeMode && !neverSuspend
+        }
+    }
+
     LaunchedEffect(showQuickMenu, quickMenuToolsVisible, xServerView) {
         if (!showQuickMenu || !quickMenuToolsVisible) {
             quickMenuWineProcesses = emptyList()
@@ -2771,6 +2783,7 @@ fun XServerScreen(
         QuickMenu(
             isVisible = showQuickMenu,
             onDismiss = dismissOverlayMenu,
+            onHomeFromOverlay = dismissOverlayToGame,
             onItemSelected = onQuickMenuItemSelected,
             renderer = xServerView?.renderer as? VulkanRenderer,
             glRenderer = xServerView?.renderer as? GLRenderer,

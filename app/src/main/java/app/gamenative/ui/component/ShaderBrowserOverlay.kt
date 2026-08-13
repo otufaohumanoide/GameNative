@@ -170,6 +170,7 @@ fun ShaderBrowserOverlay(
     state: ShaderSectionState,
     onClose: () -> Unit,
     onCloseQuickMenu: () -> Unit,
+    onHome: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val catalog = state.catalog
@@ -182,11 +183,13 @@ fun ShaderBrowserOverlay(
     }
 
     // Own gamepad scope: the QuickMenu's navigator/bridge are gated off while open.
+    // Home (PS/Guide) closes EVERYTHING (browser + menu) through [onHome]
+    // (spec 2026-08-13-home-button-overlay-exit, M1) — B/back stays hierarchical.
     BusJoystickFocusNavigator(enabled = true)
     BusGamepadKeyBridge(
         enabled = true,
         modeKeyBehavior = ModeKeyBehavior.CloseOverlay,
-        onCloseOverlay = onClose,
+        onCloseOverlay = onHome,
     )
 
     // Navigation, search and pagination are CACHED (state.browser): reopening the browser
@@ -877,8 +880,9 @@ fun ShaderBrowserOverlay(
 
         // P3 (spec 2026-08-12): the deepest surface needs its key hints the most — the
         // browser replaces the whole menu content, so its own footer teaches A (select /
-        // download), B (back) and PS/Guide (close browser). Shown only with a gamepad
-        // connected (shouldShowGamepadUI), like the menu's bar.
+        // download), B (back) and PS/Guide (back to the game — Home closes the browser
+        // AND the menu, spec 2026-08-13-home-button-overlay-exit M1). Shown only with a
+        // gamepad connected (shouldShowGamepadUI), like the menu's bar.
         // M1 (spec 2026-08-12): pagination hints (LB/RB) follow the QuickMenu footer
         // pattern — short labels, six actions max, so the bar stays one line inside the
         // menu panel width. LT/RT hold-paging still works but is not advertised here:

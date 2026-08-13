@@ -1109,6 +1109,8 @@
     <string name="settings_interface_warn_before_exit_subtitle">Require double back press to exit — first press shows a warning</string>
     <string name="settings_interface_show_gamepad_hints_title">Show controller hints</string>
     <string name="settings_interface_show_gamepad_hints_subtitle">Show the controller button hints bar at the bottom of the screen</string>
+    <string name="settings_interface_home_straight_to_game_title">Home button returns to the game</string>
+    <string name="settings_interface_home_straight_to_game_subtitle">With the in-game menu open, Home closes everything and resumes the game instead of showing the Play screen</string>
     <string name="settings_interface_icon_style">Icon style</string>
     <string name="settings_interface_custom_games">Custom Games</string>
     <string name="settings_interface_custom_game_import_as_steam">Import custom games as Steam games</string>
@@ -1476,7 +1478,7 @@
     <string name="shader_browser_title">Shaders</string>
     <string name="shader_browser_back">Back</string>
     <string name="shader_browser_action_select">Select</string>
-    <string name="shader_browser_action_close">Close</string>
+    <string name="shader_browser_action_close">Back to game</string>
     <string name="shader_browser_action_prev_page">Prev page</string>
     <string name="shader_browser_action_next_page">Next page</string>
     <string name="shader_browse">Browse shaders</string>
