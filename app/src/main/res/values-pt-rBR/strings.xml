@@ -1118,12 +1118,10 @@
     <!-- Browser de shaders em tela cheia (spec 2026-08-11-shader-browser-design) -->
     <string name="shader_browser_title">Shaders</string>
     <string name="shader_browser_back">Voltar</string>
-    <string name="shader_browser_action_select">Selecionar shader</string>
-    <string name="shader_browser_action_close">Fechar browser</string>
-    <string name="shader_browser_action_prev_page">Página anterior</string>
-    <string name="shader_browser_action_next_page">Próxima página</string>
-    <string name="shader_browser_action_prev_page_hold">Anterior (segurar)</string>
-    <string name="shader_browser_action_next_page_hold">Próxima (segurar)</string>
+    <string name="shader_browser_action_select">Selecionar</string>
+    <string name="shader_browser_action_close">Fechar</string>
+    <string name="shader_browser_action_prev_page">Anterior</string>
+    <string name="shader_browser_action_next_page">Próxima</string>
     <string name="shader_browse">Explorar shaders</string>
     <string name="shader_browse_subtitle">Explore o catálogo completo — nada vem pré-instalado</string>
     <string name="shader_load_more">Mostrar mais (%1$d restantes)</string>

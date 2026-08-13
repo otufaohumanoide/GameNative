@@ -879,17 +879,17 @@ fun ShaderBrowserOverlay(
         // browser replaces the whole menu content, so its own footer teaches A (select /
         // download), B (back) and PS/Guide (close browser). Shown only with a gamepad
         // connected (shouldShowGamepadUI), like the menu's bar.
+        // M1 (spec 2026-08-12): pagination hints (LB/RB) follow the QuickMenu footer
+        // pattern — short labels, six actions max, so the bar stays one line inside the
+        // menu panel width. LT/RT hold-paging still works but is not advertised here:
+        // eight actions overflowed the panel and collapsed the shader list.
         GamepadActionBar(
             actions = listOf(
                 GamepadAction(GamepadButton.A, R.string.shader_browser_action_select),
                 GamepadAction(GamepadButton.B, R.string.shader_browser_back),
                 GamepadAction(GamepadButton.Y, R.string.shader_browser_action_favorite),
-                // M1 (spec 2026-08-12): the deepest surface teaches its pagination —
-                // LB/RB page one step, LT/RT repeat while held (labels say so).
                 GamepadAction(GamepadButton.LB, R.string.shader_browser_action_prev_page),
                 GamepadAction(GamepadButton.RB, R.string.shader_browser_action_next_page),
-                GamepadAction(GamepadButton.LT, R.string.shader_browser_action_prev_page_hold),
-                GamepadAction(GamepadButton.RT, R.string.shader_browser_action_next_page_hold),
                 GamepadAction(GamepadButton.GUIDE, R.string.shader_browser_action_close),
             ),
             modifier = Modifier.padding(horizontal = 4.dp),
