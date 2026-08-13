@@ -83,3 +83,6 @@ nowinandroid/
 # Shader catalog sync: local tarball/extraction cache (spec §3.3 — never commit)
 tools/shaders/cache/
 .reasonix/
+
+# Diretórios de estudo locais (reference/SDL etc. — nunca commit)
+reference/
