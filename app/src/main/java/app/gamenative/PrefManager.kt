@@ -345,7 +345,16 @@ object PrefManager {
     var quickMenuLastTab: Int
         get() = getPref(QUICK_MENU_LAST_TAB, 0)
         set(value) {
-            setPref(QUICK_MENU_LAST_TAB, value.coerceIn(0, 6))
+            // 0..7: HUD..POWER (QuickMenuTab — a aba POWER veio no merge upstream
+            // PR #1698 e não pode ser clampada para 6/INVITE).
+            setPref(QUICK_MENU_LAST_TAB, value.coerceIn(0, 7))
+        }
+
+    private val HOME_BUTTON_STRAIGHT_TO_GAME = booleanPreferencesKey("home_button_straight_to_game")
+    var homeButtonStraightToGame: Boolean
+        get() = getPref(HOME_BUTTON_STRAIGHT_TO_GAME, false)
+        set(value) {
+            setPref(HOME_BUTTON_STRAIGHT_TO_GAME, value)
         }
 
     private val SHOW_FPS = booleanPreferencesKey("show_fps")
