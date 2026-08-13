@@ -39,7 +39,7 @@ import com.winlator.renderer.VulkanRenderer
 class ShaderSectionState(
     private val renderer: VulkanRenderer,
     private val container: Container?,
-    context: Context,
+    private val context: Context,
 ) {
     val catalog: ShaderCatalog? = ShaderCatalog.load(context)
     val pack: ShaderPack = ShaderPack(context, catalog?.data?.source?.commit ?: "")
@@ -124,7 +124,7 @@ class ShaderSectionState(
     // §6 migration: the persisted config may point at the old `retroarch_presets` tree that
     // no longer exists. Resolve it against the installed pack: keep the selection visible,
     // clear unreachable absolute paths, and never touch the network here.
-    private val initial = loadShaderConfig(container)
+    private val initial = loadShaderConfig(context, container)
     private val resolved = resolveShaderConfig(initial, pack.packDir, catalog)
     var shaderEnabled by mutableStateOf(resolved.enabled)
     var shaderPresetPath by mutableStateOf(resolved.presetPath)
@@ -136,16 +136,16 @@ class ShaderSectionState(
         // path so the next load is direct (and XServerScreen loads it at game start).
         if (resolved.presetPath != initial.presetPath) {
             persistShaderConfig(
+                context,
                 container,
                 RetroArchShaderConfig(resolved.enabled, resolved.presetPath, resolved.presetName, "", resolved.relativePath),
             )
-            container?.saveData()
         }
     }
 
     fun persistShaderState(enabled: Boolean, path: String, name: String, relative: String) {
-        persistShaderConfig(container, RetroArchShaderConfig(enabled, path, name, "", relative))
-        container?.saveData()
+        // The per-game store persists on its own (spec 2026-08-12) — no container saveData.
+        persistShaderConfig(context, container, RetroArchShaderConfig(enabled, path, name, "", relative))
     }
 
     fun disableShaders() {

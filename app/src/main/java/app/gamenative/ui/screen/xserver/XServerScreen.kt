@@ -112,6 +112,7 @@ import app.gamenative.shaders.ShaderCatalog
 import app.gamenative.shaders.ShaderLegacyMigration
 import app.gamenative.shaders.ShaderPack
 import app.gamenative.shaders.loadShaderConfig
+import app.gamenative.shaders.migrateShaderConfigFromContainer
 import app.gamenative.shaders.persistShaderConfig
 import app.gamenative.shaders.resolveShaderConfig
 import com.winlator.renderer.RetroArchShaderConfig
@@ -650,6 +651,11 @@ fun XServerScreen(
         // `retroarch` / `retroarch_presets` were materialized by the removed
         // ShaderImporter and no longer exist in the app — frees ~2.4 MB user storage.
         ShaderLegacyMigration.cleanupOnce(context)
+        // One-shot migration of legacy container-extras shader state into the per-game
+        // store (spec 2026-08-12): runs once per install (SharedPreferences flag) at
+        // game-screen boot; scrubs the live container so a later saveData cannot
+        // resurrect the extras.
+        migrateShaderConfigFromContainer(context, container)
         val screenEffectsConfig = loadScreenEffectsConfig(container)
         when (val renderer = xServerView?.renderer) {
             is VulkanRenderer -> {
@@ -671,20 +677,21 @@ fun XServerScreen(
                 // file presence inside the cache — a missing closure simply resolves to
                 // "selection visible, nothing loaded, no automatic download".
                 val packDir = pack.packDir
-                val shaderConfig = loadShaderConfig(container)
+                val shaderConfig = loadShaderConfig(context, container)
                 // Closure-aware: a preset whose dependency files are not all cached
                 // resolves to "selection visible, nothing loaded" — the browser shows it
                 // in the cloud state and a re-pick downloads only the missing files
                 // (2026-08-12: chain create used to fail silently, e.g. technicolor's LUT).
                 val resolved = resolveShaderConfig(shaderConfig, packDir, catalog)
                 if (resolved.presetPath != shaderConfig.presetPath) {
+                    // The per-game store persists on its own — no container.saveData here.
                     persistShaderConfig(
+                        context,
                         container,
                         RetroArchShaderConfig(
                             resolved.enabled, resolved.presetPath, resolved.presetName, "", resolved.relativePath,
                         ),
                     )
-                    container?.saveData()
                 }
                 if (resolved.enabled && resolved.presetPath.isNotEmpty()) {
                     renderer.loadRetroArchShaderPreset(resolved.presetPath)

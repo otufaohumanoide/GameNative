@@ -1,6 +1,8 @@
 package app.gamenative.shaders
 
+import android.content.Context
 import com.winlator.container.Container
+import com.winlator.container.ContainerManager
 import java.io.File
 import com.winlator.renderer.RetroArchShaderConfig
 
@@ -9,26 +11,111 @@ private const val SHADER_KEY_PRESET_PATH = "retroArchShaderPresetPath"
 private const val SHADER_KEY_PRESET_NAME = "retroArchShaderPresetName"
 private const val SHADER_KEY_RELATIVE_PATH = "retroArchShaderRelativePath"
 
-/** Loads the persisted RetroArch shader config from container extras (falling back to defaults). */
-fun loadShaderConfig(container: Container?): RetroArchShaderConfig {
+private const val SHADER_MIGRATION_PREFS = "shader_per_game_migration"
+private const val SHADER_MIGRATION_KEY_DONE = "done_v1"
+
+/**
+ * Loads the persisted per-game RetroArch shader config (spec 2026-08-12) from the
+ * [PerGameShaderStore], keyed by container id (the game appId). No entry == shader off
+ * for that game. Container extras are legacy — read only by the one-shot migration.
+ */
+fun loadShaderConfig(context: Context, container: Container?): RetroArchShaderConfig {
     if (container == null) return RetroArchShaderConfig(false, "", "", "", "")
-    return RetroArchShaderConfig(
-        container.getExtra(SHADER_KEY_ENABLED).toBooleanStrictOrNull() ?: false,
-        container.getExtra(SHADER_KEY_PRESET_PATH),
-        container.getExtra(SHADER_KEY_PRESET_NAME),
-        "",
-        container.getExtra(SHADER_KEY_RELATIVE_PATH),
+    val entry = PerGameShaderStore.fromContext(context).loadForGame(container.id)
+        ?: return RetroArchShaderConfig(false, "", "", "", "")
+    return RetroArchShaderConfig(entry.enabled, entry.presetPath, entry.presetName, "", entry.relativePath)
+}
+
+/**
+ * Persists the per-game RetroArch shader config (spec 2026-08-12) to the
+ * [PerGameShaderStore]. The store persists on its own — callers must NOT call
+ * [Container.saveData] for shader state anymore.
+ */
+fun persistShaderConfig(context: Context, container: Container?, config: RetroArchShaderConfig) {
+    if (container == null) return
+    PerGameShaderStore.fromContext(context).saveForGame(
+        container.id,
+        PerGameShaderConfig(config.enabled, config.presetPath, config.presetName, config.relativePath),
     )
 }
 
-/** Persists the RetroArch shader config to container extras. Callers debounce [Container.saveData]. */
-fun persistShaderConfig(container: Container?, config: RetroArchShaderConfig) {
-    if (container == null) return
-    container.putExtra(SHADER_KEY_ENABLED, config.enabled)
-    container.putExtra(SHADER_KEY_PRESET_PATH, config.presetPath)
-    container.putExtra(SHADER_KEY_PRESET_NAME, config.presetName)
-    container.putExtra(SHADER_KEY_RELATIVE_PATH, config.relativePath)
+/**
+ * One-shot migration decision (spec 2026-08-12, pure function): old shader state lived
+ * in the container extras and must move to the per-game store exactly once per app
+ * install. The store is the source of truth — a pre-existing entry always wins over
+ * stale extras (which are still cleaned up).
+ */
+enum class ShaderMigrationDecision { AlreadyDone, NothingToMigrate, Migrate, StoreAlreadyHasEntry }
+
+fun decideShaderMigration(
+    migrationDone: Boolean,
+    hasContainerExtras: Boolean,
+    storeHasEntry: Boolean,
+): ShaderMigrationDecision = when {
+    migrationDone -> ShaderMigrationDecision.AlreadyDone
+    !hasContainerExtras -> ShaderMigrationDecision.NothingToMigrate
+    storeHasEntry -> ShaderMigrationDecision.StoreAlreadyHasEntry
+    else -> ShaderMigrationDecision.Migrate
 }
+
+/**
+ * One-shot migration (spec 2026-08-12, "padrão da migração §6 do spec de hardening"):
+ * runs once per app install (SharedPreferences flag) at game-screen boot. Every
+ * container with legacy shader extras has its config copied to the per-game store
+ * (preserving the owner game's state — and ONLY it), then the extras are removed.
+ * Games without extras have no store entry and open with shaders off.
+ *
+ * [liveContainer] is the container instance already held by the caller (XServerScreen
+ * boot): its in-memory extras predate the migration, so any later [Container.saveData]
+ * would resurrect the legacy keys on disk. It is scrubbed here explicitly.
+ */
+fun migrateShaderConfigFromContainer(context: Context, liveContainer: Container? = null) {
+    val appContext = context.applicationContext
+    val prefs = appContext.getSharedPreferences(SHADER_MIGRATION_PREFS, Context.MODE_PRIVATE)
+    if (prefs.getBoolean(SHADER_MIGRATION_KEY_DONE, false)) return
+    val store = PerGameShaderStore.fromContext(appContext)
+    val manager = ContainerManager(appContext)
+    for (container in manager.containers) {
+        val hasExtras = hasShaderExtras(container)
+        when (decideShaderMigration(false, hasExtras, store.hasEntry(container.id))) {
+            ShaderMigrationDecision.Migrate ->
+                store.saveForGame(container.id, configFromExtras(container))
+            ShaderMigrationDecision.StoreAlreadyHasEntry -> Unit // store wins; extras still removed below
+            ShaderMigrationDecision.AlreadyDone, ShaderMigrationDecision.NothingToMigrate -> continue
+        }
+        if (hasExtras) {
+            removeShaderExtras(container)
+            container.saveData()
+        }
+    }
+    // Scrub the caller's live instance so later saveData calls cannot resurrect extras.
+    if (liveContainer != null && hasShaderExtras(liveContainer)) {
+        removeShaderExtras(liveContainer)
+        liveContainer.saveData()
+    }
+    prefs.edit().putBoolean(SHADER_MIGRATION_KEY_DONE, true).apply()
+}
+
+private fun hasShaderExtras(container: Container): Boolean =
+    container.getExtra(SHADER_KEY_ENABLED).isNotEmpty() ||
+        container.getExtra(SHADER_KEY_PRESET_PATH).isNotEmpty() ||
+        container.getExtra(SHADER_KEY_PRESET_NAME).isNotEmpty() ||
+        container.getExtra(SHADER_KEY_RELATIVE_PATH).isNotEmpty()
+
+private fun configFromExtras(container: Container): PerGameShaderConfig = PerGameShaderConfig(
+    enabled = container.getExtra(SHADER_KEY_ENABLED).toBooleanStrictOrNull() ?: false,
+    presetPath = container.getExtra(SHADER_KEY_PRESET_PATH),
+    presetName = container.getExtra(SHADER_KEY_PRESET_NAME),
+    relativePath = container.getExtra(SHADER_KEY_RELATIVE_PATH),
+)
+
+private fun removeShaderExtras(container: Container) {
+    container.putExtra(SHADER_KEY_ENABLED, null)
+    container.putExtra(SHADER_KEY_PRESET_PATH, null)
+    container.putExtra(SHADER_KEY_PRESET_NAME, null)
+    container.putExtra(SHADER_KEY_RELATIVE_PATH, null)
+}
+
 /**
  * Result of resolving a persisted shader config against the current pack (spec §6).
  * [presetPath] is the absolute path that should be handed to the renderer — empty means
