@@ -48,6 +48,17 @@ fun BusJoystickFocusNavigator(
             if (!isGamepad) return false
             // Consumed: the overlay owns the stick, even when not moving focus.
             if (ev.actionMasked != MotionEvent.ACTION_MOVE) return true
+            // The DS4 touchpad reports a MIXED source (JOYSTICK|GAMEPAD|TOUCH_NAVIGATION|
+            // CLASS_POINTER): its absolute finger position arrives on AXIS_X/AXIS_Y and reads
+            // as a full-deflection stick (mag 1.0). Driving focus from it poisoned the menu
+            // (evidence, logcat 2026-08-13): it raced every focus bootstrap so focus never
+            // landed, and kept stamping GamepadNavigationClock, so the focus guardian
+            // skipped its restores forever ("user navigating, skipping cycle") — a dead
+            // menu that only a fresh surface (shader browser) could heal. Touchpad motion
+            // is still consumed here (the overlay owns the device), but never translated
+            // into focus moves. CLASS_POINTER is unset on real sticks (SOURCE_JOYSTICK/
+            // SOURCE_DPAD), so this only filters touch-class sources.
+            if ((ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0) return true
             val stickX = ev.getAxisValue(MotionEvent.AXIS_X)
             val stickY = ev.getAxisValue(MotionEvent.AXIS_Y)
             val hatX = ev.getAxisValue(MotionEvent.AXIS_HAT_X)

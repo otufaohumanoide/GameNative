@@ -1183,7 +1183,7 @@ fun QuickMenu(
             repeat(3) {
                 try {
                     val hadFocus = menuHasFocus
-                    when (selectedTab) {
+                    val focusRequested = when (selectedTab) {
                         QuickMenuTab.HUD -> hudItemFocusRequester.requestFocus()
                         QuickMenuTab.LSFG -> lsfgItemFocusRequester.requestFocus()
                         QuickMenuTab.BFG -> bfgItemFocusRequester.requestFocus()
@@ -1202,6 +1202,14 @@ fun QuickMenu(
                     // Wait one frame for the request to actually land (RC3: the walk must
                     // never act on stale/absent focus).
                     withFrameNanos { }
+                    // Instrumentation (evidence, logcat 2026-08-13): false here means the
+                    // requester's node is missing/not focusable (tab content did not
+                    // compose); true-but-not-landed means Compose dropped the request
+                    // (stale-target drop). Distinguishing the two decides the fix.
+                    Timber.d(
+                        "QuickMenu bootstrap: requestFocus(tab=%d)=%b landed=%b",
+                        selectedTab, focusRequested, menuHasFocus,
+                    )
                     if (hadFocus || menuHasFocus) {
                         // Focus is in the menu. Only walk when THIS request landed it — a
                         // pre-existing focus (fast reopen during the exit animation) must
@@ -1231,8 +1239,12 @@ fun QuickMenu(
             // joystick did nothing). From the rail the stick can still navigate (Right
             // enters the content, Down/Up cycle the rail).
             try {
-                hudTabFocusRequester.requestFocus()
+                val railRequested = hudTabFocusRequester.requestFocus()
                 withFrameNanos { }
+                Timber.d(
+                    "QuickMenu bootstrap: rail requestFocus=%b landed=%b",
+                    railRequested, menuHasFocus,
+                )
                 if (menuHasFocus) {
                     railFocused = true
                     Timber.d("QuickMenu bootstrap: fallback to rail focus")
