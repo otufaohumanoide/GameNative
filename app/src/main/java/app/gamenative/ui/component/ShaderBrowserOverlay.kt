@@ -311,11 +311,6 @@ fun ShaderBrowserOverlay(
                             // Next loop iteration retries; never leave the browser dead.
                         }
                     }
-                    // Restored programmatically (no user gesture): stamp the PROGRAMMATIC
-                    // clock so IME suppression treats the landing like a bootstrap. Never
-                    // lastMoveAt — that would suppress the next real move (dedupe) and
-                    // re-arm the guardians without a gesture.
-                    GamepadNavigationClock.programmaticFocusAt = SystemClock.uptimeMillis()
                 }
             }
             delay(400)

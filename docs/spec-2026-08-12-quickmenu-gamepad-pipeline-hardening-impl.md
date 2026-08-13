@@ -113,26 +113,3 @@ repeat-passthrough; supressões nos dois sentidos). Suites existentes verdes
 `docs/MILESTONES.md`.
 
 **Removidos:** nenhum (ver auditoria §2).
-
----
-
-## 6. Follow-ups (adendo pós-revisão, 2026-08-12)
-
-Plano: `docs/superpowers/plans/2026-08-12-gamepad-hardening-followups.md`. Missões e resultados:
-
-| Missão | O quê | Estado |
-|---|---|---|
-| **A** | `GamepadTrace` do MainActivity gateado por `BuildConfig.DEBUG` + filtro barato de source (bitmask GAMEPAD/JOYSTICK) antes de `isGameController` — release não paga nada por evento | ✅ implementado |
-| **B** | Relógios separados no `GamepadNavigationClock`: `lastMoveAt` = SÓ movimentos reais (dedupe/guardiões); novo `programmaticFocusAt` = bootstraps/restores (QuickMenu `requestMenuFocus`, guardian do browser). `SearchFieldImeLogic.arrivedViaGamepad` decide por `maxOf` dos dois — IME continua suprimido no foco programático e o dedupe nunca mais vê stamp de bootstrap (1º movimento pós-abertura nunca suprimido) | ✅ implementado; 5 casos novos em `SearchFieldImeLogicTest` |
-| **C** | Dedupe DPAD×hat nos diálogos: `GamepadFocusScope` ganhou `onPreviewKeyEvent` na raiz (mesma semântica do `BusGamepadKeyBridge` — tecla vencedora estampa o relógio, perdedora é consumida; repeats passam) | ✅ implementado |
-| **D** | C7 focus-lock: `EditModeToolbar` gateada por `!showQuickMenu` (era o alvo de fuga do `moveFocus` atrás do menu). Varredura: manual-resume overlay já gateado; `ControllerSlotStatusOverlay` não é focável (Row+Text); sem outros nós focáveis compostos com `showQuickMenu==true` | ✅ implementado |
-| **F** | Reversão do P1: `BusGamepadKeyBridge` não fecha mais o overlay no BUTTON_START (consumo mantido); bloco "START abre o QuickMenu" removido do `XServerScreen.onKeyEvent` — START volta a fluir para `physicalControllerHandler`/perfil (pause do jogo) | ✅ implementado |
-
-**Verificação:** suíte filtrada (`--tests "*Gamepad*" --tests "*SearchField*" --tests "*Shader*"`)
-verde (inclui os 5 casos novos de B). **On-device pendente (checklist manual):**
-- V4 com o D-pad físico do DS4 no MENU e num DIÁLOGO: 1 pressão = 1 linha (valida C).
-- Menu em edit mode, navegar às bordas: foco não escapa para a toolbar (valida D).
-- Abrir o menu e pressionar o stick imediatamente após o bootstrap: 1º movimento não
-  suprimido (valida B).
-- F: PS abre/fecha; START com menu fechado pausa o jogo (perfil); START com menu aberto é
-  consumido sem fechar o menu.

@@ -10,11 +10,6 @@ roteador centralizado) — sem mudança estrutural. Este documento fecha os 6 at
 
 ## P1 — START/SELECT escapavam para o jogo com o menu aberto
 
-> **REVERTIDO (2026-08-12, decisão do usuário):** o comportamento de START espelhando HOME
-> foi removido — o QuickMenu só alterna por Home/PS; START voltou ao jogo (com o menu
-> fechado, flui para o perfil de controle/pause; com o menu aberto, continua consumido sem
-> fechar o menu). Ver Missão F em `docs/superpowers/plans/2026-08-12-gamepad-hardening-followups.md`.
-
 **Problema:** `BusGamepadKeyBridge` interceptava A/B/L1/R1/L2/R2/DPAD/MODE, mas
 BUTTON_START e BUTTON_SELECT passavam para o jogo por trás do menu (pausa inesperada / UI do
 jogo abrindo).

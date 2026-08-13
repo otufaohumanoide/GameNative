@@ -16,7 +16,7 @@ import org.junit.Test
  */
 class SearchFieldImeLogicTest {
 
-    // ── gamepad arrival detection (real moves × programmatic stamps) ────
+    // ── gamepad arrival detection ─────────────────────────────────────────
 
     @Test
     fun `recent stick move counts as gamepad arrival`() {
@@ -24,7 +24,6 @@ class SearchFieldImeLogicTest {
             SearchFieldImeLogic.arrivedViaGamepad(
                 now = 1_000L,
                 lastMoveAt = 900L,
-                programmaticFocusAt = 0L,
                 windowMs = 400L,
             )
         )
@@ -36,55 +35,6 @@ class SearchFieldImeLogicTest {
             SearchFieldImeLogic.arrivedViaGamepad(
                 now = 1_000L,
                 lastMoveAt = 100L,
-                programmaticFocusAt = 0L,
-                windowMs = 400L,
-            )
-        )
-    }
-
-    @Test
-    fun `recent programmatic stamp counts as gamepad arrival`() {
-        assertTrue(
-            SearchFieldImeLogic.arrivedViaGamepad(
-                now = 1_000L,
-                lastMoveAt = 0L,
-                programmaticFocusAt = 900L,
-                windowMs = 400L,
-            )
-        )
-    }
-
-    @Test
-    fun `stale programmatic stamp does not count as gamepad arrival`() {
-        assertFalse(
-            SearchFieldImeLogic.arrivedViaGamepad(
-                now = 1_000L,
-                lastMoveAt = 0L,
-                programmaticFocusAt = 100L,
-                windowMs = 400L,
-            )
-        )
-    }
-
-    @Test
-    fun `recent move wins over an older programmatic stamp`() {
-        assertTrue(
-            SearchFieldImeLogic.arrivedViaGamepad(
-                now = 1_000L,
-                lastMoveAt = 950L,
-                programmaticFocusAt = 100L,
-                windowMs = 400L,
-            )
-        )
-    }
-
-    @Test
-    fun `recent programmatic stamp wins over an older move`() {
-        assertTrue(
-            SearchFieldImeLogic.arrivedViaGamepad(
-                now = 1_000L,
-                lastMoveAt = 100L,
-                programmaticFocusAt = 980L,
                 windowMs = 400L,
             )
         )
@@ -96,31 +46,17 @@ class SearchFieldImeLogicTest {
             SearchFieldImeLogic.arrivedViaGamepad(
                 now = 1_000L,
                 lastMoveAt = 600L,
-                programmaticFocusAt = 0L,
                 windowMs = 400L,
             )
         )
     }
 
     @Test
-    fun `both stamps exactly at the window boundary do not count`() {
-        assertFalse(
-            SearchFieldImeLogic.arrivedViaGamepad(
-                now = 1_000L,
-                lastMoveAt = 600L,
-                programmaticFocusAt = 600L,
-                windowMs = 400L,
-            )
-        )
-    }
-
-    @Test
-    fun `no stamp at all never counts`() {
+    fun `no move at all never counts`() {
         assertFalse(
             SearchFieldImeLogic.arrivedViaGamepad(
                 now = 1_000L,
                 lastMoveAt = 0L,
-                programmaticFocusAt = 0L,
                 windowMs = 400L,
             )
         )

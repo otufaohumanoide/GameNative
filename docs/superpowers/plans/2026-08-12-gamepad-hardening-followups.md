@@ -143,103 +143,62 @@ segue funcionando (fluxo G7 intocado).
 
 ---
 
-## Missão F — Reversão do P1: START não é mais toggle do QuickMenu (decisão do usuário 2026-08-12)
-
-**Problema:** o P1 (spec `docs/spec-2026-08-12-quickmenu-gamepad-ux-review.md`) fez o START
-espelhar o HOME: abre o menu com ele fechado (XServerScreen.kt:1565-1575) e fecha com ele
-aberto (GamepadBusInput.kt:176-189). **Decisão do usuário:** o QuickMenu só deve
-abrir/fechar por **Home/PS**; START volta a ser do jogo.
-
-**Mudanças (divididas entre Alpha e Gamma — sem overlap de arquivos):**
-
-- **F-bridge (Agent Alpha)** — `GamepadBusInput.kt:176-189`: remover a chamada
-  `onCloseOverlay()` do branch `KEYCODE_BUTTON_START`; MANTER o consumo (`return true`)
-  para DOWN/UP com overlay aberto — START nunca chega ao jogo atrás do menu, mas também
-  não fecha o menu. Atualizar o KDoc do bridge (:134-135) e o comentário do bloco (a
-  menção "START mirrors HOME" sai).
-- **F-XServerScreen (Agent Gamma)** — `XServerScreen.kt:1565-1575`: remover o bloco
-  "START opens QuickMenu (P1 toggle)" e o `handled = true` associado; o fluxo volta a
-  `physicalControllerHandler?.onKeyEvent` → perfil do usuário → `winHandler` (START volta
-  a pausar o jogo com o menu fechado). Atualizar o comentário que referencia P1.
-- **F-docs (Agent Delta)** — notas de reversão: spec hardening (§0 decisão 4 e referências
-  a P1), impl doc, MILESTONES; linha de status na seção P1 do spec
-  `2026-08-12-quickmenu-gamepad-ux-review.md`: "Revertido (2026-08-12) por decisão do
-  usuário — START volta ao jogo; só Home/PS alterna o menu".
-
-**Aceite:** PS abre/fecha intacto (toggle G6); START com menu fechado chega ao jogo
-(pausa via perfil); START com menu aberto é consumido SEM fechar o menu; SELECT continua
-consumido com overlay aberto; nenhum log de abertura do menu disparado por START
-(`GamepadRoute` com ctx=NONE + code=108 não invoca `gameBack`).
-
----
-
-## Missão E — Docs sync + verificação final (SEQUENCIAL, após A–D/F)
+## Missão E — Docs sync + verificação final (SEQUENCIAL, após A–D)
 
 1. **Spec sync:** em `docs/spec-2026-08-12-quickmenu-gamepad-pipeline-hardening.md`,
    adicionar bloco de status no topo: implementado em `55337822`; correção da premissa
    D1 (FocusRing.kt KEPT — callers reais `Modifier.focusRing` na biblioteca; ver impl doc
-   §2); follow-ups A–F implementados neste plano (apontar para este arquivo); **P1
-   revertido** (decisão do usuário: só Home/PS alterna o menu — ver Missão F).
+   §2); follow-ups A–D implementados neste plano (apontar para este arquivo).
 2. **Impl doc:** em `docs/spec-2026-08-12-quickmenu-gamepad-pipeline-hardening-impl.md`,
-   nova seção "Follow-ups (adendo)" resumindo A–F com os resultados de verificação de
+   nova seção "Follow-ups (adendo)" resumindo A–D com os resultados de verificação de
    cada missão (cada agent deve deixar o resumo pronto no seu relatório).
-3. **Spec P1:** em `docs/spec-2026-08-12-quickmenu-gamepad-ux-review.md`, linha de status
-   na seção P1: "Revertido (2026-08-12) por decisão do usuário — START volta ao jogo;
-   só Home/PS alterna o menu".
-4. **MILESTONES.md:** entrada do follow-up com os commits.
-5. **JVM:** rodar a suíte completa (comando no contexto comum) — deve permanecer verde
+3. **MILESTONES.md:** entrada do follow-up com os commits.
+4. **JVM:** rodar a suíte completa (comando no contexto comum) — deve permanecer verde
    com os testes novos de B.
-6. **quickmenu-verify.sh:** sem mudanças obrigatórias; se o cenário [D] (registry) puder
+5. **quickmenu-verify.sh:** sem mudanças obrigatórias; se o cenário [D] (registry) puder
    ganhar um grep de `GamepadTrace` sem fragilizar, adicionar.
-7. **On-device (checklist manual para o usuário):** V4 com o D-pad físico do DS4 no MENU e
+6. **On-device (checklist manual para o usuário):** V4 com o D-pad físico do DS4 no MENU e
    num DIÁLOGO (1 pressão = 1 linha — valida C); abrir o menu em edit mode e navegar às
    bordas (valida D); abrir o menu e pressionar o stick imediatamente após o bootstrap
-   (valida B — 1º movimento não suprimido); **F:** PS abre/fecha; START com menu fechado
-   pausa o jogo; START com menu aberto é consumido sem fechar o menu.
+   (valida B — 1º movimento não suprimido).
 
 ---
 
 ## Dispatch dos subagents (4 paralelos + 1 sequencial)
 
-### Agent Alpha — Missões A + B + F-bridge
+### Agent Alpha — Missões A + B
 Arquivos: `MainActivity.kt`, `GamepadBusInput.kt`, `QuickMenu.kt`, `ShaderBrowserOverlay.kt`,
 `SearchFieldImeLogic.kt`, `GamepadSearchField.kt`, `SearchFieldImeLogicTest.kt`.
 Entregar: diff + `testModernDebugUnitTest --tests "*SearchField*" --tests "*Gamepad*"` verde.
-(Anotar nos commits: "fix(gamepad): … (plano 2026-08-12 follow-ups, missões A/B/F-bridge)".)
+(Anotar nos commits: "fix(gamepad): … (plano 2026-08-12 follow-ups, missões A/B)".)
 
 ### Agent Beta — Missão C
 Arquivos: `GamepadModifiers.kt` (somente `GamepadFocusScope`); ler `GamepadMoveDedupe.kt`
 e `JoystickFocusNavigator.kt` para manter simetria.
 Entregar: diff + testes `GamepadModifiersTest` verdes.
 
-### Agent Gamma — Missões D + F-XServerScreen
-Arquivos: `XServerScreen.kt` (gate da toolbar + varredura de focusables + remoção do bloco
-P1 do START).
+### Agent Gamma — Missão D
+Arquivos: `XServerScreen.kt` (call site da toolbar + varredura de focusables).
 Entregar: diff + relatório da varredura (lista de nós focáveis compostos com
-`showQuickMenu==true` fora do QuickMenu e o que foi feito em cada um) + confirmação de que
-START com menu fechado volta a fluir para `physicalControllerHandler`.
+`showQuickMenu==true` fora do QuickMenu e o que foi feito em cada um).
 
 ### Agent Delta — Missão E (rodar SÓ DEPOIS que Alpha/Beta/Gamma terminarem)
-Arquivos: docs (spec hardening + spec P1 + impl doc + MILESTONES), opcional
-`tools/quickmenu-verify.sh`.
-Entregar: docs sincronizados (inclui a reversão do P1) + suíte JVM completa verde +
-checklist on-device pronto para o usuário.
+Arquivos: docs (spec + impl doc + MILESTONES), opcional `tools/quickmenu-verify.sh`.
+Entregar: docs sincronizados + suíte JVM completa verde + checklist on-device pronto para
+o usuário.
 
 ---
 
 ## Ordem e dependências
 
 ```
-Alpha (A+B+F-bridge) ─┐
-Beta  (C)             ─┼─ (paralelos, sem overlap de arquivos) ─► Delta (E, sequencial)
-Gamma (D+F-xserver)   ─┘
+Alpha (A+B) ─┐
+Beta  (C)    ─┼─ (paralelos, sem overlap de arquivos) ─► Delta (E, sequencial)
+Gamma (D)    ─┘
 ```
 
 - Alpha/Beta/Gamma não compartilham arquivos: sem conflitos de merge.
 - Beta pode começar imediatamente (C não depende de B: o dedupe consulta `lastMoveAt`,
   que após B passa a conter SÓ movimentos reais — melhor, mas não bloqueante).
-- F está fatiada por ARQUIVO (bridge = Alpha; XServerScreen = Gamma) — as duas metades
-  são independentes em código; a semântica completa só fecha quando ambas estiverem
-  aplicadas (verificação on-device de F é item do Delta).
 - Delta é o único autorizado a tocar docs/MILESTONES (evita conflito com os commits dos
   outros três).
