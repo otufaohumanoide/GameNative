@@ -82,6 +82,15 @@ object GamepadKeyLogic {
     }
 
     /**
+     * `gamepadSelectable` optional Y handler (spec 2026-08-12, M3 — favoritos no browser):
+     * raw Y on ACTION_DOWN with repeatCount == 0 and only when the node is focused. Y is
+     * not consumed by any other surface today, so rows that opt in never fight navigation.
+     */
+    fun selectableYKey(keyCode: Int, action: Int, repeatCount: Int, isFocused: Boolean): Boolean =
+        isFocused && action == KeyEvent.ACTION_DOWN && repeatCount == 0 &&
+            keyCode == KeyEvent.KEYCODE_BUTTON_Y
+
+    /**
      * `gamepadBackHandler`: consumes only the RAW gamepad B (KEYCODE_BUTTON_B) on ACTION_DOWN.
      * Physical BACK is deliberately NOT handled here — it goes through the OnBackPressedDispatcher
      * (BackHandler) so the two paths can never double-fire (spec §3.1, "caminhos disjuntos").
@@ -111,6 +120,7 @@ fun Modifier.gamepadSelectable(
     shape: Shape,
     interactionSource: MutableInteractionSource,
     accentColor: Color = MaterialTheme.colorScheme.primary,
+    onYKey: (() -> Unit)? = null,
 ): Modifier {
     val isFocused by interactionSource.collectIsFocusedAsState()
     return this
@@ -134,6 +144,15 @@ fun Modifier.gamepadSelectable(
                 )
             ) {
                 onClick()
+                true
+            } else if (onYKey != null && GamepadKeyLogic.selectableYKey(
+                    keyCode = native.keyCode,
+                    action = native.action,
+                    repeatCount = native.repeatCount,
+                    isFocused = isFocused,
+                )
+            ) {
+                onYKey()
                 true
             } else {
                 false

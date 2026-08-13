@@ -22,7 +22,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -44,7 +46,11 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -53,11 +59,14 @@ import app.gamenative.R
 import app.gamenative.shaders.ApplyPresetResult
 import app.gamenative.shaders.PackPrechecks
 import app.gamenative.shaders.ShaderDoubleClickLogic
+import app.gamenative.shaders.ShaderPagingLogic
 import app.gamenative.shaders.ShaderPreset
+import app.gamenative.shaders.ShaderPresetCost
 import app.gamenative.shaders.friendlyName
 import app.gamenative.ui.component.dialog.MessageDialog
 import app.gamenative.ui.theme.PluviaTheme
 import android.os.SystemClock
+import android.view.KeyEvent
 import kotlinx.coroutines.delay
 import timber.log.Timber
 import java.util.Locale
@@ -214,6 +223,19 @@ fun ShaderBrowserOverlay(
         }
     }
 
+    // M3 (spec 2026-08-12 — favoritos): SharedPreferences is not Compose state, so the
+    // favorite paths are mirrored into an observable local list — toggling updates the
+    // store AND the list, and the star / Home "Favoritos" section recompose immediately.
+    // (A bare state WRITE with no reader does not invalidate Compose — the mirror IS
+    // the read source; this also avoids SharedPreferences reads per row recomposition.)
+    var favoritePaths by remember { mutableStateOf(state.favorites.list()) }
+    val context = LocalContext.current
+    fun toggleFavorite(preset: ShaderPreset) {
+        state.favorites.toggle(preset.path)
+        favoritePaths = state.favorites.list()
+        GamepadHaptics.vibrate(context)
+    }
+
     var navTick by remember { mutableIntStateOf(0) }
     var pendingFocus by remember { mutableIntStateOf(-1) }
     fun goTo(screen: ShaderBrowserScreen) {
@@ -236,6 +258,53 @@ fun ShaderBrowserOverlay(
         } else {
             onClose()
         }
+    }
+
+    /**
+     * M1 (spec 2026-08-12 — paginação por gamepad): L1/R1 step one page (repeat-gated
+     * by the caller, P2 pattern), L2/R2 page continuously (P5 pattern). Only screens
+     * with a slice are pageable — search results (pages["search"]) and family screens
+     * (pages[familyKey]). The Home surface (recents + family list, no LoadMore row)
+     * ignores the keys entirely: no surprise paging where there is nothing to page.
+     *
+     * Focus after paging reuses the existing pendingFocus/navTick protocol: the row
+     * that was focused BEFORE the swap, clamped into the new page's slots (the clamp
+     * prevents asking for the "Show more" row of a page that does not have one), so
+     * the selection keeps its relative position and Compose auto-scrolls it in.
+     *
+     * @return true when the page actually changed (caller consumes the key).
+     */
+    fun pageScreen(delta: Int): Boolean {
+        val screen = nav.current
+        // Home is pageable ONLY while showing search results (its other branch — recents
+        // + family list — has no slice). Family screens are always pageable.
+        val isSearch = screen == ShaderBrowserScreen.Home && state.browser.query.isNotBlank()
+        if (!isSearch && screen !is ShaderBrowserScreen.Family) return false
+        val key: String
+        val count: Int
+        if (isSearch) {
+            key = "search"
+            count = catalog.search(state.browser.query).size
+        } else {
+            val family = screen as ShaderBrowserScreen.Family
+            key = family.key()
+            count = catalog.presetsIn(family.name, family.subfolder).size
+        }
+        val current = pages[key] ?: 0
+        val newPage = ShaderPagingLogic.decidePage(current, delta, count, PAGE_SIZE)
+        if (newPage == current) return false
+
+        // Slots of the NEW page composition: preset slice + optional "Show more" row
+        // (+1 for the search field slot, which is not part of any page).
+        val sliceSize = minOf(PAGE_SIZE, count - newPage * PAGE_SIZE).coerceAtLeast(0)
+        val remaining = count - (newPage + 1) * PAGE_SIZE
+        val rows = sliceSize + if (remaining > 0) 1 else 0
+        val slots = rows + if (isSearch) 1 else 0
+        val oldFocus = focusIndices[screenKey] ?: 0
+        pendingFocus = ShaderPagingLogic.clampRowIndex(oldFocus, slots)
+        pages[key] = newPage
+        navTick++
+        return true
     }
 
     // Initial focus when the browser opens: restore the remembered row of the restored
@@ -331,6 +400,7 @@ fun ShaderBrowserOverlay(
         onClick: () -> Unit,
         onLongClick: (() -> Unit)? = null,
         onKeyEventOverride: ((android.view.KeyEvent) -> Boolean)? = null,
+        onYKey: (() -> Unit)? = null,
         index: Int,
     ) {
         val interactionSource = remember { MutableInteractionSource() }
@@ -371,6 +441,7 @@ fun ShaderBrowserOverlay(
                     shape = RoundedCornerShape(14.dp),
                     interactionSource = interactionSource,
                     accentColor = accent,
+                    onYKey = onYKey,
                 )
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -398,7 +469,12 @@ fun ShaderBrowserOverlay(
                 }
             }
             if (trailingIcon != null) {
-                Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                // Wrap-content (not the fixed 20.dp box): a row can carry the active
+                // check AND the favorite star side by side (M3).
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     trailingIcon()
                 }
             }
@@ -411,6 +487,12 @@ fun ShaderBrowserOverlay(
         val broken = preset.broken
         val downloadingThis = state.installing && state.pendingPreset?.path == preset.path
         val failedThis = state.installFailed && state.pendingPreset?.path == preset.path
+        // M3 (spec 2026-08-12 — favoritos): user-pinned candidates for the experiment
+        // session; independent from recents. Y (focused row) or touch long-press toggles.
+        val favorite = preset.path in favoritePaths
+        // M5 (spec 2026-08-12 — etiqueta "pesado"): data-driven, no curated list —
+        // the manifest's pass count + closure size decide before anything is downloaded.
+        val heavy = ShaderPresetCost.isHeavyPreset(preset)
         // Progressive disclosure (spec 2026-08-12, UX fix 2): while the double-click
         // gesture is armed on THIS row, its subtitle teaches the close-with-shader
         // accelerator. The arm (and the hint) expires with the window.
@@ -467,6 +549,23 @@ fun ShaderBrowserOverlay(
                         Icons.Default.Check,
                         contentDescription = null,
                         tint = PluviaTheme.colors.accentPurple,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                if (favorite) {
+                    Icon(
+                        Icons.Default.Star,
+                        contentDescription = stringResource(R.string.shader_favorite),
+                        tint = Color(0xFFFFC107),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                if (heavy) {
+                    Icon(
+                        Icons.Default.Bolt,
+                        contentDescription = stringResource(R.string.shader_heavy),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
                     )
                 }
             },
@@ -489,10 +588,14 @@ fun ShaderBrowserOverlay(
                 null
             },
             onLongClick = if (downloadingThis) {
+                // Cancel keeps priority while a download is in flight on this row
+                // (spec 2026-08-12, UX fix 1); otherwise long-press toggles the
+                // favorite (M3).
                 { state.cancelInstall() }
             } else {
-                null
+                { toggleFavorite(preset) }
             },
+            onYKey = { toggleFavorite(preset) },
             onClick = {
                 when {
                     broken -> Unit
@@ -563,6 +666,28 @@ fun ShaderBrowserOverlay(
                 if (browserHasFocus != focusState.hasFocus) {
                     browserHasFocus = focusState.hasFocus
                     Timber.d("ShaderBrowser root focus: %b", focusState.hasFocus)
+                }
+            }
+            // M1 (spec 2026-08-12 — paginação por gamepad): L1/R1 page one step gated by
+            // repeatCount == 0 (the Android key repeat must not cycle pages — P2 pattern),
+            // L2/R2 page continuously while held (P5 pattern). Only consumed when the page
+            // actually changed; the preview phase runs before the focused row, so this
+            // works wherever the focus is.
+            .onPreviewKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    val native = keyEvent.nativeKeyEvent
+                    val consumed = when (native.keyCode) {
+                        KeyEvent.KEYCODE_BUTTON_L1 ->
+                            if (native.repeatCount == 0) pageScreen(-1) else false
+                        KeyEvent.KEYCODE_BUTTON_R1 ->
+                            if (native.repeatCount == 0) pageScreen(+1) else false
+                        KeyEvent.KEYCODE_BUTTON_L2 -> pageScreen(-1)
+                        KeyEvent.KEYCODE_BUTTON_R2 -> pageScreen(+1)
+                        else -> false
+                    }
+                    consumed
+                } else {
+                    false
                 }
             }
             .background(MaterialTheme.colorScheme.surface)
@@ -682,6 +807,17 @@ fun ShaderBrowserOverlay(
                             }
                         }
                     } else {
+                        // M3 (spec 2026-08-12 — favoritos): stable "candidates" list,
+                        // ABOVE recents, same rows (broken presets filtered out).
+                        val favorites = favoritePaths
+                            .mapNotNull { catalog.preset(it) }
+                            .filter { !it.broken }
+                        if (favorites.isNotEmpty()) {
+                            SectionHeader(stringResource(R.string.shader_favorites))
+                            favorites.forEach { PresetRow(it, nextSlot()) }
+                            Spacer(modifier = Modifier.height(6.dp))
+                        }
+
                         val recents = state.recents.list()
                             .mapNotNull { catalog.preset(it) }
                             .filter { !it.broken }
@@ -747,6 +883,13 @@ fun ShaderBrowserOverlay(
             actions = listOf(
                 GamepadAction(GamepadButton.A, R.string.shader_browser_action_select),
                 GamepadAction(GamepadButton.B, R.string.shader_browser_back),
+                GamepadAction(GamepadButton.Y, R.string.shader_browser_action_favorite),
+                // M1 (spec 2026-08-12): the deepest surface teaches its pagination —
+                // LB/RB page one step, LT/RT repeat while held (labels say so).
+                GamepadAction(GamepadButton.LB, R.string.shader_browser_action_prev_page),
+                GamepadAction(GamepadButton.RB, R.string.shader_browser_action_next_page),
+                GamepadAction(GamepadButton.LT, R.string.shader_browser_action_prev_page_hold),
+                GamepadAction(GamepadButton.RT, R.string.shader_browser_action_next_page_hold),
                 GamepadAction(GamepadButton.GUIDE, R.string.shader_browser_action_close),
             ),
             modifier = Modifier.padding(horizontal = 4.dp),

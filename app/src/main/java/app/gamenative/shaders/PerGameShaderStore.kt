@@ -56,6 +56,14 @@ class PerGameShaderStore(private val file: File) {
         write(current)
     }
 
+    /**
+     * App ids with a shader entry whose [PerGameShaderConfig.enabled] is true — the
+     * library badge set (spec 2026-08-12, M4). Malformed content degrades to an empty
+     * set (same policy as [loadForGame]).
+     */
+    fun enabledGameIds(): Set<String> =
+        entries().filterValues { it.enabled }.keys
+
     private fun entries(): Map<String, PerGameShaderConfig> {
         if (!file.isFile) return emptyMap()
         return runCatching {

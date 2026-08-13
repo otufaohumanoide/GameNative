@@ -155,4 +155,40 @@ class PerGameShaderStoreTest {
             decideShaderMigration(migrationDone = false, hasContainerExtras = true, storeHasEntry = false),
         )
     }
+
+    // ── enabledGameIds (spec 2026-08-12, M4: library badge set) ──
+
+    @Test
+    fun `enabledGameIds is empty when the store is missing`() {
+        val s = store()
+        assertTrue(s.enabledGameIds().isEmpty())
+    }
+
+    @Test
+    fun `enabledGameIds contains only games with enabled entries`() {
+        val s = store()
+        s.saveForGame("STEAM_1293830", config(enabled = true))
+        s.saveForGame("STEAM_550", config(enabled = false, presetPath = "", presetName = "", relativePath = ""))
+        s.saveForGame("GOG_19283103", config(enabled = true, presetName = "Technicolor", relativePath = "film/technicolor.slangp"))
+        assertEquals(setOf("STEAM_1293830", "GOG_19283103"), s.enabledGameIds())
+    }
+
+    @Test
+    fun `enabledGameIds drops fully default entries`() {
+        val s = store()
+        s.saveForGame("STEAM_1293830", config(enabled = true))
+        s.saveForGame("STEAM_1293830", config(enabled = false, presetPath = "", presetName = "", relativePath = ""))
+        assertTrue(s.enabledGameIds().isEmpty())
+    }
+
+    @Test
+    fun `enabledGameIds degrades to empty on malformed json`() {
+        val file = File(tmp.root, "per_game.json")
+        file.writeText("{ not valid json !!")
+        val s = PerGameShaderStore(file)
+        assertTrue(s.enabledGameIds().isEmpty())
+        // ... and recovers on the next save
+        s.saveForGame("STEAM_1293830", config())
+        assertEquals(setOf("STEAM_1293830"), s.enabledGameIds())
+    }
 }

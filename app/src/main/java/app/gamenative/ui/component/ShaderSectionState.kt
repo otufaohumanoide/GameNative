@@ -13,6 +13,7 @@ import app.gamenative.shaders.PackCancelledException
 import app.gamenative.shaders.PackMeteredException
 import app.gamenative.shaders.PackNoSpaceException
 import app.gamenative.shaders.ShaderCatalog
+import app.gamenative.shaders.ShaderFavorites
 import app.gamenative.shaders.ShaderPack
 import app.gamenative.shaders.ShaderPreset
 import kotlinx.coroutines.CoroutineScope
@@ -44,6 +45,8 @@ class ShaderSectionState(
     val catalog: ShaderCatalog? = ShaderCatalog.load(context)
     val pack: ShaderPack = ShaderPack(context, catalog?.data?.source?.commit ?: "")
     val recents: ShaderRecents = ShaderRecents(context)
+    /** User-pinned presets (spec 2026-08-12, M3): independent from recents. */
+    val favorites: ShaderFavorites = ShaderFavorites.fromContext(context)
 
     /** Browser navigation cache (user request 2026-08-11): survives browser close/reopen so
      *  the user returns to the same level where the shader was chosen. */

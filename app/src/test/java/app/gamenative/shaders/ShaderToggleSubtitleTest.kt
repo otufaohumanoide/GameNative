@@ -41,4 +41,67 @@ class ShaderToggleSubtitleTest {
             shaderToggleSubtitle(enabled = false, name = "Technicolor", path = "/cache/film/technicolor.slangp"),
         )
     }
+
+    // ── M2 (spec 2026-08-12): an in-flight download dominates every other state ──
+
+    @Test
+    fun `installing wins over active preset`() {
+        assertEquals(
+            ShaderToggleSubtitle.Downloading,
+            shaderToggleSubtitle(
+                enabled = true,
+                name = "Technicolor",
+                path = "/cache/film/technicolor.slangp",
+                installing = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `installing wins over selected but not downloaded`() {
+        assertEquals(
+            ShaderToggleSubtitle.Downloading,
+            shaderToggleSubtitle(
+                enabled = true,
+                name = "Technicolor",
+                path = "",
+                installing = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `installing with everything off still shows downloading`() {
+        assertEquals(
+            ShaderToggleSubtitle.Downloading,
+            shaderToggleSubtitle(
+                enabled = false,
+                name = "",
+                path = "",
+                installing = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `not installing keeps the previous behavior`() {
+        assertEquals(
+            ShaderToggleSubtitle.ActivePreset,
+            shaderToggleSubtitle(
+                enabled = true,
+                name = "Technicolor",
+                path = "/cache/film/technicolor.slangp",
+                installing = false,
+            ),
+        )
+        assertEquals(
+            ShaderToggleSubtitle.Off,
+            shaderToggleSubtitle(
+                enabled = false,
+                name = "",
+                path = "",
+                installing = false,
+            ),
+        )
+    }
 }

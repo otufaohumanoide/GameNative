@@ -618,8 +618,19 @@ fun ScreenEffectsTabContent(
                         enabled = shaderSection.shaderEnabled,
                         name = shaderSection.shaderPresetName,
                         path = shaderSection.shaderPresetPath,
+                        // M2 (spec 2026-08-12): the download lives hoisted in the
+                        // ShaderSectionState, so it survives closing the browser — the
+                        // toggle row must show live progress instead of the stale state.
+                        installing = shaderSection.installing,
                     )
                 ) {
+                    // Downloading dominates every other state (first branch of the pure
+                    // decision): progress updates while the closure caches, then the
+                    // subtitle flips to the applied preset without reopening the browser.
+                    ShaderToggleSubtitle.Downloading -> stringResource(
+                        R.string.shader_downloading,
+                        (shaderSection.progress * 100).toInt(),
+                    )
                     ShaderToggleSubtitle.ActivePreset -> shaderSection.shaderPresetName
                     // Self-heal (2026-08-12): closure incomplete — the selection is visible
                     // but nothing is loaded; re-picking downloads only the missing files.
