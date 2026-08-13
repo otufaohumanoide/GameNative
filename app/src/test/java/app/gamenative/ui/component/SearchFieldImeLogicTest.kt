@@ -3,8 +3,6 @@ package app.gamenative.ui.component
 import android.view.KeyEvent
 import app.gamenative.ui.component.SearchFieldImeLogic.KeyAction
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -15,52 +13,6 @@ import org.junit.Test
  * Only compile-time KeyEvent constants are used, so no Android runtime is needed.
  */
 class SearchFieldImeLogicTest {
-
-    // ── gamepad arrival detection ─────────────────────────────────────────
-
-    @Test
-    fun `recent stick move counts as gamepad arrival`() {
-        assertTrue(
-            SearchFieldImeLogic.arrivedViaGamepad(
-                now = 1_000L,
-                lastMoveAt = 900L,
-                windowMs = 400L,
-            )
-        )
-    }
-
-    @Test
-    fun `stale stick move does not count as gamepad arrival`() {
-        assertFalse(
-            SearchFieldImeLogic.arrivedViaGamepad(
-                now = 1_000L,
-                lastMoveAt = 100L,
-                windowMs = 400L,
-            )
-        )
-    }
-
-    @Test
-    fun `move exactly at the window boundary does not count`() {
-        assertFalse(
-            SearchFieldImeLogic.arrivedViaGamepad(
-                now = 1_000L,
-                lastMoveAt = 600L,
-                windowMs = 400L,
-            )
-        )
-    }
-
-    @Test
-    fun `no move at all never counts`() {
-        assertFalse(
-            SearchFieldImeLogic.arrivedViaGamepad(
-                now = 1_000L,
-                lastMoveAt = 0L,
-                windowMs = 400L,
-            )
-        )
-    }
 
     // ── X opens the IME (only with the field focused and the IME closed) ──
 

@@ -1,9 +1,9 @@
 package app.gamenative.ui.component
 
-import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -47,10 +47,10 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
- * Gamepad-first search field shared by the QuickMenu panel and the shader browser
+ * Gamepad-first search field for the shader browser
  * (extracted from the effects tab, spec 2026-08-10-search-field-ime-explicit-design):
  * the soft keyboard opens ONLY on explicit intent — X (A / DPAD_CENTER / ENTER) opens it,
- * B closes it — never because gamepad navigation (stick/hat, walk-down) landed on the field.
+ * B closes it — never because focus landed on the field (bootstrap, stick/hat, walk-down).
  */
 @Composable
 fun GamepadSearchField(
@@ -93,13 +93,13 @@ fun GamepadSearchField(
         if (searchFieldFocused) {
             Timber.d("QMFocus: row %d focused (search field)", focusIndex)
             onFocusIndexChanged(focusIndex)
-            if (!searchImeWanted && SearchFieldImeLogic.arrivedViaGamepad(
-                    now = SystemClock.uptimeMillis(),
-                    lastMoveAt = GamepadNavigationClock.lastMoveAt,
-                    windowMs = 400L,
-                )
-            ) {
-                Timber.d("QMFocus: search field focused via gamepad - suppressing IME")
+            // Spec 2026-08-13: focus without explicit intent is NEVER a reason to show the
+            // keyboard — the field can be focused programmatically (browser bootstrap,
+            // guardian restore) with no recent gamepad move, and the IME opens on any
+            // focus gain. Suppress unless the user asked for it (X or a tap, which set
+            // searchImeWanted before this effect runs).
+            if (!searchImeWanted) {
+                Timber.d("QMFocus: search field focused without intent - suppressing IME")
                 startImeSuppression()
             }
         } else {
@@ -141,15 +141,20 @@ fun GamepadSearchField(
     val accent = PluviaTheme.colors.accentPurple
     Box(
         modifier = modifier
-            // Touch on the field is explicit intent: stop the suppression so a tap opens
-            // the keyboard (observed without consuming — the field's own handling continues).
+            // Touch on the field is explicit intent: record it on the FIRST down, BEFORE
+            // the focus lands (a tap on an unfocused field must not be suppressed by the
+            // focus effect that runs right after), then let the field's own handling
+            // continue. Observed without consuming.
             .pointerInput(searchFieldFocused) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
-                    if (searchFieldFocused) {
-                        searchImeWanted = true
-                        stopImeSuppression()
-                    }
+                    searchImeWanted = true
+                    stopImeSuppression()
+                    // If the tap never landed focus (e.g. a down on the 16dp padding
+                    // strip around the field), the intent must not leak into the next
+                    // gamepad focus gain — that would open the keyboard without intent.
+                    waitForUpOrCancellation()
+                    if (!searchFieldFocused) searchImeWanted = false
                 }
             }
             .fillMaxWidth()

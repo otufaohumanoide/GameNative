@@ -26,14 +26,6 @@ object SearchFieldImeLogic {
     }
 
     /**
-     * True when focus most likely landed on the field through gamepad navigation (stick/hat
-     * move, menu-open walk-down or guardian restore) rather than touch — i.e. when the
-     * soft keyboard must NOT show itself.
-     */
-    fun arrivedViaGamepad(now: Long, lastMoveAt: Long, windowMs: Long): Boolean =
-        lastMoveAt != 0L && now - lastMoveAt < windowMs
-
-    /**
      * Decides what one key event should do on the focused search field.
      *
      * - X (A / DPAD_CENTER / ENTER, first down, field focused, IME closed) → [KeyAction.OpenIme]
