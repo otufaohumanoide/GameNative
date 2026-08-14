@@ -590,7 +590,7 @@ class MainActivity : ComponentActivity() {
         // re-exposed; a future touchpad→mouse feature plugs into this exact point.
         if (PrefManager.ignoreControllerTouchpad &&
             ExternalController.isGameController(event.device) &&
-            (event.source and InputDevice.SOURCE_CLASS_POINTER) != 0
+            isGhostPointerSource(event.source)
         ) {
             return true
         }
@@ -644,7 +644,7 @@ class MainActivity : ComponentActivity() {
         // game as phantom stick motion (mag 1.0) while the user isn't touching anything.
         if (PrefManager.ignoreControllerTouchpad && ev != null &&
             ExternalController.isGameController(ev.device) &&
-            (ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0
+            isGhostPointerSource(ev.source)
         ) {
             // U2 (spec 2026-08-14-gamepad-u2-touchpad-mouse, §1.4 — V7): o gate vira
             // ROTEADOR — o consumidor do touchpad→mouse lê o MESMO ponto ANTES do
@@ -668,6 +668,23 @@ class MainActivity : ComponentActivity() {
 
         return if (!eventDispatched) super.dispatchGenericMotionEvent(ev) else true
     }
+
+    /**
+     * Gate de ghost input — regra de FONTE do evento (P5-6, sessão on-device
+     * 2026-08-14, "QuickMenu morto com o DS4 fundido do MIUI"): o DS4 fundido emite as
+     * MESMAS teclas/eixos em DUAS fontes — `0x5100519` (JOYSTICK, sem pointer) e
+     * `0x5002513` (JOYSTICK|POINTER — GamepadTrace 12:56–12:57). Consumir todo
+     * POINTER-class (regra original do spec 2026-08-13) engolia o hat/stick REAL que
+     * chega na fonte mista — D-pad morto no menu.
+     *
+     * Regra refinada: fantasma = evento POINTER-class SEM classe JOYSTICK (dedo puro
+     * no touchpad — fonte 0x2002/0x1002, sem eixos de jogo). A fonte mista carrega
+     * entrada REAL de jogo (hat/stick/teclas) e passa; o dedo fantasma do touchpad
+     * gasto continua consumido (nunca tem classe JOYSTICK).
+     */
+    private fun isGhostPointerSource(source: Int): Boolean =
+        (source and InputDevice.SOURCE_CLASS_POINTER) != 0 &&
+            (source and InputDevice.SOURCE_CLASS_JOYSTICK) == 0
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)

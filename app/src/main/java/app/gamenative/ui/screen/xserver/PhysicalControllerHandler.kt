@@ -9,6 +9,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
+import app.gamenative.gamepad.DeviceClass
 import app.gamenative.gamepad.GamepadButton
 import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.mapping.MappingDatabase
@@ -97,11 +98,28 @@ class PhysicalControllerHandler(
     }
 
     /**
+     * P5 (spec 2026-08-14-gamepad-upgrades-pendencias, Parte V): device de touchpad
+     * PURO (o hub classifica TOUCHPAD — sub-device "Wireless Controller Touchpad" de
+     * kernels que separam os devices do DS4) não tem sticks nem face buttons — eventos
+     * dele nunca dirigem o jogo. Defesa em profundidade do gate do MainActivity para
+     * rotas que não passam pelo dispatch principal (external display etc.). Com o
+     * redesign do classifier (P5), o DS4 FUNDIDO do MIUI é CONTROLLER → passa; devices
+     * fora do hub (teclado, touchscreen, virtual) → null → permitidos (byte-identical).
+     */
+    private fun isControllerTouchpadDevice(deviceId: Int): Boolean =
+        PluviaApp.gamepadHub.deviceFor(deviceId)?.deviceClass == DeviceClass.TOUCHPAD
+
+    /**
      * Handle physical controller button events.
      * Extracted from InputControlsView.onKeyEvent()
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
         if (profile != null && event.repeatCount == 0) {
+            // P5 (spec 2026-08-14-gamepad-upgrades-pendencias, Parte V): defesa em
+            // profundidade do gate do MainActivity — device de touchpad PURO (classe
+            // TOUCHPAD do hub, sub-device de kernels que separam os devices) nunca
+            // emite entrada de jogo. O DS4 fundido do MIUI é CONTROLLER (P5) e passa.
+            if (isControllerTouchpadDevice(event.deviceId)) return false
             // U4 (spec 2026-08-14-gamepad-u3-u4-layers-remap-jogo, §2.1): remap da
             // camada universal (gate ON) — binding EXPLÍCITO vence; sem binding o
             // fluxo cai no ExternalControllerBinding (byte-identical, V10).
@@ -205,6 +223,11 @@ class PhysicalControllerHandler(
      */
     fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (profile != null) {
+            // P5 (spec 2026-08-14-gamepad-upgrades-pendencias, Parte V): mesma defesa
+            // do onKeyEvent — device de touchpad PURO nunca dirige o jogo; o DS4
+            // fundido (CONTROLLER com hasTouchpad) passa e o POINTER-class dele é
+            // tratado pelo gate do MainActivity por EVENTO.
+            if (isControllerTouchpadDevice(event.deviceId)) return false
             val controller = profile?.getController(event.deviceId)
             if (controller != null && controller.updateStateFromMotionEvent(event)) {
                 // E2 (spec 2026-08-13-onda2 §1.7): deadzone por device via perfil da

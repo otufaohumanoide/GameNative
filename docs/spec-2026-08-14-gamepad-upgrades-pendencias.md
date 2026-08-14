@@ -1,6 +1,10 @@
 # Pendências dos upgrades de gamepad (U1–U7) — auditoria pós-implementação + estudo das referências
 
-**Data:** 2026-08-14
+**Data:** 2026-08-14 (r3 — status: TODOS os itens corrigidos nos commits
+`72af2dc5..0b5ac1e5` (P1–P3) e P5 (Parte V — correção do P4: modelo de capacidades do
+classifier; 240+ testes JVM verdes. Verificação on-device pendente. Esta r3 registra a
+divergência aprovada da P2-2, o P4 (ghost touchpad — revertido pelo P5) e o P5 (design:
+capacidade ≠ classe)
 **Origem:** auditoria de validação da implementação dos upgrades do doc de intuito
 (`spec-2026-08-14-gamepad-intuito-validacao-upgrades.md` + impl doc
 `spec-2026-08-14-gamepad-intuito-upgrades-impl.md`) e estudo dirigido das referências
@@ -247,6 +251,15 @@ deltas ≈ 0 sem re-ativação; (2) girar o controle durante a janela → acumul
 (4) on-device: gyro sempre-ativo por 10 min, cursor parado quando o controle está
 imóvel na mesa (antes: deriva visível em ~1–2 min).
 
+**Divergência aprovada (registrada nesta r2):** o critério de stillness do Dolphin é o
+desvio da amostra contra a média corrida; a implementação usou stillness ABSOLUTA
+(|velocidade calibrada| < deadzone em todos os eixos + |accel/1g − 1| ≤ 0.2 quando
+conhecido). Justificativa registrada no KDoc do `GyroProcessor.updateCalibration`: o
+critério Dolphin completaria a janela mesmo durante rotação CONSTANTE (o pan de câmera
+congelaria o offset após o período); o absoluto só calibra com repouso real. Aprovado —
+o comportamento é estritamente mais seguro; custo: offsets pioram durante sessões com
+gyro sempre-ativo e movimento contínuo (mitigado pelo recenter de ativação).
+
 ## P2-3 · Fonte registra só o giroscópio — SDL registra gyro+accel; stillness e futuros modos dependem do accel
 
 **Evidência:** `GamepadSensorSource.register` (`:76`) pega só
@@ -417,6 +430,68 @@ entrega na main (sem crash em 30 min de jogo com gyro ativo).
 | P3-2/P3-6/P3-7 | docs |
 | P3-3 | V5/UI |
 | P3-4 | V11 |
+
+---
+
+# PARTE V — P5 (sessão on-device 2026-08-14, PÓS-P4): o Android não tem "um device = uma classe"
+
+**Sintoma relatado pelo usuário:** após o P4, o joystick morreu até no menu inicial da
+library; power-cycle do controle "consertou" a library, mas o QuickMenu seguiu morto.
+
+**Diagnóstico (evidência on-device, Mi 11 / serial 6f0ea6fb):**
+- Logcat do hub em TODAS as reconexões: `added id=24 name=Wireless Controller Touchpad
+  vendor=054c product=09cc class=TOUCHPAD` (11:51:59, 11:57:07, 11:57:18, 11:57:20).
+- `dumpsys input`: o DS4 no MIUI é **UM dispositivo fundido** — id 24 único, sources
+  `0x05002513` = SOURCE_GAMEPAD|JOYSTICK|POINTER|SENSOR, com eixos de stick
+  (source 0x01000010) E touch absoluto (source 0x00002002) no MESMO device. Não existe
+  "controle principal + sub-device touchpad" neste kernel.
+- O `DeviceClassifier` pré-P5 classificava o device inteiro num enum EXCLUSIVO:
+  POINTER presente ⇒ `TOUCHPAD`. Com o P4 (gate consumia por CLASSE de device) e com o
+  hub emitindo lógico só para `CONTROLLER` (`onKey/onAxis`), o controle inteiro virou
+  morto — a library morreu pelo gate e o QuickMenu pela ausência de eventos lógicos.
+  A "recuperação" pós-power-cycle era transitória (device ainda não registrado no
+  InputManager → `event.device == null` → gate aberto).
+- **O P4 era a correção CERTA com a CAUSA errada:** os fantasmas são POINTER-class
+  (spec 2026-08-13 já provava); a extensão para consumir por classe de device foi o
+  erro. A causa original do "anda para a esquerda" precisa ser re-validada (P5-4):
+  pode ser o stream POINTER (gate já cobre) ou DRIFT REAL do stick do DS4 gasto
+  (solução: deadzone por device E2, não gate).
+
+**Lição de design (as referências fazem assim, o fork não fazia):** SDL
+(`SDLControllerManager.java`) enumera MotionRanges filtrando por `SOURCE_CLASS_JOYSTICK`
+e trata pointer streams separadamente; androidx modela `supportsSource`/`hasKeys` como
+CAPACIDADES consultadas sob demanda; nenhum deles classifica o device num bucket
+exclusivo. Capacidade ≠ classe; roteamento por EVENTO (source do evento), nunca por
+classe do device.
+
+**Correção implementada:**
+1. **P5-1 — gate revertido:** `MainActivity` volta à regra POR EVENTO (POINTER-class
+   do evento — a regra original do spec 2026-08-13). Nenhum lookup de classe de device
+   no gate. Forwarder U2 intacto (lê o POINTER antes do consume).
+2. **P5-2 — DeviceClassifier vira modelo de capacidades:** entrada de jogo decide
+   `CONTROLLER` (regra idêntica ao `ExternalController.isGameController`); POINTER NÃO
+   rebaixa — vira `hasTouchpad` (flag que já existia no `GamepadDevice`). `TOUCHPAD`
+   fica só para o sub-device PURO (pointer sem entrada de jogo — kernels que separam).
+   O DS4 fundido do MIUI = CONTROLLER + hasTouchpad=true.
+3. **P5-3 — fluxo de touchpad por evento:** gate consome POINTER-class; forwarder usa
+   `hasTouchpad` + POINTER do evento; hub emite lógico para CONTROLLER (fundido incluído)
+   → QuickMenu/gamepad universal voltam.
+4. **P5-5 — regressão permanente:** `DeviceClassifierTest` com o perfil REAL do DS4
+   fundido (sources 0x05002513) — CONTROLLER + hasTouchpad; sub-device puro = TOUCHPAD.
+
+**Pendências pós-P5 (bateria on-device):**
+- P5-4: re-validar o walk-left original com o DS4 conectado: se persistir com o stream
+  POINTER consumido, é drift do stick → deadzone por device (E2) ou hardware.
+
+---
+
+# PARTE VI — Status r2
+
+Todos os itens P1-1..P3-8 (Partes I–III) corrigidos nos commits
+`72af2dc5..0b5ac1e5` + P5 (Parte V, correção do P4). Suíte JVM filtrada: **240+ testes,
+0 falhas**. `bash -n tools/quickmenu-verify.sh`: OK. Pendências remanescentes: bateria
+on-device §[H] do verify script (Mi 11 + DS4), P5-4 (re-validar walk-left), flip do
+gate `gamepadUniversalEnabled` default ON e tag do MILESTONES — condicionados à bateria.
 
 **Cada correção**: commit `fix(gamepad): ...` ou `feat(gamepad): ...` referenciando este
 documento + spec do upgrade correspondente; testes JVM no mesmo commit; §[H] do

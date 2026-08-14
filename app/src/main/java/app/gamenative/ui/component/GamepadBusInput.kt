@@ -58,17 +58,18 @@ fun BusJoystickFocusNavigator(
             val hub = PluviaApp.gamepadHub
             if (hub.deviceFor(ev.deviceId) == null) return true
             val deadZone = hub.menuDeadzoneFor(ev.deviceId)
-            // The DS4 touchpad reports a MIXED source (JOYSTICK|GAMEPAD|TOUCH_NAVIGATION|
-            // CLASS_POINTER): its absolute finger position arrives on AXIS_X/AXIS_Y and reads
-            // as a full-deflection stick (mag 1.0). Driving focus from it poisoned the menu
-            // (evidence, logcat 2026-08-13): it raced every focus bootstrap so focus never
-            // landed, and kept stamping GamepadNavigationClock, so the focus guardian
-            // skipped its restores forever ("user navigating, skipping cycle") — a dead
-            // menu that only a fresh surface (shader browser) could heal. Touchpad motion
-            // is still consumed here (the overlay owns the device), but never translated
-            // into focus moves. CLASS_POINTER is unset on real sticks (SOURCE_JOYSTICK/
-            // SOURCE_DPAD), so this only filters touch-class sources.
-            if ((ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0) return true
+            // P5-6 (sessão on-device 2026-08-14, "QuickMenu morto com o DS4 fundido do
+            // MIUI"): o DS4 fundido emite as MESMAS entradas em DUAS fontes — o hat/stick
+            // REAL chega também com fonte mista JOYSTICK|POINTER (0x5002513, trace
+            // 12:56–12:57). O filtro antigo descartava TODO POINTER-class — inclusive o
+            // hat real do fundido (D-pad morto no menu). Regra refinada: descarta só o
+            // dedo PURO (POINTER SEM classe JOYSTICK — 0x2002/0x1002): o dedo do
+            // touchpad nunca carrega classe JOYSTICK; a fonte mista é entrada de jogo
+            // real e o hat/stick dela dirige o foco. O dedo fantasma do touchpad gasto
+            // continua descartado (POINTER puro), consumido pela overlay.
+            val isPurePointer = (ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0 &&
+                (ev.source and InputDevice.SOURCE_CLASS_JOYSTICK) == 0
+            if (isPurePointer) return true
             val stickX = ev.getAxisValue(MotionEvent.AXIS_X)
             val stickY = ev.getAxisValue(MotionEvent.AXIS_Y)
             val hatX = ev.getAxisValue(MotionEvent.AXIS_HAT_X)
