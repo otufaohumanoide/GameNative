@@ -43,7 +43,7 @@ adrenotools em armeabi-v7a — não relacionado).
 | Campos do perfil | `GamepadProfile.kt` (`gyroMode/Sensitivity/Deadzone/ActivateButton`), `GyroMode.kt` | null = default; merge campo a campo; `isDefault` estendido |
 | `GyroProcessor` (puro, 9 testes) | `gamepad/processing/GyroProcessor.kt` | recenter na borda de ativação (DS4Windows), deadzone com histerese 0.8/1.2, deltas rad×dt; sinais anotados p/ verificação on-device |
 | Fonte API 31+ | `gamepad/GamepadSensorSource.kt` | `getSensorManager` por device, `SENSOR_DELAY_GAME` (~50 Hz); lifecycle V3 (suspend em pause/exit/screen-off; register só com container de pé); hotplug avisa o source |
-| Hub | `GamepadHub.onSensorSample` | gate-aware → GyroProcessor → `SensorUpdate` emitido (V4) → MOUSE (`xServerMouseSink`) / CAMERA (`gyroCameraSink` → `PhysicalControllerHandler.applyCameraGyro` — right stick do virtual gamepad) |
+| Hub | `GamepadHub.onSensorSample` | gate-aware → GyroProcessor → `SensorUpdate` emitido (V4) → MOUSE (`xServerMouseSink`) / CAMERA (`gyroCameraSink` → `PhysicalControllerHandler.applyCameraGyro` — right stick do virtual gamepad). **Corrigido pelo spec 2026-08-14-gamepad-upgrades-pendencias (P1-1/P1-2):** o sink era dead code e o modelo integral acumulava — agora o XServerScreen instala o sink e o mapeamento é velocidade→deflexão (controle de taxa) |
 | Ativação por botão | `GamepadHub` (`gyroActivateHeld`) | hold no caminho lógico PÓS-remap (consistência U3); estado por device (V6) |
 | UI | `GamepadRemapDialog` (seção Gyro) | modo/sensibilidade/deadzone/botão de ativação (capture mode) — SÓ com `device.hasGyro` (V11) |
 | Capability | `GamepadDevice` (`hasGyro/hasTouchpad`), `GamepadHub.addDevice` | coleta no hotplug (pull, fora do hot path); API 31+ runtime guard |
@@ -104,3 +104,38 @@ adrenotools em armeabi-v7a — não relacionado).
 - Flip do gate `gamepadUniversalEnabled` default → true (PrefManager.kt) — último
   passo da Onda 2, condicionado à bateria on-device.
 - `tools/milestone.sh` + tag anotada (entrada já em `docs/MILESTONES.md`).
+
+---
+
+# Anexo — Correções do spec 2026-08-14-gamepad-upgrades-pendencias (P3-7)
+
+A auditoria pós-implementação (spec `2026-08-14-gamepad-upgrades-pendencias.md`)
+encontrou defeitos no que este doc descrevia como feito. Correções aplicadas em
+2026-08-14 (commits `74ce5136..848480a0`, branch feat/joystick-avancado):
+
+- **P1-1/P1-2 — CAMERA**: `gyroCameraSink` nunca era instalado (dead code) e
+  `applyCameraGyro` INTEGRAVA deltas (o stick permanecia no último valor e brigava
+  com o stick físico). Agora: sink instalado pelo XServerScreen junto do handler
+  (holder vivo, limpo no exit/onDispose) e mapeamento VELOCIDADE (rad/s)→deflexão
+  (`GyroStickMapping` puro, padrão DS4Windows/JoyShock); `processJoystickInput` pula
+  o right stick físico com CAMERA ativo (um único escritor por modo).
+- **P1-3 — lifecycle**: `setSuspended(false)` só tinha um chamador (MainActivity.
+  onResume com `xServerView != null`); o XServerScreen agora é o dono da retomada
+  (container sobe ⇒ registra; exit/onDispose ⇒ suspende). `registerAll` filtra por
+  `gyroMode != OFF` (registro dirigido pelo uso, padrão SDL).
+- **P1-4 — histerese**: entrada/saída estavam invertidas (0.8×/1.2× com estado pelo
+  deadzone cru) — corrigido para entrada 1.2×/saída 0.8× com o threshold aplicado.
+- **P2-1 — dt**: agora vem do `event.timestamp` do sensor (ns→ms com guarda de
+  monotonicidade), não do relógio de processamento.
+- **P2-2/P2-3 — calibração contínua + accel**: recenter-de-ativação vira bootstrap;
+  janela estável de 3 s (Dolphin) atualiza o offset com a média do repouso
+  (stillness absoluta + accel ≈ 1g quando conhecido); a fonte registra gyro+accel
+  (padrão SDL).
+- **P2-5 — rumble**: contrato único `rumbleDevice(deviceId, low, high, durationMs)`
+  (SDL: ≥2 vibrators low/high por motor, 1 motor mix 0.6/0.4, cancel em 0); os
+  efeitos de menu passam pelo mesmo contrato.
+- **P2-6 — touchpad**: arrasto (≥650 ms = BUTTON_LEFT contínuo), duplo-toque =
+  clique direito (opt-in por perfil) e dead zone de pós-toque (bounce) — spec
+  próprio `2026-08-14-touchpad-drag-double-tap.md`.
+- **P2-7 — threading**: entrega documentada como MAIN THREAD (decisão A — o
+  `registerListener` sem Handler usa o Looper de quem registrou).

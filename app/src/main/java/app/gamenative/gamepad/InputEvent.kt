@@ -5,8 +5,8 @@ package app.gamenative.gamepad
  * que a UI/jogo consome. O tradutor (puro) converte evento cru (KeyEvent/MotionEvent)
  * neste formato; o adapter Android é um arquivo fino fora do hot path de tradução.
  *
- * Os stubs [SensorUpdate]/[TouchpadMotion] nunca são emitidos nesta missão — existem
- * para os follow-ups de gyro e touchpad sem refatoração futura.
+ * [SensorUpdate] é emitido pelo `GamepadHub.onSensorSample` (U1 — gyro/accel por
+ * device); [TouchpadMotion] é reservado para follow-ups do touchpad lógico.
  */
 sealed interface InputEvent {
     data class ButtonDown(val deviceId: Int, val button: GamepadButton) : InputEvent
