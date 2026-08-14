@@ -2336,6 +2336,15 @@
     <string name="gamepad_touchpad_mouse_subtitle">Move the cursor with the DS4/DualSense touchpad; tap to click (in-game)</string>
     <string name="gamepad_touchpad_sensitivity_title">Touchpad sensitivity</string>
     <string name="gamepad_touchpad_sensitivity_subtitle">Cursor speed for touchpad movement</string>
+    <string name="gamepad_gyro_title">Gyro</string>
+    <string name="gamepad_gyro_mode_off">Off</string>
+    <string name="gamepad_gyro_mode_mouse">Mouse</string>
+    <string name="gamepad_gyro_mode_camera">Camera</string>
+    <string name="gamepad_gyro_sensitivity_title">Sensitivity</string>
+    <string name="gamepad_gyro_deadzone_title">Deadzone</string>
+    <string name="gamepad_gyro_activate_title">Activate button</string>
+    <string name="gamepad_gyro_activate_always">Always on</string>
+    <string name="gamepad_gyro_activate_unmapped">That key is not a controller button</string>
 <string name="gamepad_glyph_dpad_up">↑</string>
     <string name="gamepad_glyph_dpad_down">↓</string>
     <string name="gamepad_glyph_dpad_left">←</string>

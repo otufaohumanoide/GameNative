@@ -3,6 +3,9 @@ package app.gamenative.gamepad.profiles
 import app.gamenative.gamepad.DeviceClass
 import app.gamenative.gamepad.FaceStyle
 import app.gamenative.gamepad.GamepadDevice
+import app.gamenative.gamepad.GyroMode
+import app.gamenative.gamepad.layers.LayerTriggerMode
+import app.gamenative.gamepad.layers.LayerTriggerSpec
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -181,6 +184,98 @@ class GamepadProfileStoreTest {
         val game = profile(layers = mapOf("DEFAULT" to mapOf("FACE_BOTTOM" to "key:97")))
         assertEquals("key:97", GamepadProfileStore.merged(device, game).layers["DEFAULT"]!!["FACE_BOTTOM"])
         assertEquals("key:96", GamepadProfileStore.merged(device, null).layers["DEFAULT"]!!["FACE_BOTTOM"])
+    }
+
+    // ── V1 (spec 2026-08-14-gamepad-intuito-validacao-upgrades): chaves
+    // desconhecidas sobrevivem ao save (downgrade de build real) ──
+
+    @Test
+    fun `V1 - save preserves unknown keys from newer builds`() {
+        val file = File(tmp.root, "profiles.json")
+        // Arquivo gravado por um build FUTURO: chaves fora do schema conhecido.
+        file.writeText("""{"054c09cc":{"leftStickDeadzone":0.25,"futureField":42,"futureObj":{"a":1}}}""")
+        val s = store()
+        assertEquals(0.25f, s.load("054c09cc")?.leftStickDeadzone!!, 0.001f)
+        s.save("054c09cc", profile(leftStickDeadzone = 0.4f))
+        val text = file.readText()
+        assertTrue(text, text.contains("\"futureField\":42"))
+        assertTrue(text, text.contains("\"futureObj\":{\"a\":1}"))
+        assertEquals(0.4f, s.load("054c09cc")?.leftStickDeadzone!!, 0.001f)
+        // Outras entradas (sem extras) seguem normais.
+        s.save("045e028e", profile(swapOkCancel = true))
+        assertTrue(file.readText().contains("\"swapOkCancel\":true"))
+    }
+
+    @Test
+    fun `V1 - deleting an entry removes its unknown keys too`() {
+        val file = File(tmp.root, "profiles.json")
+        file.writeText("""{"054c09cc":{"leftStickDeadzone":0.25,"futureField":42}}""")
+        val s = store()
+        s.save("054c09cc", GamepadProfile()) // default → remove a entrada inteira
+        assertFalse(file.exists())
+    }
+
+    @Test
+    fun `V1 - unknown keys preserved across multiple saves`() {
+        val file = File(tmp.root, "profiles.json")
+        file.writeText("""{"054c09cc":{"futureField":42}}""")
+        val s = store()
+        s.save("054c09cc", profile(swapOkCancel = true))
+        s.save("054c09cc", profile(swapOkCancel = false))
+        assertTrue(file.readText().contains("\"futureField\":42"))
+    }
+
+    // ── U1/U3/U5 — campos novos (V1 no lugar): roundtrip, default e merge ──
+
+    @Test
+    fun `U1 - gyro fields roundtrip and merge`() {
+        val s = store()
+        s.save(
+            "054c09cc",
+            GamepadProfile(
+                gyroMode = GyroMode.MOUSE,
+                gyroSensitivity = 2f,
+                gyroDeadzone = 0.1f,
+                gyroActivateButton = "FACE_TOP",
+            ),
+        )
+        val loaded = s.load("054c09cc")!!
+        assertEquals(GyroMode.MOUSE, loaded.gyroMode)
+        assertEquals(2f, loaded.gyroSensitivity!!, 0.001f)
+        assertEquals(0.1f, loaded.gyroDeadzone!!, 0.001f)
+        assertEquals("FACE_TOP", loaded.gyroActivateButton)
+        // Merge: game vence campo a campo; null preserva device.
+        val merged = GamepadProfileStore.merged(loaded, GamepadProfile(gyroMode = GyroMode.CAMERA))
+        assertEquals(GyroMode.CAMERA, merged.gyroMode)
+        assertEquals(2f, merged.gyroSensitivity!!, 0.001f)
+    }
+
+    @Test
+    fun `U3 - merged layers is granular - game adds layers without erasing device ones`() {
+        val device = profile(layers = mapOf("DEFAULT" to mapOf("FACE_BOTTOM" to "key:96")))
+        val game = profile(layers = mapOf("SPRINT" to mapOf("FACE_BOTTOM" to "key:97")))
+        val merged = GamepadProfileStore.merged(device, game)
+        assertEquals("key:96", merged.layers["DEFAULT"]!!["FACE_BOTTOM"])
+        assertEquals("key:97", merged.layers["SPRINT"]!!["FACE_BOTTOM"])
+        // layerTriggers seguem o mesmo merge granular.
+        val d2 = GamepadProfile(layerTriggers = mapOf("SPRINT" to LayerTriggerSpec("LEFT_BUMPER", LayerTriggerMode.HOLD)))
+        val g2 = GamepadProfile(layerTriggers = mapOf("SNIPER" to LayerTriggerSpec("RIGHT_STICK", LayerTriggerMode.TOGGLE)))
+        val m2 = GamepadProfileStore.merged(d2, g2)
+        assertEquals(2, m2.layerTriggers.size)
+        assertEquals(LayerTriggerMode.TOGGLE, m2.layerTriggers["SNIPER"]!!.mode)
+    }
+
+    @Test
+    fun `U1 - default detection includes new fields`() {
+        assertTrue(GamepadProfile().isDefault())
+        assertFalse(GamepadProfile(gyroMode = GyroMode.MOUSE).isDefault())
+        assertFalse(GamepadProfile(gyroSensitivity = 2f).isDefault())
+        assertFalse(GamepadProfile(rumbleOnBack = false).isDefault())
+        assertFalse(
+            GamepadProfile(
+                layerTriggers = mapOf("X" to LayerTriggerSpec("FACE_BOTTOM", LayerTriggerMode.TOGGLE)),
+            ).isDefault(),
+        )
     }
 
     // ── ProfileResolver ──

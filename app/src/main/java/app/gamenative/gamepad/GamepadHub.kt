@@ -18,6 +18,10 @@ import app.gamenative.gamepad.mapping.MappingDatabase
 import app.gamenative.gamepad.mapping.RawAxisInput
 import app.gamenative.gamepad.mapping.RawKeyInput
 import app.gamenative.gamepad.processing.DeadzoneConfig
+import app.gamenative.gamepad.processing.GyroConfig
+import app.gamenative.gamepad.processing.GyroState
+import app.gamenative.gamepad.processing.GyroProcessor
+import app.gamenative.gamepad.processing.GyroSample
 import app.gamenative.gamepad.profiles.GamepadProfile
 import app.gamenative.gamepad.profiles.GamepadProfileStore
 import app.gamenative.gamepad.profiles.ProfileResolver
@@ -43,6 +47,14 @@ import timber.log.Timber
  * - Estado entre amostras (transições de hat/meia-eixo) vive AQUI — o tradutor é puro.
  */
 class GamepadHub(context: Context) {
+
+    companion object {
+        /** Deadzone angular default do gyro (rad/s — ~3°/s), U1. */
+        const val DEFAULT_GYRO_DEADZONE = 0.05f
+
+        /** MOUSE: rad de rotação → pixels de cursor (U1 — 300 px/rad ≈ 5.2 px/grau). */
+        const val GYRO_PIXELS_PER_RADIAN = 300f
+    }
 
     private val appContext = context.applicationContext
     private val inputManager = appContext.getSystemService(Context.INPUT_SERVICE) as InputManager
@@ -107,6 +119,7 @@ class GamepadHub(context: Context) {
         if (!started) return
         started = false
         inputManager.unregisterInputDeviceListener(deviceListener)
+        sensorSource?.stop()
         val alive = _connectedDevices.value.keys.toList()
         _connectedDevices.value = emptyMap()
         _activeDevice.value = null
@@ -198,16 +211,29 @@ class GamepadHub(context: Context) {
 
     /**
      * U1/V12 (spec 2026-08-14-gamepad-u1-gyro): amostra de sensor (giroscópio) de um
-     * device — chamada pelo GamepadSensorSource (callback em thread própria) e pelo
-     * harness (`gyro:x:y:z`). Gate-aware como onKey/onAxis. O processamento completo
-     * (GyroProcessor + injeção MOUSE/CAMERA) vive no U1; aqui o evento lógico é
-     * emitido (vocabulário V4) e a ativação por botão é rastreada.
+     * device — chamada pelo GamepadSensorSource (callback em thread PRÓPRIA — nunca no
+     * dispatch, V3) e pelo harness (`gyro:x:y:z`). Gate-aware como onKey/onAxis.
+     *
+     * Pipeline: perfil (cache M1) → GyroProcessor (puro, estado por device V6) →
+     * evento lógico emitido (vocabulário V4) → injeção:
+     * - MOUSE → sink de mouse compartilhado (XServer injectPointerMoveDelta);
+     * - CAMERA → `gyroCameraSink` (setado pelo XServerScreen: acumula no right stick
+     *   do virtual gamepad via PhysicalControllerHandler).
      */
     fun onSensorSample(deviceId: Int, gyroX: Float, gyroY: Float, gyroZ: Float, nowMs: Long) {
         if (!PrefManager.gamepadUniversalEnabled) return
         val device = deviceFor(deviceId) ?: return
         if (device.deviceClass != DeviceClass.CONTROLLER && device.deviceClass != DeviceClass.TOUCHPAD) return
         if (!device.hasGyro) return
+        val profile = profileFor(deviceId, activeAppId)
+        val gyroState = gyroStates.getOrPut(deviceId) { GyroState() }
+        val output = GyroProcessor.process(
+            sample = GyroSample(gyroX, gyroY, gyroZ, nowMs),
+            state = gyroState,
+            config = GyroConfig(deadzone = profile.gyroDeadzone ?: DEFAULT_GYRO_DEADZONE),
+            activate = gyroActivateHeld(deviceId, profile),
+        )
+        // Evento lógico sempre emitido para device com gyro (consumidores futuros).
         val event = InputEvent.SensorUpdate(
             deviceId = deviceId,
             gyroX = gyroX,
@@ -219,6 +245,37 @@ class GamepadHub(context: Context) {
         )
         logLogical(device, event)
         PluviaApp.events.emit(GamepadInputEvent(event))
+        if (!output.active) return
+
+        val sensitivity = profile.gyroSensitivity ?: 1f
+        when (profile.gyroMode ?: GyroMode.OFF) {
+            GyroMode.MOUSE -> {
+                val dx = (output.deltaXRad * GYRO_PIXELS_PER_RADIAN * sensitivity).toInt()
+                val dy = (output.deltaYRad * GYRO_PIXELS_PER_RADIAN * sensitivity).toInt()
+                if (dx != 0 || dy != 0) {
+                    PluviaApp.xServerMouseSink.move(dx, dy)
+                }
+            }
+            GyroMode.CAMERA -> {
+                gyroCameraSink?.invoke(output.deltaXRad, output.deltaYRad, sensitivity)
+            }
+            GyroMode.OFF -> {}
+        }
+    }
+
+    /** Sink do CAMERA mode — setado pelo XServerScreen quando o container roda (limpo no exit). */
+    @Volatile
+    var gyroCameraSink: ((deltaXRad: Float, deltaYRad: Float, sensitivity: Float) -> Unit)? = null
+
+    /** Fonte de sensores (U1) — injetada pelo PluviaApp; hotplug avisa o source. */
+    var sensorSource: GamepadSensorSource? = null
+
+    private val gyroStates = mutableMapOf<Int, GyroState>()
+    private val gyroActivateHeld = mutableMapOf<Int, String>()
+
+    private fun gyroActivateHeld(deviceId: Int, profile: GamepadProfile): Boolean {
+        val buttonName = profile.gyroActivateButton ?: return true // sempre ativo
+        return gyroActivateHeld[deviceId] == buttonName
     }
 
     /** Traduz um KeyEvent cru e emite GamepadInputEvent no bus (gate-aware). */
@@ -231,7 +288,15 @@ class GamepadHub(context: Context) {
         val mapping = mappingFor(device)
         val events = EventTranslator.translateKey(raw, mapping)
         if (events.isEmpty()) return false
+        val activateButton = profileFor(raw.deviceId, activeAppId).gyroActivateButton
         for (event in events) {
+            // U1: ativação do gyro por botão (hold) — rastreada no caminho LÓGICO
+            // (pós-tradução; pós-remap de camada no U3). Estado por device (V6).
+            if (activateButton != null && event is InputEvent.ButtonDown && event.button.name == activateButton) {
+                gyroActivateHeld[raw.deviceId] = activateButton
+            } else if (activateButton != null && event is InputEvent.ButtonUp && event.button.name == activateButton) {
+                gyroActivateHeld.remove(raw.deviceId)
+            }
             logLogical(device, event)
             PluviaApp.events.emit(GamepadInputEvent(event))
         }
@@ -332,6 +397,7 @@ class GamepadHub(context: Context) {
         _connectedDevices.value = _connectedDevices.value + (deviceId to device)
         refreshActive()
         invalidateProfiles()
+        sensorSource?.onDeviceAdded(deviceId)
         PluviaApp.events.emit(GamepadDeviceAddedEvent(device))
         Timber.d(
             "GamepadHub: added id=%d name=%s vendor=%04x product=%04x class=%s",
@@ -344,6 +410,10 @@ class GamepadHub(context: Context) {
         // U2 (V6): estado do touchpad→mouse morre junto com o device (mesmo padrão
         // buttonStates — o deviceId efêmero pode ser reusado por outro hardware).
         PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)
+        // U1 (V6): estado do gyro morre junto; listener de sensor desregistrado (V3).
+        gyroStates.remove(deviceId)
+        gyroActivateHeld.remove(deviceId)
+        sensorSource?.onDeviceRemoved(deviceId)
         val current = _connectedDevices.value
         if (deviceId !in current) return
         _connectedDevices.value = current - deviceId

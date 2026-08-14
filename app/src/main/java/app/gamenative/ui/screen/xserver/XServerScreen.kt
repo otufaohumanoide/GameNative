@@ -515,6 +515,8 @@ fun XServerScreen(
         onDispose {
             physicalControllerHandler?.cleanup()
             physicalControllerHandler = null
+            // U1: sem container, o CAMERA mode não tem alvo — limpa o sink (no-op).
+            PluviaApp.gamepadHub.gyroCameraSink = null
             exitWatchJob?.cancel()
             exitWatchJob = null
             keyboardEscMenuHandler.cancel()

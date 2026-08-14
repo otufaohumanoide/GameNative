@@ -225,6 +225,25 @@ class PhysicalControllerHandler(
     }
 
     /**
+     * U1 (spec 2026-08-14-gamepad-u1-gyro): CAMERA mode — acumula os deltas do gyro
+     * (radianos) no RIGHT STICK do virtual gamepad (mouse-look) e envia o estado.
+     * Escala: `deltaXRad * 40 * sensitivity` → valor de stick (clamp [-1, 1]).
+     * Chamado pela thread do sensor (callback próprio — V3); só mexe no estado do
+     * gamepad virtual, sem tocar no dispatch.
+     */
+    fun applyCameraGyro(deltaXRad: Float, deltaYRad: Float, sensitivity: Float) {
+        val state = profile?.gamepadState ?: return
+        val scale = 40f * sensitivity
+        state.thumbRX = (state.thumbRX + deltaXRad * scale).coerceIn(-1f, 1f)
+        state.thumbRY = (state.thumbRY + deltaYRad * scale).coerceIn(-1f, 1f)
+        val winHandler = xServer?.winHandler
+        if (winHandler != null) {
+            winHandler.sendGamepadState()
+            winHandler.sendVirtualGamepadState(state)
+        }
+    }
+
+    /**
      * Create a timer for continuous mouse movement injection.
      * Runs at 60 FPS, injecting mouse deltas based on mouseMoveOffset.
      */

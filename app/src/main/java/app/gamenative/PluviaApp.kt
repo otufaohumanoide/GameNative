@@ -10,6 +10,7 @@ import app.gamenative.db.dao.GOGGameDao
 import app.gamenative.events.EventDispatcher
 import app.gamenative.powercontrol.PowerManager
 import app.gamenative.gamepad.GamepadHub
+import app.gamenative.gamepad.GamepadSensorSource
 import app.gamenative.gamepad.GamepadTouchpadForwarder
 import app.gamenative.gamepad.XServerTouchpadMouseSink
 import app.gamenative.service.ActiveGameRegistry
@@ -81,13 +82,16 @@ class PluviaApp : SplitCompatApplication() {
         PrefManager.init(this)
         FrontendSyncManager.init(this)
 
+        // Sink de mouse compartilhado (U2 touchpad + U1 gyro MOUSE): injeta no XServer
+        // via PluviaApp.xServerView (no-op sem jogo rodando).
+        xServerMouseSink = XServerTouchpadMouseSink()
+
         // U2 (spec 2026-08-14-gamepad-u2-touchpad-mouse): forwarder do touchpad do
         // controle → mouse, lido pelo MainActivity NO PONTO do gate de ghost input
-        // (antes do consume). Sink default = XServer (jogo rodando); no-op sem jogo.
-        // Inicializado ANTES do hub: o removeDevice do hub chama onDeviceRemoved do
-        // forwarder — a ordem de init evita o lateinit vazio durante o start() do hub.
+        // (antes do consume). Inicializado ANTES do hub: o removeDevice do hub chama
+        // onDeviceRemoved do forwarder — a ordem evita o lateinit vazio no start().
         gamepadTouchpad = GamepadTouchpadForwarder().apply {
-            sink = XServerTouchpadMouseSink()
+            sink = xServerMouseSink
         }
 
         // Gamepad universal (spec 2026-08-13-onda2, §1.1): hub app-scoped — o ÚNICO
@@ -95,6 +99,14 @@ class PluviaApp : SplitCompatApplication() {
         // (multi-janela/external display); um hub por Activity registraria N listeners
         // duplicados (o exato bug C3 do hardening). O hub vive até o processo morrer.
         gamepadHub = GamepadHub(this).also { it.start() }
+
+        // U1 (spec 2026-08-14-gamepad-u1-gyro): fonte de sensores por device (API 31+).
+        // Começa SUSPENSA — só registra quando o XServerScreen (container rodando)
+        // manda setSuspended(false); unregister em pause/exit (V3 — bateria).
+        gamepadSensorSource = GamepadSensorSource(gamepadHub).also {
+            gamepadHub.sensorSource = it
+            it.start()
+        }
 
         // Initialize GOGConstants
         app.gamenative.service.gog.GOGConstants.init(this)
@@ -225,6 +237,14 @@ class PluviaApp : SplitCompatApplication() {
         /** U2 — touchpad do controle → mouse (spec 2026-08-14-gamepad-u2-touchpad-mouse). */
         @Volatile
         lateinit var gamepadTouchpad: GamepadTouchpadForwarder
+
+        /** Sink de mouse no XServer compartilhado (touchpad U2 + gyro MOUSE U1). */
+        @Volatile
+        lateinit var xServerMouseSink: XServerTouchpadMouseSink
+
+        /** U1 — fonte de sensores (gyro) com lifecycle de container/pause (V3). */
+        @Volatile
+        lateinit var gamepadSensorSource: GamepadSensorSource
 
         internal var onDestinationChangedListener: NavChangedListener? = null
 

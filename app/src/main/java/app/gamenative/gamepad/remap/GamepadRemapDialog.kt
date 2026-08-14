@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -43,6 +45,7 @@ import app.gamenative.PluviaApp
 import app.gamenative.R
 import app.gamenative.events.AndroidEvent
 import app.gamenative.gamepad.FaceStyle
+import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.GamepadButton
 import app.gamenative.gamepad.GamepadDevice
 import app.gamenative.gamepad.glyphs.GamepadGlyphProvider
@@ -51,6 +54,7 @@ import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.profiles.ActionLayer
 import app.gamenative.gamepad.profiles.GamepadProfile
 import app.gamenative.ui.component.GamepadFocusScope
+import app.gamenative.ui.component.gamepadAdjustableRow
 import app.gamenative.ui.component.gamepadBackHandler
 import app.gamenative.ui.component.gamepadSelectable
 import kotlin.math.abs
@@ -76,6 +80,12 @@ fun GamepadRemapDialog(
     val context = LocalContext.current
     var layers by remember { mutableStateOf(profile.layers) }
     var captureTarget by remember { mutableStateOf<GamepadButton?>(null) }
+    // U1 (spec 2026-08-14-gamepad-u1-gyro): seção Gyro per-device (só com hasGyro).
+    var gyroMode by remember { mutableStateOf(profile.gyroMode ?: GyroMode.OFF) }
+    var gyroSensitivity by remember { mutableStateOf(profile.gyroSensitivity ?: 1f) }
+    var gyroDeadzone by remember { mutableStateOf(profile.gyroDeadzone ?: 0.05f) }
+    var gyroActivateButton by remember { mutableStateOf(profile.gyroActivateButton) }
+    var captureGyroActivate by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
 
     val defaultLayer = layers[ActionLayer.DEFAULT.name] ?: emptyMap()
@@ -104,11 +114,12 @@ fun GamepadRemapDialog(
         status = null
     }
 
-    // Captura via eventos do BUS cru enquanto captureTarget != null (o escopo de foco
-    // fica desabilitado: TODO o input do controle vira binding).
-    DisposableEffect(captureTarget) {
-        if (captureTarget == null) return@DisposableEffect onDispose {}
-        val target = captureTarget!!
+    // Captura via eventos do BUS cru enquanto captureTarget != null OU
+    // captureGyroActivate (o escopo de foco fica desabilitado: TODO o input do
+    // controle vira binding).
+    DisposableEffect(captureTarget, captureGyroActivate) {
+        val target = captureTarget
+        if (target == null && !captureGyroActivate) return@DisposableEffect onDispose {}
 
         fun handleKey(androidEvent: AndroidEvent.KeyEvent): Boolean {
             val ev = androidEvent.event ?: return false
@@ -117,11 +128,27 @@ fun GamepadRemapDialog(
                 when (ev.keyCode) {
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
                         captureTarget = null
+                        captureGyroActivate = false
                         status = context.getString(R.string.gamepad_remap_capture_cancelled)
                     }
                     else -> {
-                        commitBinding(target, RawBinding.Key(ev.keyCode))
-                        captureTarget = null
+                        if (captureGyroActivate) {
+                            // U1: o botão de ativação é um GamepadButton LÓGICO —
+                            // converte o keycode cru via mapping reverso.
+                            val logical = mapping.buttons.entries
+                                .firstOrNull { it.value == RawBinding.Key(ev.keyCode) }
+                                ?.key
+                            gyroActivateButton = logical?.name
+                            if (logical == null) {
+                                status = context.getString(R.string.gamepad_gyro_activate_unmapped)
+                            } else {
+                                status = null
+                            }
+                            captureGyroActivate = false
+                        } else if (target != null) {
+                            commitBinding(target, RawBinding.Key(ev.keyCode))
+                            captureTarget = null
+                        }
                     }
                 }
                 return true
@@ -135,8 +162,10 @@ fun GamepadRemapDialog(
             if (ev.actionMasked != MotionEvent.ACTION_MOVE) return false
             val (axis, direction, magnitude) = strongestCapturableAxis(ev) ?: return false
             if (magnitude < 0.5f) return false
-            commitBinding(target, RawBinding.Axis(axis, direction))
-            captureTarget = null
+            if (target != null) {
+                commitBinding(target, RawBinding.Axis(axis, direction))
+                captureTarget = null
+            }
             return true
         }
 
@@ -218,7 +247,79 @@ fun GamepadRemapDialog(
                             )
                         }
                     }
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    // ── U1: Gyro (spec 2026-08-14-gamepad-u1-gyro, §1.5) — só com
+                    // capability (V11: a seção SOME quando o device não expõe sensor —
+                    // nunca mostra erro). Modo, sensibilidade, deadzone e botão de
+                    // ativação (hold; null = sempre ativo, recenter na borda).
+                    if (device.hasGyro) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text(
+                            text = stringResource(R.string.gamepad_gyro_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            GyroModeRow(GyroMode.OFF, gyroMode == GyroMode.OFF, Modifier.weight(1f)) { gyroMode = GyroMode.OFF }
+                            GyroModeRow(GyroMode.MOUSE, gyroMode == GyroMode.MOUSE, Modifier.weight(1f)) { gyroMode = GyroMode.MOUSE }
+                            GyroModeRow(GyroMode.CAMERA, gyroMode == GyroMode.CAMERA, Modifier.weight(1f)) { gyroMode = GyroMode.CAMERA }
+                        }
+                        GyroSliderRow(
+                            title = stringResource(R.string.gamepad_gyro_sensitivity_title),
+                            value = gyroSensitivity,
+                            range = 0.1f..3.0f,
+                            onValueChange = { gyroSensitivity = it },
+                        )
+                        GyroSliderRow(
+                            title = stringResource(R.string.gamepad_gyro_deadzone_title),
+                            value = gyroDeadzone,
+                            range = 0.0f..0.3f,
+                            onValueChange = { gyroDeadzone = it },
+                        )
+                        // Botão de ativação (capture mode — mesmo padrão do remap).
+                        val activateInteraction = remember { MutableInteractionSource() }
+                        val activateLabel = gyroActivateButton?.let { name ->
+                            val logical = runCatching { GamepadButton.valueOf(name) }.getOrNull()
+                            if (logical != null) {
+                                stringResource(GamepadGlyphProvider.labelRes(logical, device.faceStyle))
+                            } else {
+                                name
+                            }
+                        } ?: stringResource(R.string.gamepad_gyro_activate_always)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .gamepadSelectable(
+                                    selected = captureGyroActivate,
+                                    onClick = {
+                                        captureGyroActivate = !captureGyroActivate
+                                        captureTarget = null
+                                        status = null
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    interactionSource = activateInteraction,
+                                )
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.gamepad_gyro_activate_title),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = if (captureGyroActivate) {
+                                    stringResource(R.string.gamepad_remap_press_to_bind)
+                                } else {
+                                    activateLabel
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
 
                     // ── Footer ──
                     Row(
@@ -234,7 +335,13 @@ fun GamepadRemapDialog(
                         }
                         Row {
                             TextButton(onClick = {
-                                val json = profile.copy(layers = layers).toJson()
+                                val json = profile.copy(
+                                layers = layers,
+                                gyroMode = if (gyroMode == GyroMode.OFF) null else gyroMode,
+                                gyroSensitivity = if (gyroSensitivity == 1f) null else gyroSensitivity,
+                                gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
+                                gyroActivateButton = gyroActivateButton,
+                            ).toJson()
                                 val clip = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 clip.setPrimaryClip(ClipData.newPlainText("gamepad_profile", json))
                                 status = context.getString(R.string.gamepad_remap_exported)
@@ -249,6 +356,10 @@ fun GamepadRemapDialog(
                                     status = context.getString(R.string.gamepad_remap_import_failed)
                                 } else {
                                     layers = imported.layers
+                                    gyroMode = imported.gyroMode ?: GyroMode.OFF
+                                    gyroSensitivity = imported.gyroSensitivity ?: 1f
+                                    gyroDeadzone = imported.gyroDeadzone ?: 0.05f
+                                    gyroActivateButton = imported.gyroActivateButton
                                     status = context.getString(R.string.gamepad_remap_imported)
                                 }
                             }) {
@@ -263,7 +374,17 @@ fun GamepadRemapDialog(
                         TextButton(onClick = onDismiss) {
                             Text(stringResource(R.string.gamepad_remap_cancel))
                         }
-                        TextButton(onClick = { onSave(profile.copy(layers = layers)) }) {
+                        TextButton(onClick = {
+                            onSave(
+                                profile.copy(
+                                    layers = layers,
+                                    gyroMode = if (gyroMode == GyroMode.OFF) null else gyroMode,
+                                    gyroSensitivity = if (gyroSensitivity == 1f) null else gyroSensitivity,
+                                    gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
+                                    gyroActivateButton = gyroActivateButton,
+                                ),
+                            )
+                        }) {
                             Icon(Icons.Filled.Save, contentDescription = null)
                             Text(stringResource(R.string.gamepad_remap_save))
                         }
@@ -351,6 +472,96 @@ private fun keyName(keyCode: Int): String = when (keyCode) {
         "B$genericIndex" // B1..B16 (BUTTON_1..16)
     }
     else -> "key:$keyCode"
+}
+
+/** U1 — linha de seleção de modo do gyro (OFF/MOUSE/CAMERA). */
+@Composable
+private fun GyroModeRow(
+    mode: GyroMode,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        modifier = modifier
+            .gamepadSelectable(
+                selected = selected,
+                onClick = onClick,
+                shape = RoundedCornerShape(8.dp),
+                interactionSource = interactionSource,
+            )
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = stringResource(
+                when (mode) {
+                    GyroMode.OFF -> R.string.gamepad_gyro_mode_off
+                    GyroMode.MOUSE -> R.string.gamepad_gyro_mode_mouse
+                    GyroMode.CAMERA -> R.string.gamepad_gyro_mode_camera
+                },
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
+/** U1 — slider de ajuste do gyro com A-lock (mesmo padrão dos settings). */
+@Composable
+private fun GyroSliderRow(
+    title: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    var isLocked by remember { mutableStateOf(false) }
+    val adjustStep = (range.endInclusive - range.start) / 20f
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .gamepadAdjustableRow(
+                    locked = isLocked,
+                    onLockChange = { isLocked = it },
+                    onAdjust = { delta ->
+                        onValueChange(
+                            (value + delta * adjustStep).coerceIn(range.start, range.endInclusive),
+                        )
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    interactionSource = interactionSource,
+                )
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Slider(
+                value = value,
+                onValueChange = onValueChange,
+                valueRange = range,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusProperties { canFocus = false },
+            )
+            Text(
+                text = String.format(java.util.Locale.US, "%.2f", value),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 /** Eixo dominante capturável (exclui hat — o dpad já tem botões próprios). */

@@ -2204,6 +2204,15 @@
     <string name="gamepad_touchpad_mouse_subtitle">Mova o cursor com o touchpad do DS4/DualSense; toque para clicar (no jogo)</string>
     <string name="gamepad_touchpad_sensitivity_title">Sensibilidade do touchpad</string>
     <string name="gamepad_touchpad_sensitivity_subtitle">Velocidade do cursor no movimento do touchpad</string>
+    <string name="gamepad_gyro_title">Giroscópio</string>
+    <string name="gamepad_gyro_mode_off">Desligado</string>
+    <string name="gamepad_gyro_mode_mouse">Mouse</string>
+    <string name="gamepad_gyro_mode_camera">Câmera</string>
+    <string name="gamepad_gyro_sensitivity_title">Sensibilidade</string>
+    <string name="gamepad_gyro_deadzone_title">Zona morta</string>
+    <string name="gamepad_gyro_activate_title">Botão de ativação</string>
+    <string name="gamepad_gyro_activate_always">Sempre ativo</string>
+    <string name="gamepad_gyro_activate_unmapped">Essa tecla não é um botão do controle</string>
     <string name="gamepad_glyph_dpad_up">↑</string>
     <string name="gamepad_glyph_dpad_down">↓</string>
     <string name="gamepad_glyph_dpad_left">←</string>
