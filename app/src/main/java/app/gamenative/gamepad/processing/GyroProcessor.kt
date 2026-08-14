@@ -80,11 +80,15 @@ object GyroProcessor {
         val dt = ((sample.nowMs - last.nowMs).coerceIn(1L, 100L)) / 1000f
         var yaw = -(sample.gyroZ - state.offsetZ) // girar à direita = -Z → +deltaX
         var pitch = -(sample.gyroX - state.offsetX) // inclinar para cima = -X → -deltaY
-        val threshold = if (state.aboveDeadzone) config.deadzone * 1.2f else config.deadzone * 0.8f
+        // Histerese correta (P1-4 do spec 2026-08-14-gamepad-upgrades-pendencias):
+        // entrada 1.2× / saída 0.8× — acima de deadzone*1.2 passa a valer; abaixo de
+        // deadzone*0.8 zera. O estado usa o MESMO threshold aplicado (o deadzone cru
+        // desincronizava o limiar e invertia o comportamento na banda 0.8×–1.2×).
+        val threshold = if (state.aboveDeadzone) config.deadzone * 0.8f else config.deadzone * 1.2f
         yaw = if (kotlin.math.abs(yaw) < threshold) 0f else yaw
         pitch = if (kotlin.math.abs(pitch) < threshold) 0f else pitch
-        state.aboveDeadzone = kotlin.math.abs(yaw) >= config.deadzone ||
-            kotlin.math.abs(pitch) >= config.deadzone
+        state.aboveDeadzone = kotlin.math.abs(yaw) >= threshold ||
+            kotlin.math.abs(pitch) >= threshold
         return GyroOutput(
             deltaXRad = yaw * dt,
             deltaYRad = pitch * dt,

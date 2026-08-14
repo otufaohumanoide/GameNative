@@ -74,23 +74,61 @@ class GyroProcessorTest {
     }
 
     @Test
-    fun `deadzone hysteresis - entry and exit thresholds are sticky`() {
+    fun `deadzone hysteresis - below entry threshold stays off`() {
         val state = GyroState()
         GyroProcessor.process(sample(0f, 0f, 0f, 0), state, config, activate = true)
-        // Estado "abaixo": precisa de >= deadzone*0.8 (0.04) para entrar.
-        val below = GyroProcessor.process(sample(0f, 0f, -0.03f, 16), state, config, activate = true)
-        assertEquals(0f, below.deltaXRad, 0.0001f)
-        val entered = GyroProcessor.process(sample(0f, 0f, -0.045f, 32), state, config, activate = true)
+        // (a) P1-4/P3-8: 0.9× (0.045 rad/s) constante por N amostras — abaixo da
+        // entrada 1.2× (0.06) → sempre zero (nunca entra).
+        for (i in 1..10) {
+            val out = GyroProcessor.process(sample(0f, 0f, -0.045f, i * 16L), state, config, activate = true)
+            assertEquals(0f, out.deltaXRad, 0.0001f)
+        }
+    }
+
+    @Test
+    fun `deadzone hysteresis - above entry threshold always passes`() {
+        val state = GyroState()
+        GyroProcessor.process(sample(0f, 0f, 0f, 0), state, config, activate = true)
+        // (b) 1.3× (0.065) constante: entra na primeira amostra e permanece (a saída
+        // 0.8× = 0.04 fica abaixo do sinal) → todas as 10 amostras passam.
+        var nonzero = 0
+        for (i in 1..10) {
+            val out = GyroProcessor.process(sample(0f, 0f, -0.065f, i * 16L), state, config, activate = true)
+            if (kotlin.math.abs(out.deltaXRad) > 0f) nonzero++
+        }
+        assertEquals(10, nonzero)
+    }
+
+    @Test
+    fun `deadzone hysteresis - sticky above until below exit threshold`() {
+        val state = GyroState()
+        GyroProcessor.process(sample(0f, 0f, 0f, 0), state, config, activate = true)
+        // (c) 1.3× entra...
+        val entered = GyroProcessor.process(sample(0f, 0f, -0.065f, 16), state, config, activate = true)
         assertTrue(kotlin.math.abs(entered.deltaXRad) > 0f)
-        // Estado "acima": zera apenas abaixo de deadzone*1.2 (0.06) — 0.045 ainda
-        // acima do limiar de saída → permanece ativo.
-        val sticky = GyroProcessor.process(sample(0f, 0f, -0.045f, 48), state, config, activate = true)
+        // ...0.9× (entre a saída 0.8× e a entrada 1.2×) AINDA passa (sticky)...
+        val sticky = GyroProcessor.process(sample(0f, 0f, -0.045f, 32), state, config, activate = true)
         assertTrue(kotlin.math.abs(sticky.deltaXRad) > 0f)
-        // Cai para 0.03 (< 0.06) → zera; volta a 0.07 (> 0.04) → reativa.
-        val exited = GyroProcessor.process(sample(0f, 0f, -0.03f, 64), state, config, activate = true)
+        // ...0.7× (abaixo da saída 0.8×) zera.
+        val exited = GyroProcessor.process(sample(0f, 0f, -0.035f, 48), state, config, activate = true)
         assertEquals(0f, exited.deltaXRad, 0.0001f)
-        val reentered = GyroProcessor.process(sample(0f, 0f, -0.07f, 80), state, config, activate = true)
-        assertTrue(kotlin.math.abs(reentered.deltaXRad) > 0f)
+    }
+
+    @Test
+    fun `deadzone hysteresis - no flicker for signal oscillating around deadzone`() {
+        val state = GyroState()
+        GyroProcessor.process(sample(0f, 0f, 0f, 0), state, config, activate = true)
+        // (d) Regressão do flicker (P1-4): tremor real alterna em volta da deadzone
+        // (1.05× / 0.95×). Com o código invertido (estado pelo deadzone cru), o limiar
+        // oscilava 0.8×/1.2× e a decisão alternava (~5 não-zero em 10). Com a histerese
+        // correta (entrada 1.2×, saída 0.8×), tudo permanece OFF — decisão estável.
+        var nonzero = 0
+        for (i in 1..10) {
+            val value = if (i % 2 == 1) -0.0525f else -0.0475f
+            val out = GyroProcessor.process(sample(0f, 0f, value, i * 16L), state, config, activate = true)
+            if (kotlin.math.abs(out.deltaXRad) > 0f) nonzero++
+        }
+        assertEquals(0, nonzero)
     }
 
     @Test
