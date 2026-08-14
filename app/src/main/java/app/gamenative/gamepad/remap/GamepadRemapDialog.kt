@@ -5,12 +5,16 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.view.KeyEvent
 import android.view.MotionEvent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -38,6 +42,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -55,7 +62,14 @@ import app.gamenative.gamepad.GamepadDevice
 import app.gamenative.gamepad.glyphs.GamepadGlyphProvider
 import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.RawBinding
+import app.gamenative.gamepad.processing.DeadzoneMode
+import app.gamenative.gamepad.processing.ResponseCurve
+import app.gamenative.gamepad.processing.StickTransform
 import app.gamenative.gamepad.profiles.ActionLayer
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import app.gamenative.gamepad.profiles.GamepadProfile
 import app.gamenative.ui.component.GamepadFocusScope
 import app.gamenative.ui.component.gamepadAdjustableRow
@@ -101,7 +115,144 @@ fun GamepadRemapDialog(
     var touchpadDoubleTapRightClick by remember {
         mutableStateOf(profile.touchpadDoubleTapRightClick ?: false)
     }
+    // ── F1 (spec 2026-08-15-input-core-avancado) — seção Stick + Flick + fusão ──
+    var leftStickMode by remember { mutableStateOf(profile.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL) }
+    var rightStickMode by remember { mutableStateOf(profile.rightStickDeadzoneMode ?: DeadzoneMode.RADIAL) }
+    var leftCurve by remember { mutableStateOf(profile.leftStickCurve ?: ResponseCurve.LINEAR) }
+    var rightCurve by remember { mutableStateOf(profile.rightStickCurve ?: ResponseCurve.LINEAR) }
+    var leftLut by remember { mutableStateOf(profile.leftStickLut ?: emptyList()) }
+    var rightLut by remember { mutableStateOf(profile.rightStickLut ?: emptyList()) }
+    var flickStickEnabled by remember { mutableStateOf(profile.flickStickEnabled ?: false) }
+    var flickRadius by remember {
+        mutableStateOf(profile.flickStickActivationRadius ?: DEFAULT_FLICK_RADIUS)
+    }
+    var flickSnap by remember { mutableStateOf(profile.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP) }
+    var gyroFusionEnabled by remember { mutableStateOf(profile.gyroFusionEnabled ?: false) }
     var status by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * Perfil efetivo do editor — defaults colapsados em null (política do store:
+     * null = sem preferência; salvar default REMOVE a entrada). Usado pelo save,
+     * export clipboard e export arquivo (F3.3).
+     */
+    fun editorProfile(): GamepadProfile = profile.copy(
+        layers = layers,
+        layerTriggers = layerTriggers,
+        gyroMode = if (gyroMode == GyroMode.OFF) null else gyroMode,
+        gyroSensitivity = if (gyroSensitivity == 1f) null else gyroSensitivity,
+        gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
+        gyroActivateButton = gyroActivateButton,
+        touchpadDoubleTapRightClick = if (touchpadDoubleTapRightClick) true else null,
+        // F1 (spec 2026-08-15-input-core-avancado)
+        leftStickDeadzoneMode = if (leftStickMode == DeadzoneMode.RADIAL) null else leftStickMode,
+        rightStickDeadzoneMode = if (rightStickMode == DeadzoneMode.RADIAL) null else rightStickMode,
+        leftStickCurve = if (leftCurve == ResponseCurve.LINEAR) null else leftCurve,
+        rightStickCurve = if (rightCurve == ResponseCurve.LINEAR) null else rightCurve,
+        leftStickLut = if (leftLut.isEmpty()) null else leftLut,
+        rightStickLut = if (rightLut.isEmpty()) null else rightLut,
+        flickStickEnabled = if (flickStickEnabled) true else null,
+        flickStickActivationRadius = if (flickStickEnabled && flickRadius != DEFAULT_FLICK_RADIUS) flickRadius else null,
+        flickStickSnapAngle = if (flickStickEnabled && flickSnap != DEFAULT_FLICK_SNAP) flickSnap else null,
+        gyroFusionEnabled = if (gyroFusionEnabled) true else null,
+        gyroFusionKp = null,
+        gyroFusionKi = null,
+    )
+
+    /** Aplica um perfil importado (clipboard ou arquivo — F3.3) ao estado do editor. */
+    fun applyImportedProfile(imported: GamepadProfile) {
+        layers = imported.layers
+        layerTriggers = imported.layerTriggers
+        gyroMode = imported.gyroMode ?: GyroMode.OFF
+        gyroSensitivity = imported.gyroSensitivity ?: 1f
+        gyroDeadzone = imported.gyroDeadzone ?: 0.05f
+        gyroActivateButton = imported.gyroActivateButton
+        touchpadDoubleTapRightClick = imported.touchpadDoubleTapRightClick ?: false
+        leftStickMode = imported.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL
+        rightStickMode = imported.rightStickDeadzoneMode ?: DeadzoneMode.RADIAL
+        leftCurve = imported.leftStickCurve ?: ResponseCurve.LINEAR
+        rightCurve = imported.rightStickCurve ?: ResponseCurve.LINEAR
+        leftLut = imported.leftStickLut ?: emptyList()
+        rightLut = imported.rightStickLut ?: emptyList()
+        flickStickEnabled = imported.flickStickEnabled ?: false
+        flickRadius = imported.flickStickActivationRadius ?: DEFAULT_FLICK_RADIUS
+        flickSnap = imported.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP
+        gyroFusionEnabled = imported.gyroFusionEnabled ?: false
+    }
+
+    // ── F1.1/F3.3: SAF (CreateDocument/OpenDocument) para LUT e perfil por arquivo ──
+    var pendingLutExport by remember { mutableStateOf<List<Float>>(emptyList()) }
+    var pendingLutImportSetter by remember { mutableStateOf<((List<Float>) -> Unit)?>(null) }
+    val lutExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                out.write(lutJson(pendingLutExport).toByteArray(Charsets.UTF_8))
+            } ?: error("null stream")
+        }.onSuccess {
+            status = context.getString(R.string.gamepad_stick_lut_exported)
+        }.onFailure {
+            status = context.getString(R.string.gamepad_stick_lut_export_failed)
+        }
+    }
+    val lutImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        val setter = pendingLutImportSetter ?: return@rememberLauncherForActivityResult
+        pendingLutImportSetter = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val text = input.readBytes().toString(Charsets.UTF_8)
+                val clean = parseLutJson(text)
+                check(clean.isNotEmpty()) { "lut vazia" }
+                clean
+            } ?: error("null stream")
+        }.onSuccess { clean ->
+            setter(clean)
+            status = context.getString(R.string.gamepad_stick_lut_imported)
+        }.onFailure {
+            status = context.getString(R.string.gamepad_stick_lut_import_failed)
+        }
+    }
+    var pendingProfileExport by remember { mutableStateOf<String?>(null) }
+    val profileExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        val json = pendingProfileExport ?: return@rememberLauncherForActivityResult
+        pendingProfileExport = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                out.write(json.toByteArray(Charsets.UTF_8))
+            } ?: error("null stream")
+        }.onSuccess {
+            status = context.getString(R.string.gamepad_remap_exported)
+        }.onFailure {
+            status = context.getString(R.string.gamepad_profile_export_failed)
+        }
+    }
+    val profileImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                input.readBytes().toString(Charsets.UTF_8)
+            } ?: error("null stream")
+        }.onSuccess { text ->
+            val imported = GamepadProfile.fromJson(text)
+            if (imported == null) {
+                status = context.getString(R.string.gamepad_profile_import_failed)
+            } else {
+                applyImportedProfile(imported)
+                status = context.getString(R.string.gamepad_profile_imported_file)
+            }
+        }.onFailure {
+            status = context.getString(R.string.gamepad_profile_import_failed)
+        }
+    }
 
     fun layerMap(layerName: String): Map<String, String> = layers[layerName] ?: emptyMap()
 
@@ -339,6 +490,94 @@ fun GamepadRemapDialog(
                             .weight(1f)
                             .verticalScroll(rememberScrollState()),
                     ) {
+                        // ── F1: Stick (deadzone radial/axial + response curve + LUT) ──
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text(
+                            text = stringResource(R.string.gamepad_stick_transform_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                        StickTransformBlock(
+                            title = stringResource(R.string.gamepad_stick_left_title),
+                            mode = leftStickMode,
+                            curve = leftCurve,
+                            lut = leftLut,
+                            onModeChange = { leftStickMode = it },
+                            onCurveChange = { leftCurve = it },
+                            onExportLut = {
+                                pendingLutExport = leftLut
+                                lutExportLauncher.launch("gamepad-lut-left.json")
+                            },
+                            onImportLut = {
+                                pendingLutImportSetter = { clean -> leftLut = clean }
+                                lutImportLauncher.launch(arrayOf("application/json", "text/plain"))
+                            },
+                        )
+                        StickTransformBlock(
+                            title = stringResource(R.string.gamepad_stick_right_title),
+                            mode = rightStickMode,
+                            curve = rightCurve,
+                            lut = rightLut,
+                            onModeChange = { rightStickMode = it },
+                            onCurveChange = { rightCurve = it },
+                            onExportLut = {
+                                pendingLutExport = rightLut
+                                lutExportLauncher.launch("gamepad-lut-right.json")
+                            },
+                            onImportLut = {
+                                pendingLutImportSetter = { clean -> rightLut = clean }
+                                lutImportLauncher.launch(arrayOf("application/json", "text/plain"))
+                            },
+                        )
+                        // ── F1.2: Flick Stick ──
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text(
+                            text = stringResource(R.string.gamepad_flick_stick_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                        val flickInteraction = remember { MutableInteractionSource() }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .gamepadSelectable(
+                                    selected = flickStickEnabled,
+                                    onClick = { flickStickEnabled = !flickStickEnabled },
+                                    shape = RoundedCornerShape(8.dp),
+                                    interactionSource = flickInteraction,
+                                )
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.gamepad_flick_stick_toggle_title),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Switch(
+                                checked = flickStickEnabled,
+                                onCheckedChange = { flickStickEnabled = it },
+                                modifier = Modifier.focusProperties { canFocus = false },
+                            )
+                        }
+                        if (flickStickEnabled) {
+                            GyroSliderRow(
+                                title = stringResource(R.string.gamepad_flick_stick_threshold_title),
+                                value = flickRadius,
+                                range = 0.5f..1f,
+                                format = { String.format(java.util.Locale.US, "%.2f", it) },
+                                onValueChange = { flickRadius = it },
+                            )
+                            GyroSliderRow(
+                                title = stringResource(R.string.gamepad_flick_stick_snap_title),
+                                value = flickSnap,
+                                range = 0f..45f,
+                                format = { String.format(java.util.Locale.US, "%.0f°", it) },
+                                onValueChange = { flickSnap = it },
+                            )
+                        }
+
                         GamepadButton.entries.forEach { button ->
                             RemapRow(
                                 button = button,
@@ -432,6 +671,40 @@ fun GamepadRemapDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        // F1.3 (spec 2026-08-15-input-core-avancado): fusão Mahony
+                        // opt-in — corrige pitch/roll pela gravidade; yaw permanece no
+                        // recenter + calibração contínua. Desligado = byte-identical.
+                        val fusionInteraction = remember { MutableInteractionSource() }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .gamepadSelectable(
+                                    selected = gyroFusionEnabled,
+                                    onClick = { gyroFusionEnabled = !gyroFusionEnabled },
+                                    shape = RoundedCornerShape(8.dp),
+                                    interactionSource = fusionInteraction,
+                                )
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.gamepad_gyro_fusion_title),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = stringResource(R.string.gamepad_gyro_fusion_subtitle),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = gyroFusionEnabled,
+                                onCheckedChange = { gyroFusionEnabled = it },
+                                modifier = Modifier.focusProperties { canFocus = false },
+                            )
+                        }
                     }
 
                     // ── P2-6: Touchpad (spec 2026-08-14-touchpad-drag-double-tap) ──
@@ -484,16 +757,7 @@ fun GamepadRemapDialog(
                         }
                         Row {
                             TextButton(onClick = {
-                                val json = profile.copy(
-                                layers = layers,
-                                layerTriggers = layerTriggers,
-                                gyroMode = if (gyroMode == GyroMode.OFF) null else gyroMode,
-                                gyroSensitivity = if (gyroSensitivity == 1f) null else gyroSensitivity,
-                                gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
-                                gyroActivateButton = gyroActivateButton,
-                                touchpadDoubleTapRightClick =
-                                    if (touchpadDoubleTapRightClick) true else null,
-                            ).toJson()
+                                val json = editorProfile().toJson()
                                 val clip = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 clip.setPrimaryClip(ClipData.newPlainText("gamepad_profile", json))
                                 status = context.getString(R.string.gamepad_remap_exported)
@@ -507,17 +771,24 @@ fun GamepadRemapDialog(
                                 if (imported == null) {
                                     status = context.getString(R.string.gamepad_remap_import_failed)
                                 } else {
-                                    layers = imported.layers
-                                    gyroMode = imported.gyroMode ?: GyroMode.OFF
-                                    gyroSensitivity = imported.gyroSensitivity ?: 1f
-                                    gyroDeadzone = imported.gyroDeadzone ?: 0.05f
-                                    gyroActivateButton = imported.gyroActivateButton
-                                    touchpadDoubleTapRightClick =
-                                        imported.touchpadDoubleTapRightClick ?: false
+                                    applyImportedProfile(imported)
                                     status = context.getString(R.string.gamepad_remap_imported)
                                 }
                             }) {
                                 Text(stringResource(R.string.gamepad_remap_import))
+                            }
+                            // F3.3 (spec 2026-08-15-input-core-avancado): export/import
+                            // por ARQUIVO (SAF) — estrutura cloud-ready (schemaVersion).
+                            TextButton(onClick = {
+                                pendingProfileExport = editorProfile().toJson()
+                                profileExportLauncher.launch("gamepad-profile.json")
+                            }) {
+                                Text(stringResource(R.string.gamepad_profile_export_file))
+                            }
+                            TextButton(onClick = {
+                                profileImportLauncher.launch(arrayOf("application/json", "text/plain"))
+                            }) {
+                                Text(stringResource(R.string.gamepad_profile_import_file))
                             }
                         }
                     }
@@ -529,17 +800,7 @@ fun GamepadRemapDialog(
                             Text(stringResource(R.string.gamepad_remap_cancel))
                         }
                         TextButton(onClick = {
-                            onSave(
-                                profile.copy(
-                                    layers = layers,
-                                    gyroMode = if (gyroMode == GyroMode.OFF) null else gyroMode,
-                                    gyroSensitivity = if (gyroSensitivity == 1f) null else gyroSensitivity,
-                                    gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
-                                    gyroActivateButton = gyroActivateButton,
-                                    touchpadDoubleTapRightClick =
-                                        if (touchpadDoubleTapRightClick) true else null,
-                                ),
-                            )
+                            onSave(editorProfile())
                         }) {
                             Icon(Icons.Filled.Save, contentDescription = null)
                             Text(stringResource(R.string.gamepad_remap_save))
@@ -949,4 +1210,173 @@ private fun strongestCapturableAxis(ev: MotionEvent): Triple<Int, Int, Float>? {
         }
     }
     return best
+}
+
+// ── F1 (spec 2026-08-15-input-core-avancado) ──
+
+/** Defaults do Flick Stick na UI (espelham o FlickStickConfig). */
+private const val DEFAULT_FLICK_RADIUS = 0.85f
+private const val DEFAULT_FLICK_SNAP = 15f
+
+/** LUT → JSON `{"lut":[...]}` (SAF export). Valores já sanitizados no uso. */
+private fun lutJson(lut: List<Float>): String {
+    val values = lut.joinToString(",") { v -> if (v.isFinite()) v.toString() else "0" }
+    return """{"lut":[$values]}"""
+}
+
+/** JSON `{"lut":[...]}` → LUT sanitizada (vazia = inválida — nunca crasha). */
+private fun parseLutJson(text: String): List<Float> {
+    val parsed = runCatching {
+        kotlinx.serialization.json.Json.parseToJsonElement(text).jsonObject
+    }.getOrNull() ?: return emptyList()
+    val arr = parsed["lut"]?.jsonArray ?: return emptyList()
+    val raw = arr.mapNotNull { it.jsonPrimitive.floatOrNull }
+    return StickTransform.sanitizeLut(raw)
+}
+
+/**
+ * F1.1 — bloco de um stick: deadzone radial/axial (chips), response curve (chips),
+ * preview read-only da curva (Canvas) e import/export da LUT (SAF).
+ */
+@Composable
+private fun StickTransformBlock(
+    title: String,
+    mode: DeadzoneMode,
+    curve: ResponseCurve,
+    lut: List<Float>,
+    onModeChange: (DeadzoneMode) -> Unit,
+    onCurveChange: (ResponseCurve) -> Unit,
+    onExportLut: () -> Unit,
+    onImportLut: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.gamepad_stick_deadzone_mode_title),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.CenterVertically),
+            )
+            ChoiceChipRow(
+                options = listOf(
+                    stringResource(R.string.gamepad_stick_deadzone_mode_radial) to DeadzoneMode.RADIAL,
+                    stringResource(R.string.gamepad_stick_deadzone_mode_axial) to DeadzoneMode.AXIAL,
+                ),
+                selected = mode,
+                onSelect = onModeChange,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.gamepad_stick_curve_title),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.CenterVertically),
+            )
+            ChoiceChipRow(
+                options = listOf(
+                    stringResource(R.string.gamepad_stick_curve_linear) to ResponseCurve.LINEAR,
+                    stringResource(R.string.gamepad_stick_curve_exponential) to ResponseCurve.EXPONENTIAL,
+                    stringResource(R.string.gamepad_stick_curve_scurve) to ResponseCurve.SCURVE,
+                    stringResource(R.string.gamepad_stick_curve_lut) to ResponseCurve.LUT,
+                ),
+                selected = curve,
+                onSelect = onCurveChange,
+            )
+        }
+        if (curve == ResponseCurve.LUT) {
+            LutPreviewCanvas(lut = lut)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onImportLut) {
+                    Text(stringResource(R.string.gamepad_stick_lut_import))
+                }
+                TextButton(onClick = onExportLut) {
+                    Text(stringResource(R.string.gamepad_stick_lut_export))
+                }
+            }
+        }
+    }
+}
+
+/** Chips mutuamente exclusivos (gamepad-navegáveis) para opções genéricas. */
+@Composable
+private fun <T> ChoiceChipRow(
+    options: List<Pair<String, T>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        options.forEach { (label, value) ->
+            val interactionSource = remember { MutableInteractionSource() }
+            Row(
+                modifier = Modifier
+                    .gamepadSelectable(
+                        selected = value == selected,
+                        onClick = { onSelect(value) },
+                        shape = RoundedCornerShape(8.dp),
+                        interactionSource = interactionSource,
+                    )
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (value == selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * F1.1 — preview read-only da curva (Canvas): poli-linha da LUT sanitizada + linha
+ * de referência linear tracejada. Nenhum estado — puro desenho.
+ */
+@Composable
+private fun LutPreviewCanvas(lut: List<Float>) {
+    val lineColor = MaterialTheme.colorScheme.primary
+    val refColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .height(56.dp),
+    ) {
+        val w = size.width
+        val h = size.height
+        val clean = StickTransform.sanitizeLut(lut)
+        // referência linear
+        drawLine(refColor, Offset(0f, h), Offset(w, 0f), strokeWidth = 2f)
+        if (clean.isNotEmpty()) {
+            val path = Path()
+            val n = clean.size
+            for (i in 0 until n) {
+                val x = if (n == 1) 0f else i * (w / (n - 1))
+                val y = (1f - clean[i]) * h
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path, color = lineColor)
+        }
+    }
 }

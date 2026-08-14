@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.QueryStats
@@ -127,6 +128,8 @@ object QuickMenuAction {
     const val TOUCHSCREEN_MODE = 7
     const val DISABLE_MOUSE = 8
     const val SHOOTER_MODE = 9
+    // F3.1 (spec 2026-08-15-input-core-avancado): editor do Radial Menu.
+    const val RADIAL_MENU = 10
 }
 
 private object QuickMenuTab {
@@ -333,6 +336,15 @@ fun QuickMenu(
                     id = QuickMenuAction.EDIT_PHYSICAL_CONTROLLER,
                     icon = Icons.Default.Gamepad,
                     labelResId = R.string.edit_physical_controller,
+                    accentColor = PluviaTheme.colors.accentPurple,
+                )
+            )
+            // F3.1: editor do Radial Menu (setores/macros; gatilho = camada U3).
+            add(
+                QuickMenuItem(
+                    id = QuickMenuAction.RADIAL_MENU,
+                    icon = Icons.Default.Menu,
+                    labelResId = R.string.radial_menu_title,
                     accentColor = PluviaTheme.colors.accentPurple,
                 )
             )

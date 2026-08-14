@@ -21,6 +21,8 @@ import kotlin.math.sqrt
  * `deadzone − hysteresis`) é responsabilidade do GamepadHub na Onda 2 (padrão
  * DuckStation/Dolphin).
  */
+/** F1.1 (spec 2026-08-15-input-core-avancado): serializável (campo de perfil). */
+@kotlinx.serialization.Serializable
 enum class DeadzoneMode { RADIAL, AXIAL }
 
 data class DeadzoneConfig(

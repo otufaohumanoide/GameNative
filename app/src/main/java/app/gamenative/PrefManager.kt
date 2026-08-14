@@ -1487,6 +1487,14 @@ object PrefManager {
         get() = getPref(GAMEPAD_RUMBLE_ENABLED, true)
         set(value) { setPref(GAMEPAD_RUMBLE_ENABLED, value) }
 
+    /* F2.3 (spec 2026-08-15-input-core-avancado): tick háptico na ativação de camada
+       (U3) e no setor do radial menu. Default ON; `gamepadRumbleEnabled` guarda TUDO
+       (rumble desligado ⇒ tick silencioso também). */
+    private val GAMEPAD_LAYER_TICK_ENABLED = booleanPreferencesKey("gamepadLayerTickEnabled")
+    var gamepadLayerTickEnabled: Boolean
+        get() = getPref(GAMEPAD_LAYER_TICK_ENABLED, true)
+        set(value) { setPref(GAMEPAD_LAYER_TICK_ENABLED, value) }
+
     private val GAMEPAD_TOUCHPAD_SENSITIVITY = floatPreferencesKey("gamepadTouchpadSensitivity")
     var gamepadTouchpadSensitivity: Float
         get() = getPref(GAMEPAD_TOUCHPAD_SENSITIVITY, 1.0f)

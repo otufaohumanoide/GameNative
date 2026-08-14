@@ -240,6 +240,9 @@ import kotlin.math.roundToInt
 import kotlin.text.lowercase
 import com.winlator.PrefManager as WinlatorPrefManager
 import app.gamenative.ui.component.DebugGamepadInputHarness
+import app.gamenative.ui.component.LatencyDebugOverlay
+import app.gamenative.ui.component.radial.RadialMenuHost
+import app.gamenative.ui.component.radial.RadialMenuStateHolder
 import app.gamenative.ui.component.GamepadFocusScope
 import app.gamenative.ui.component.GamepadKeyBridge
 import app.gamenative.ui.component.JoystickFocusNavigator
@@ -561,6 +564,9 @@ fun XServerScreen(
     var keyboardRequestedFromOverlay by remember { mutableStateOf(false) }
     var shouldForceResumeOnMenuClose by remember { mutableStateOf(false) }
     var showQuickMenu by remember { mutableStateOf(false) }
+    // F3.1 (spec 2026-08-15-input-core-avancado): Radial Menu — UM holder (registro
+    // dex no limite); toda a lógica vive no RadialMenuHost (arquivo próprio).
+    val radialState = remember { RadialMenuStateHolder() }
     var quickMenuToolsVisible by remember { mutableStateOf(false) }
     var quickMenuWineProcesses by remember { mutableStateOf<List<ProcessInfo>>(emptyList()) }
     var quickMenuWineProcessesLoading by remember { mutableStateOf(false) }
@@ -1194,6 +1200,17 @@ fun XServerScreen(
                 true
             }
 
+            QuickMenuAction.RADIAL_MENU -> {
+                val deviceId = PluviaApp.gamepadHub.activeDevice?.value?.deviceId ?: -1
+                if (deviceId >= 0) {
+                    radialState.deviceId = deviceId
+                    radialState.editorOpen = true
+                    true
+                } else {
+                    false
+                }
+            }
+
             QuickMenuAction.INPUT_CONTROLS -> {
                 if (areControlsVisible) {
                     if (PrefManager.usageAnalyticsEnabled) PostHog.capture(event = "onscreen_controller_disabled")
@@ -1543,7 +1560,7 @@ fun XServerScreen(
     overlayInputState.context = if (
         showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode ||
         showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
-        showPlayingBlockedDialog
+        showPlayingBlockedDialog || radialState.open
     ) {
         OverlayInputContext.OVERLAY
     } else {
@@ -1552,7 +1569,7 @@ fun XServerScreen(
 
     // Onda 2 (spec 2026-08-13-onda2 §1.4): appId vivo para perfis por jogo — mesmo padrão
     // do holder acima: escrito NA composição, lido pelos handlers do hub no call time.
-    PluviaApp.gamepadHub.activeAppId = container.id
+    PluviaApp.gamepadHub.setActiveAppId(container.id)
 
     // M2 (spec 2026-08-12): emit = MULTICAST — every bus listener runs, no early stop;
     // "consumption" is only the window decision (MainActivity returns true when ANY
@@ -2883,6 +2900,21 @@ fun XServerScreen(
                     .padding(16.dp),
             )
         }
+
+        // F0 (spec 2026-08-15-input-core-avancado): HUD de latência (t0 ingestão → t1
+        // PhysicalControllerHandler) — arquivo próprio (limite dex; só UMA chamada aqui).
+        // Toggle: `setprop debug.gamenative.latency 1`; dump agregado via `latency:report`.
+        LatencyDebugOverlay(enabled = true)
+
+        // F3.1 (spec 2026-08-15-input-core-avancado): Radial Menu — host em arquivo
+        // próprio (limite dex); reusa pauseForOverlayIfAllowed (spec pede).
+        RadialMenuHost(
+            containerId = container.id,
+            state = radialState,
+            filesDir = context.filesDir,
+            pauseGame = { pauseForOverlayIfAllowed() },
+            resumeGame = { resumeIfAllowedAfterOverlay() },
+        )
 
         if (manualResumeMode && PluviaApp.isOverlayPaused && !showQuickMenu && !keepPausedForEditor) {
             Box(

@@ -20,6 +20,8 @@ object AndroidConstants {
     const val BUTTON_START = 108
     const val BUTTON_SELECT = 109
     const val BUTTON_MODE = 110
+    const val BUTTON_C = 111
+    const val BUTTON_Z = 112
     const val BUTTON_1 = 188
     const val BUTTON_16 = 203
     const val DPAD_UP = 19

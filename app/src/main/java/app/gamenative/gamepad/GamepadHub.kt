@@ -13,23 +13,36 @@ import app.gamenative.PrefManager
 import app.gamenative.events.GamepadDeviceAddedEvent
 import app.gamenative.events.GamepadDeviceRemovedEvent
 import app.gamenative.events.GamepadInputEvent
+import app.gamenative.events.GamepadLayerEvent
+import app.gamenative.gamepad.layers.LayerChange
 import app.gamenative.gamepad.layers.LayerResolver
 import app.gamenative.gamepad.layers.LayerState
 import app.gamenative.gamepad.mapping.EventTranslator
 import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.MappingDatabase
 import app.gamenative.gamepad.mapping.RawAxisInput
+import app.gamenative.gamepad.mapping.SdlControllerDb
 import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.mapping.RawKeyInput
 import app.gamenative.gamepad.remap.GamepadBindingCodec
 import app.gamenative.gamepad.processing.DeadzoneConfig
+import app.gamenative.gamepad.processing.DeadzoneMode
+import app.gamenative.gamepad.processing.LatencyTracker
+import app.gamenative.gamepad.processing.FlickStickConfig
+import app.gamenative.gamepad.processing.FlickStickProcessor
+import app.gamenative.gamepad.processing.FlickStickState
+import app.gamenative.gamepad.processing.GyroFusion
+import app.gamenative.gamepad.processing.GyroFusionConfig
+import app.gamenative.gamepad.processing.GyroFusionState
 import app.gamenative.gamepad.processing.GyroConfig
 import app.gamenative.gamepad.processing.GyroState
 import app.gamenative.gamepad.processing.GyroProcessor
 import app.gamenative.gamepad.processing.GyroSample
+import app.gamenative.gamepad.processing.StickSample
 import app.gamenative.gamepad.profiles.GamepadProfile
 import app.gamenative.gamepad.profiles.GamepadProfileStore
 import app.gamenative.gamepad.profiles.ProfileResolver
+import app.gamenative.ui.component.GamepadHaptics
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -59,6 +72,13 @@ class GamepadHub(context: Context) {
 
         /** MOUSE: rad de rotação → pixels de cursor (U1 — 300 px/rad ≈ 5.2 px/grau). */
         const val GYRO_PIXELS_PER_RADIAN = 300f
+
+        /** F1.2: defaults do Flick Stick (spec — activationRadius 0.85, snap 15°). */
+        const val DEFAULT_FLICK_ACTIVATION_RADIUS = 0.85f
+        const val DEFAULT_FLICK_SNAP_ANGLE = 15f
+
+        /** F1.3: Kp default do Mahony (padrão do paper). */
+        const val DEFAULT_FUSION_KP = 0.5f
     }
 
     private val appContext = context.applicationContext
@@ -98,6 +118,43 @@ class GamepadHub(context: Context) {
      */
     @Volatile
     var activeAppId: String? = null
+        private set
+
+    /**
+     * F3.2 (spec 2026-08-15-input-core-avancado): troca de container em foreground —
+     * re-resolve o perfil pelo appId novo SEM reconectar. O re-resolver em si é o
+     * cache M1 (chave deviceId:appId); aqui, a RE-EMISSÃO de bindings: botões lógicos
+     * fisicamente segurados reemitem pelo perfil NOVO (sem isto o jogo novo só veria
+     * o remap novo no PRÓXIMO evento físico — um botão segurado na troca ficaria com
+     * o binding velho até ser solto e apertado de novo).
+     */
+    fun setActiveAppId(appId: String?) {
+        val previous = activeAppId
+        if (appId == previous) return
+        activeAppId = appId
+        invalidateProfiles()
+        if (!PrefManager.gamepadUniversalEnabled) return
+        for ((deviceId, held) in buttonStates.toMap()) {
+            if (held.isEmpty()) continue
+            val device = deviceFor(deviceId) ?: continue
+            val mapping = mappingFor(device)
+            val profile = profileFor(deviceId, appId)
+            val layerState = layerStates.getOrPut(deviceId) { LayerState() }
+            // O gyro re-arma pelo perfil novo (o emitLogical registra o activate).
+            gyroActivateHeld.remove(deviceId)
+            for (button in held.toList()) {
+                emitLogical(device, mapping, profile, layerState, InputEvent.ButtonDown(deviceId, button), deviceId)
+            }
+        }
+    }
+
+    /**
+     * F2.4 (spec 2026-08-15-input-core-avancado): foco da janela — escrito pelo
+     * MainActivity.onWindowFocusChanged. Com foco perdido, ativação de camada/tick é
+     * no-op (nunca input fantasma durante perda de foco — gap da auditoria).
+     */
+    @Volatile
+    var windowFocused: Boolean = true
 
     /** Botões descritos por amostra (hat/meia-eixo) → transições (padrão SDL Android). */
     private val buttonStates = mutableMapOf<Int, MutableSet<GamepadButton>>()
@@ -238,18 +295,34 @@ class GamepadHub(context: Context) {
         profile: GamepadProfile,
         event: InputEvent,
     ) {
-        val button = when (event) {
-            is InputEvent.ButtonDown -> event.button
-            is InputEvent.ButtonUp -> event.button
+        // F2.4 (spec 2026-08-15-input-core-avancado): sem foco de janela, ativação de
+        // camada (e o tick dela) é no-op — nunca input fantasma durante perda de foco.
+        if (!windowFocused) return
+        val (button, deviceId) = when (event) {
+            is InputEvent.ButtonDown -> event.button to event.deviceId
+            is InputEvent.ButtonUp -> event.button to event.deviceId
             else -> return
         }
         val trigger = profile.layerTriggers.entries.firstOrNull { (_, spec) ->
             spec.button == button.name
         } ?: return
         val now = android.os.SystemClock.uptimeMillis()
-        when (event) {
+        val change = when (event) {
             is InputEvent.ButtonDown -> LayerResolver.onButtonDown(layerState, trigger.key, trigger.value, now)
             is InputEvent.ButtonUp -> LayerResolver.onButtonUp(layerState, trigger.key, trigger.value, now)
+            else -> null
+        }
+        // F2.3: tick háptico na ATIVAÇÃO da camada (LayerChange.Activated) — mesmo
+        // gate global do rumble + toggle dedicado (GamepadHaptics.tickDevice).
+        // F3.1: o evento de camada no bus é o gatilho do Radial Menu.
+        when (change) {
+            is LayerChange.Activated -> {
+                GamepadHaptics.tickDevice(deviceId)
+                PluviaApp.events.emit(GamepadLayerEvent(deviceId, change.layer, true))
+            }
+            is LayerChange.Deactivated -> {
+                PluviaApp.events.emit(GamepadLayerEvent(deviceId, change.layer, false))
+            }
             else -> {}
         }
     }
@@ -358,6 +431,9 @@ class GamepadHub(context: Context) {
         accelZ: Float,
         nowMs: Long,
     ) {
+        // F0 (spec 2026-08-15-input-core-avancado): t0 da medição de latência do
+        // caminho de sensor — onSensorSample → PhysicalControllerHandler.applyCameraGyro.
+        LatencyTracker.begin(LatencyTracker.Source.SENSOR, System.nanoTime())
         if (!PrefManager.gamepadUniversalEnabled) return
         val device = deviceFor(deviceId) ?: return
         if (device.deviceClass != DeviceClass.CONTROLLER && device.deviceClass != DeviceClass.TOUCHPAD) return
@@ -398,7 +474,33 @@ class GamepadHub(context: Context) {
                 if (output.active) {
                     // P1-2: velocidade angular (rad/s) morta pela deadzone — o sink
                     // mapeia em deflexão (controle de taxa, padrão DS4Windows).
-                    gyroCameraSink?.invoke(output.yawRadS, output.pitchRadS, sensitivity)
+                    // F1.3 (spec 2026-08-15-input-core-avancado): com a fusão Mahony
+                    // opt-in, o PITCH vem da fusão (corrigido pela gravidade — o accel
+                    // do device já é coletado, P2-3); o YAW permanece o do
+                    // GyroProcessor (recenter + calibração contínua — honestidade
+                    // técnica: sem magnetômetro não há referência de yaw). Desligado,
+                    // o caminho é byte-identical (a fusão nem é chamada).
+                    val pitch = if (profile.gyroFusionEnabled == true) {
+                        val fusionState = fusionStates.getOrPut(deviceId) { GyroFusionState() }
+                        val fusion = GyroFusion.update(
+                            gyroX = gyroX,
+                            gyroY = gyroY,
+                            gyroZ = gyroZ,
+                            accelX = accelX,
+                            accelY = accelY,
+                            accelZ = accelZ,
+                            nowMs = nowMs,
+                            state = fusionState,
+                            config = GyroFusionConfig(
+                                kp = profile.gyroFusionKp ?: DEFAULT_FUSION_KP,
+                                ki = profile.gyroFusionKi ?: 0f,
+                            ),
+                        )
+                        fusion.pitchRadS
+                    } else {
+                        output.pitchRadS
+                    }
+                    gyroCameraSink?.invoke(output.yawRadS, pitch, sensitivity)
                 } else {
                     // Inativo (botão de ativação solto): garante o repouso do stick —
                     // sem isto a deflexão congelava no último valor (o defeito do
@@ -423,6 +525,25 @@ class GamepadHub(context: Context) {
 
     private val gyroStates = mutableMapOf<Int, GyroState>()
     private val gyroActivateHeld = mutableMapOf<Int, String>()
+
+    // F1.2 (spec 2026-08-15-input-core-avancado): estado do Flick Stick por device
+    // (V6 — morto no removeDevice; deviceId efêmero).
+    private val flickStickStates = mutableMapOf<Int, FlickStickState>()
+
+    // F1.3: estado da fusão Mahony por device (idem V6). Só existe com opt-in.
+    private val fusionStates = mutableMapOf<Int, GyroFusionState>()
+
+    /** F1.2: amostra do stick DIREITO com Flick Stick ativo → yaw rad/s (unidade U1). */
+    fun flickStickProcess(deviceId: Int, x: Float, y: Float, nowMs: Long): Float {
+        val profile = profileFor(deviceId, activeAppId)
+        if (profile.flickStickEnabled != true) return 0f
+        val state = flickStickStates.getOrPut(deviceId) { FlickStickState() }
+        val config = FlickStickConfig(
+            activationRadius = profile.flickStickActivationRadius ?: DEFAULT_FLICK_ACTIVATION_RADIUS,
+            snapAngleDeg = profile.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP_ANGLE,
+        )
+        return FlickStickProcessor.process(StickSample(x, y), nowMs, state, config).yawRadS
+    }
 
     private fun gyroActivateHeld(deviceId: Int, profile: GamepadProfile): Boolean {
         val buttonName = profile.gyroActivateButton ?: return true // sempre ativo
@@ -464,6 +585,10 @@ class GamepadHub(context: Context) {
             rightStick = profile.rightStickDeadzone ?: PrefManager.gamepadStickDeadzone,
             leftTrigger = profile.leftTriggerDeadzone ?: defaultDeadzones.leftTrigger,
             rightTrigger = profile.rightTriggerDeadzone ?: defaultDeadzones.rightTrigger,
+            // F1.1 (spec 2026-08-15-input-core-avancado): o modo (radial/axial) do
+            // perfil vale para o caminho LÓGICO também (navegação de menu usa o stick
+            // esquerdo — o modo do LEFT é o que conta). null = RADIAL (atual).
+            mode = profile.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL,
         )
         val events = EventTranslator.translateAxis(raw, mapping, deadzones)
         if (events.isEmpty()) return false
@@ -498,7 +623,26 @@ class GamepadHub(context: Context) {
 
     private fun mappingFor(device: GamepadDevice) =
         MappingDatabase.mappingFor(device.vendorId, device.productId)
+            // F1.4 (spec 2026-08-15-input-core-avancado): fallback do DB pinado do
+            // SDL_GameControllerDB (entradas Android) antes do default. Load do asset
+            // UMA vez, preguiçoso — só quando um modelo desconhecido aparece.
+            ?: sdlDb()[device.mappingKey]
             ?: MappingDatabase.defaultAndroidMapping(device.faceStyle)
+
+    /** Mapa `"vvvvpppp" → GamepadMapping` do asset pinado (lazy; cacheado). */
+    @Volatile
+    private var sdlDbCache: Map<String, GamepadMapping>? = null
+
+    private fun sdlDb(): Map<String, GamepadMapping> {
+        sdlDbCache?.let { return it }
+        val parsed = runCatching {
+            appContext.assets.open("gamecontrollerdb.txt").use { input ->
+                SdlControllerDb.parse(input.readBytes().toString(Charsets.UTF_8))
+            }
+        }.getOrElse { emptyMap() }
+        sdlDbCache = parsed
+        return parsed
+    }
 
     /**
      * P3-4 (spec 2026-08-14-gamepad-upgrades-pendencias): refresh PULL da bateria de
@@ -585,6 +729,9 @@ class GamepadHub(context: Context) {
         // U1 (V6): estado do gyro morre junto; listener de sensor desregistrado (V3).
         gyroStates.remove(deviceId)
         gyroActivateHeld.remove(deviceId)
+        // F1.2/F1.3 (V6): estados do Flick Stick e da fusão morrem junto.
+        flickStickStates.remove(deviceId)
+        fusionStates.remove(deviceId)
         // U3 (V6): camadas ativas morrem junto (deviceId efêmero).
         layerStates.remove(deviceId)
         sensorSource?.onDeviceRemoved(deviceId)

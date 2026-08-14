@@ -2219,10 +2219,53 @@
     <string name="gamepad_layer_trigger_conflict">Esse botão já é o gatilho de outra camada</string>
     <string name="gamepad_touchpad_double_tap_title">Toque duplo = clique direito</string>
     <string name="gamepad_touchpad_double_tap_subtitle">Dois toques rápidos enviam o botão direito (off: dois cliques esquerdos)</string>
+    <!-- F1 (spec 2026-08-15-input-core-avancado) -->
+        <string name="gamepad_stick_left_title">Analógico esquerdo</string>
+    <string name="gamepad_stick_right_title">Analógico direito</string>
+    <string name="gamepad_stick_lut_exported">LUT exportada</string>
+<string name="gamepad_stick_transform_title">Analógico</string>
+    <string name="gamepad_stick_deadzone_mode_title">Zona morta</string>
+    <string name="gamepad_stick_deadzone_mode_radial">Radial</string>
+    <string name="gamepad_stick_deadzone_mode_axial">Axial</string>
+    <string name="gamepad_stick_curve_title">Curva de resposta</string>
+    <string name="gamepad_stick_curve_linear">Linear</string>
+    <string name="gamepad_stick_curve_exponential">Exponencial</string>
+    <string name="gamepad_stick_curve_scurve">Curva S</string>
+    <string name="gamepad_stick_curve_lut">Personalizada (LUT)</string>
+    <string name="gamepad_stick_lut_preview_title">Prévia da curva</string>
+    <string name="gamepad_stick_lut_export">Exportar LUT</string>
+    <string name="gamepad_stick_lut_import">Importar LUT</string>
+    <string name="gamepad_stick_lut_export_failed">Falha ao exportar LUT</string>
+    <string name="gamepad_stick_lut_import_failed">Arquivo de LUT inválido</string>
+    <string name="gamepad_stick_lut_imported">LUT importada</string>
+    <string name="gamepad_flick_stick_title">Flick Stick</string>
+    <string name="gamepad_flick_stick_toggle_title">Analógico direito = Flick Stick</string>
+    <string name="gamepad_flick_stick_threshold_title">Raio de ativação</string>
+    <string name="gamepad_flick_stick_snap_title">Ângulo de snap</string>
+    <string name="gamepad_gyro_fusion_title">Fusão de sensor (experimental)</string>
+    <string name="gamepad_gyro_fusion_subtitle">Filtro Mahony — corrige inclinação/rolagem pela gravidade; a guinada mantém a calibração do giroscópio</string>
+    <string name="gamepad_profile_export_file">Exportar perfil</string>
+    <string name="gamepad_profile_import_file">Importar perfil</string>
+    <string name="gamepad_profile_export_failed">Falha ao exportar perfil</string>
+    <string name="gamepad_profile_import_failed">Arquivo de perfil inválido</string>
+    <string name="gamepad_profile_imported_file">Perfil importado</string>
+
     <string name="gamepad_layer_mode_hold">Segurar</string>
     <string name="gamepad_layer_mode_toggle">Alternar</string>
     <string name="gamepad_layer_mode_double_tap">Duplo toque</string>
-    <string name="gamepad_rumble_title">Vibração do controle (menu)</string>
+            <string name="radial_menu_title">Menu Radial</string>
+    <string name="radial_menu_editor_title">Editor do Menu Radial</string>
+    <string name="radial_menu_trigger_layer_title">Camada de gatilho</string>
+    <string name="radial_menu_trigger_none">Nenhuma (desligado)</string>
+    <string name="radial_menu_sector_count_title">Setores</string>
+    <string name="radial_menu_sector_label">Setor %d</string>
+    <string name="radial_menu_macro_empty">Sem macro</string>
+    <string name="radial_menu_capture">Capturar teclas</string>
+    <string name="radial_menu_capture_running">Aperte as teclas… (BACK encerra)</string>
+    <string name="radial_menu_clear_macro">Limpar</string>
+<string name="gamepad_layer_tick_title">Tick de ativação de camada</string>
+    <string name="gamepad_layer_tick_subtitle">Clique háptico curto ao ativar uma camada (guardado pelo interruptor de vibração)</string>
+<string name="gamepad_rumble_title">Vibração do controle (menu)</string>
     <string name="gamepad_rumble_subtitle">Vibrar o controle nas confirmações de menu (efeitos por device no perfil de remap)</string>
     <string name="gamepad_devices_title">Controles conectados</string>
     <string name="gamepad_devices_empty">Nenhum controle conectado</string>

@@ -16,3 +16,10 @@ import app.gamenative.gamepad.InputEvent
 class GamepadInputEvent(val input: InputEvent) : Event<Boolean>
 class GamepadDeviceAddedEvent(val device: GamepadDevice) : Event<Unit>
 class GamepadDeviceRemovedEvent(val deviceId: Int) : Event<Unit>
+
+/**
+ * F3.1 (spec 2026-08-15-input-core-avancado): ativação/desativação de camada do
+ * perfil (U3) — consumidores como o Radial Menu abrem/fecham no gatilho da camada.
+ * Emitido pelo GamepadHub.resolveLayerTriggers (main thread, síncrono).
+ */
+class GamepadLayerEvent(val deviceId: Int, val layer: String, val activated: Boolean) : Event<Unit>

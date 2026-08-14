@@ -52,6 +52,7 @@ import app.gamenative.utils.AnimatedPngDecoder
 import app.gamenative.data.GameSource
 import app.gamenative.powercontrol.PowerManager
 import app.gamenative.gamepad.mapping.AndroidInputAdapter
+import app.gamenative.gamepad.processing.LatencyTracker
 import app.gamenative.gamepad.GamepadTouchpadForwarder
 import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.IconDecoder
@@ -574,6 +575,11 @@ class MainActivity : ComponentActivity() {
         // M8 (spec 2026-08-12): GamepadTrace — every gamepad key entering the bus, with the
         // device/source identity the routing decision uses. Debug-only (Timber.d).
         if (ExternalController.isGameController(event.device)) {
+            // F0 (spec 2026-08-15-input-core-avancado): t0 da medição de latência —
+            // dispatchKeyEvent → PhysicalControllerHandler.onKeyEvent. Barato quando
+            // desligado (load + branch); a correlação é por slot pendente (dispatch
+            // síncrono na main thread — ver LatencyTracker).
+            LatencyTracker.begin(LatencyTracker.Source.KEY, System.nanoTime())
             Timber.d(
                 "GamepadTrace: key dev=%s src=0x%x action=%d code=%d repeat=%d",
                 event.device?.name, event.device?.sources ?: 0, event.action, event.keyCode, event.repeatCount,
@@ -630,6 +636,9 @@ class MainActivity : ComponentActivity() {
     override fun dispatchGenericMotionEvent(ev: MotionEvent?): Boolean {
         // M8 (spec 2026-08-12): GamepadTrace — every gamepad motion entering the bus.
         if (ev != null && ExternalController.isGameController(ev.device)) {
+            // F0 (spec 2026-08-15-input-core-avancado): t0 da medição de latência —
+            // dispatchGenericMotionEvent → PhysicalControllerHandler.onGenericMotionEvent.
+            LatencyTracker.begin(LatencyTracker.Source.MOTION, System.nanoTime())
             Timber.d(
                 "GamepadTrace: motion dev=%s src=0x%x action=%d axes=[x=%.2f y=%.2f hatX=%.2f hatY=%.2f]",
                 ev.device?.name, ev.device?.sources ?: 0, ev.actionMasked,
@@ -759,6 +768,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        // F2.4 (spec 2026-08-15-input-core-avancado): o hub lê o foco no momento do
+        // evento — ativação de camada/tick vira no-op sem foco (nunca input fantasma).
+        PluviaApp.gamepadHub.windowFocused = hasFocus
         // Re-apply immersive mode when window gains focus to ensure bars stay hidden
         if (hasFocus && !desiredSystemUiVisible) {
             applyImmersiveMode()

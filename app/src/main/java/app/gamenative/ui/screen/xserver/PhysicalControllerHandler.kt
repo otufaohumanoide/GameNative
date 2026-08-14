@@ -3,6 +3,7 @@ package app.gamenative.ui.screen.xserver
 import timber.log.Timber
 
 import android.graphics.PointF
+import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -15,7 +16,12 @@ import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.mapping.MappingDatabase
 import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.processing.DeadzoneConfig
+import app.gamenative.gamepad.processing.DeadzoneMode
 import app.gamenative.gamepad.processing.DeadzoneProcessor
+import app.gamenative.gamepad.processing.LatencyTracker
+import app.gamenative.gamepad.processing.ResponseCurve
+import app.gamenative.gamepad.processing.StickTransform
+import app.gamenative.gamepad.processing.StickTransformConfig
 import app.gamenative.gamepad.processing.GyroStickMapping
 import app.gamenative.gamepad.processing.StickSample
 import app.gamenative.gamepad.remap.GamepadBindingCodec
@@ -114,6 +120,10 @@ class PhysicalControllerHandler(
      * Extracted from InputControlsView.onKeyEvent()
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
+        // F0 (spec 2026-08-15-input-core-avancado): t1 da medição de latência —
+        // par do begin em MainActivity.dispatchKeyEvent (slot pendente; descartado
+        // quando a rota não passou pelo dispatch — ver LatencyTracker).
+        LatencyTracker.end(LatencyTracker.Source.KEY, System.nanoTime())
         if (profile != null && event.repeatCount == 0) {
             // P5 (spec 2026-08-14-gamepad-upgrades-pendencias, Parte V): defesa em
             // profundidade do gate do MainActivity — device de touchpad PURO (classe
@@ -222,6 +232,9 @@ class PhysicalControllerHandler(
      * Extracted from InputControlsView.onGenericMotionEvent()
      */
     fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        // F0 (spec 2026-08-15-input-core-avancado): t1 — par do begin em
+        // MainActivity.dispatchGenericMotionEvent.
+        LatencyTracker.end(LatencyTracker.Source.MOTION, System.nanoTime())
         if (profile != null) {
             // P5 (spec 2026-08-14-gamepad-upgrades-pendencias, Parte V): mesma defesa
             // do onKeyEvent — device de touchpad PURO nunca dirige o jogo; o DS4
@@ -303,21 +316,61 @@ class PhysicalControllerHandler(
         val deviceId = controller.deviceId
         if (deviceId == -1) return
         val profile = PluviaApp.gamepadHub.profileFor(deviceId, PluviaApp.gamepadHub.activeAppId)
-        profile.leftStickDeadzone?.let { dead ->
-            val result = DeadzoneProcessor.process(
+        // F1.2: com Flick Stick ativo o stick DIREITO é do FlickStickProcessor — nenhum
+        // pré-processamento aqui (o activationRadius 0.85 É a dead band do modo).
+        val flickOwnsRight = profile.flickStickEnabled == true
+        // F1.1 (spec 2026-08-15-input-core-avancado): modo/curva/LUT custom assumem o
+        // pipeline do stick (StickTransform completo: deadzone + curva). Só deadzone
+        // override = caminho antigo (byte-identical, regressão V10).
+        val leftCustom = profile.leftStickDeadzoneMode != null ||
+            profile.leftStickCurve != null || profile.leftStickLut != null
+        if (leftCustom) {
+            val result = StickTransform.apply(
                 StickSample(controller.state.thumbLX, controller.state.thumbLY),
-                DeadzoneConfig(leftStick = dead, rightStick = dead),
+                StickTransformConfig(
+                    deadzone = profile.leftStickDeadzone ?: PrefManager.gamepadStickDeadzone,
+                    mode = profile.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL,
+                    curve = profile.leftStickCurve ?: ResponseCurve.LINEAR,
+                    lut = profile.leftStickLut ?: emptyList(),
+                ),
             )
             controller.state.thumbLX = result.x
             controller.state.thumbLY = result.y
+        } else {
+            profile.leftStickDeadzone?.let { dead ->
+                val result = DeadzoneProcessor.process(
+                    StickSample(controller.state.thumbLX, controller.state.thumbLY),
+                    DeadzoneConfig(leftStick = dead, rightStick = dead),
+                )
+                controller.state.thumbLX = result.x
+                controller.state.thumbLY = result.y
+            }
         }
-        profile.rightStickDeadzone?.let { dead ->
-            val result = DeadzoneProcessor.process(
-                StickSample(controller.state.thumbRX, controller.state.thumbRY),
-                DeadzoneConfig(leftStick = dead, rightStick = dead),
-            )
-            controller.state.thumbRX = result.x
-            controller.state.thumbRY = result.y
+        if (!flickOwnsRight) {
+            val rightCustom = profile.rightStickDeadzoneMode != null ||
+                profile.rightStickCurve != null || profile.rightStickLut != null
+            if (rightCustom) {
+                val result = StickTransform.apply(
+                    StickSample(controller.state.thumbRX, controller.state.thumbRY),
+                    StickTransformConfig(
+                        deadzone = profile.rightStickDeadzone ?: PrefManager.gamepadStickDeadzone,
+                        mode = profile.rightStickDeadzoneMode ?: DeadzoneMode.RADIAL,
+                        curve = profile.rightStickCurve ?: ResponseCurve.LINEAR,
+                        lut = profile.rightStickLut ?: emptyList(),
+                    ),
+                )
+                controller.state.thumbRX = result.x
+                controller.state.thumbRY = result.y
+            } else {
+                profile.rightStickDeadzone?.let { dead ->
+                    val result = DeadzoneProcessor.process(
+                        StickSample(controller.state.thumbRX, controller.state.thumbRY),
+                        DeadzoneConfig(leftStick = dead, rightStick = dead),
+                    )
+                    controller.state.thumbRX = result.x
+                    controller.state.thumbRY = result.y
+                }
+            }
         }
         profile.leftTriggerDeadzone?.let { dead ->
             controller.state.triggerL = DeadzoneProcessor.processAxis(controller.state.triggerL, dead)
@@ -337,6 +390,9 @@ class PhysicalControllerHandler(
      * right stick com CAMERA ativo). Chamado pela main thread (sink do hub — P2-7).
      */
     fun applyCameraGyro(yawRadS: Float, pitchRadS: Float, sensitivity: Float) {
+        // F0 (spec 2026-08-15-input-core-avancado): t1 do caminho de sensor — par do
+        // begin em GamepadHub.onSensorSample (invocado sincronamente pelo sink).
+        LatencyTracker.end(LatencyTracker.Source.SENSOR, System.nanoTime())
         val state = profile?.gamepadState ?: return
         state.thumbRX = GyroStickMapping.deflection(yawRadS, sensitivity)
         state.thumbRY = GyroStickMapping.deflection(pitchRadS, sensitivity)
@@ -441,6 +497,25 @@ class PhysicalControllerHandler(
             PluviaApp.gamepadHub.profileFor(controller.deviceId, PluviaApp.gamepadHub.activeAppId)
                 .gyroMode == GyroMode.CAMERA
 
+        // F1.2 (spec 2026-08-15-input-core-avancado): Flick Stick ativo ⇒ o stick
+        // direito físico vira gesto de flick (yaw rad/s → deflexão, mesma unidade do
+        // CAMERA mode). CAMERA mode vence quando os dois estão ligados (o gyro já é o
+        // dono exclusivo do right stick — P1-2).
+        val flickOwnsRightStick = PrefManager.gamepadUniversalEnabled &&
+            !cameraOwnsRightStick &&
+            PluviaApp.gamepadHub.profileFor(controller.deviceId, PluviaApp.gamepadHub.activeAppId)
+                .flickStickEnabled == true
+        if (flickOwnsRightStick) {
+            val yaw = PluviaApp.gamepadHub.flickStickProcess(
+                controller.deviceId,
+                controller.state.thumbRX,
+                controller.state.thumbRY,
+                SystemClock.uptimeMillis(),
+            )
+            controller.state.thumbRX = GyroStickMapping.deflection(yaw, 1f)
+            controller.state.thumbRY = 0f
+        }
+
         val axes = intArrayOf(
             MotionEvent.AXIS_X,
             MotionEvent.AXIS_Y,
@@ -461,7 +536,10 @@ class PhysicalControllerHandler(
         for (i in axes.indices) {
             // P1-2: CAMERA mode ⇒ right stick físico ignorado (gyro é o único
             // escritor de thumbRX/RY do virtual gamepad enquanto o modo está ativo).
-            if (cameraOwnsRightStick && (axes[i] == MotionEvent.AXIS_Z || axes[i] == MotionEvent.AXIS_RZ)) {
+            // F1.2: idem com Flick Stick (o processador escreveu a deflexão acima).
+            if ((cameraOwnsRightStick || flickOwnsRightStick) &&
+                (axes[i] == MotionEvent.AXIS_Z || axes[i] == MotionEvent.AXIS_RZ)
+            ) {
                 continue
             }
             // U4: sticks com binding explícito na camada universal são injetados pelo

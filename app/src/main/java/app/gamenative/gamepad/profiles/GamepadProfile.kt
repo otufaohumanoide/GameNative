@@ -3,6 +3,8 @@ package app.gamenative.gamepad.profiles
 import app.gamenative.gamepad.FaceStyle
 import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.layers.LayerTriggerSpec
+import app.gamenative.gamepad.processing.DeadzoneMode
+import app.gamenative.gamepad.processing.ResponseCurve
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -48,6 +50,25 @@ data class GamepadProfile(
     // P2-6 (spec 2026-08-14-touchpad-drag-double-tap): duplo-toque do touchpad =
     // clique direito (opt-in por perfil; null = OFF — 2 cliques, comportamento U2).
     val touchpadDoubleTapRightClick: Boolean? = null,
+    // ── F1 (spec 2026-08-15-input-core-avancado) ──
+    // F1.1: deadzone radial/axial POR STICK (null = RADIAL, comportamento atual) e
+    // response curve (null = LINEAR). LUT = lista de pontos 0..1 serializada no JSON.
+    val leftStickDeadzoneMode: DeadzoneMode? = null,
+    val rightStickDeadzoneMode: DeadzoneMode? = null,
+    val leftStickCurve: ResponseCurve? = null,
+    val rightStickCurve: ResponseCurve? = null,
+    val leftStickLut: List<Float>? = null,
+    val rightStickLut: List<Float>? = null,
+    // F1.2: stick DIREITO vira Flick Stick (null = OFF — stick normal).
+    val flickStickEnabled: Boolean? = null,
+    val flickStickActivationRadius: Float? = null,
+    val flickStickSnapAngle: Float? = null,
+    // F1.3: fusão Mahony (null = OFF — caminho atual byte-identical).
+    val gyroFusionEnabled: Boolean? = null,
+    val gyroFusionKp: Float? = null,
+    val gyroFusionKi: Float? = null,
+    // F3.3: versão do schema (export/import cloud-ready; chaves novas preservadas — V1).
+    val schemaVersion: Int = 1,
 ) {
     /** Perfil indistinguível de "sem preferência": salvar REMOVE a entrada (padrão do repo). */
     fun isDefault(): Boolean =
@@ -65,7 +86,19 @@ data class GamepadProfile(
             layerTriggers.isEmpty() &&
             rumbleOnActivate == null &&
             rumbleOnBack == null &&
-            touchpadDoubleTapRightClick == null
+            touchpadDoubleTapRightClick == null &&
+            leftStickDeadzoneMode == null &&
+            rightStickDeadzoneMode == null &&
+            leftStickCurve == null &&
+            rightStickCurve == null &&
+            leftStickLut == null &&
+            rightStickLut == null &&
+            flickStickEnabled == null &&
+            flickStickActivationRadius == null &&
+            flickStickSnapAngle == null &&
+            gyroFusionEnabled == null &&
+            gyroFusionKp == null &&
+            gyroFusionKi == null
 
     fun toJson(): String = json.encodeToString(GamepadProfile.serializer(), this)
 

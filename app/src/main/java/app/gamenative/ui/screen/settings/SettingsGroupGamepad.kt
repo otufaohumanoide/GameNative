@@ -88,6 +88,10 @@ fun SettingsGroupGamepad() {
     var rumbleEnabled by rememberSaveable {
         mutableStateOf(if (isPreview) true else PrefManager.gamepadRumbleEnabled)
     }
+    // F2.3 (spec 2026-08-15-input-core-avancado): tick háptico de camada/radial.
+    var layerTickEnabled by rememberSaveable {
+        mutableStateOf(if (isPreview) true else PrefManager.gamepadLayerTickEnabled)
+    }
 
     // P3-4 (spec 2026-08-14-gamepad-upgrades-pendencias): refresh PULL da bateria ao
     // ABRIR a seção (a SettingsScreen é um destino de navegação — compõe ao abrir e
@@ -199,6 +203,20 @@ fun SettingsGroupGamepad() {
             onCheckedChange = {
                 rumbleEnabled = it
                 PrefManager.gamepadRumbleEnabled = it
+            },
+        )
+        GamepadSettingsDivider()
+
+        // F2.3 (spec 2026-08-15-input-core-avancado): tick háptico na ativação de
+        // camada (U3) e no setor do radial menu. `gamepadRumbleEnabled` guarda tudo
+        // (rumble OFF ⇒ tick mudo também — o gate vive no GamepadHaptics.tickDevice).
+        GamepadSettingsSwitchRow(
+            title = stringResource(R.string.gamepad_layer_tick_title),
+            subtitle = stringResource(R.string.gamepad_layer_tick_subtitle),
+            checked = layerTickEnabled,
+            onCheckedChange = {
+                layerTickEnabled = it
+                PrefManager.gamepadLayerTickEnabled = it
             },
         )
         GamepadSettingsDivider()

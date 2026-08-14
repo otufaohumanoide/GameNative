@@ -127,6 +127,19 @@ private fun gamepadDeviceId(): Int? {
 private fun handleCommand(command: String, activity: Activity) {
     val parts = command.split(":")
     when (parts[0]) {
+        // F0 (spec 2026-08-15-input-core-avancado, V12+): dump agregado da medição de
+        // latência (p50/p95 por fonte) no logcat — não depende do HUD estar visível,
+        // só da coleta ligada via `debug.gamenative.latency 1`.
+        "latency" -> {
+            when (parts.getOrNull(1)) {
+                "report" -> Log.d("LatencyTracker", app.gamenative.gamepad.processing.LatencyTracker.report())
+                "reset" -> {
+                    app.gamenative.gamepad.processing.LatencyTracker.reset()
+                    Log.d("LatencyTracker", "reset")
+                }
+                else -> Log.d("LatencyTracker", "usage: latency:report | latency:reset")
+            }
+        }
         "back" -> {
             // Debug-only menu toggle: drives the OnBackPressedDispatcher directly (the
             // BackHandler XServerScreen registers calls gameBack), so the QuickMenu can be

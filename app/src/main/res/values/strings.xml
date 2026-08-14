@@ -2351,10 +2351,53 @@
     <string name="gamepad_layer_trigger_conflict">That button is already the trigger of another layer</string>
     <string name="gamepad_touchpad_double_tap_title">Double-tap = right click</string>
     <string name="gamepad_touchpad_double_tap_subtitle">Two quick taps send the right button (off: two left clicks)</string>
+    <!-- F1 (spec 2026-08-15-input-core-avancado) -->
+        <string name="gamepad_stick_left_title">Left stick</string>
+    <string name="gamepad_stick_right_title">Right stick</string>
+    <string name="gamepad_stick_lut_exported">LUT exported</string>
+<string name="gamepad_stick_transform_title">Stick</string>
+    <string name="gamepad_stick_deadzone_mode_title">Deadzone</string>
+    <string name="gamepad_stick_deadzone_mode_radial">Radial</string>
+    <string name="gamepad_stick_deadzone_mode_axial">Axial</string>
+    <string name="gamepad_stick_curve_title">Response curve</string>
+    <string name="gamepad_stick_curve_linear">Linear</string>
+    <string name="gamepad_stick_curve_exponential">Exponential</string>
+    <string name="gamepad_stick_curve_scurve">S-curve</string>
+    <string name="gamepad_stick_curve_lut">Custom (LUT)</string>
+    <string name="gamepad_stick_lut_preview_title">Curve preview</string>
+    <string name="gamepad_stick_lut_export">Export LUT</string>
+    <string name="gamepad_stick_lut_import">Import LUT</string>
+    <string name="gamepad_stick_lut_export_failed">LUT export failed</string>
+    <string name="gamepad_stick_lut_import_failed">Invalid LUT file</string>
+    <string name="gamepad_stick_lut_imported">LUT imported</string>
+    <string name="gamepad_flick_stick_title">Flick Stick</string>
+    <string name="gamepad_flick_stick_toggle_title">Right stick = Flick Stick</string>
+    <string name="gamepad_flick_stick_threshold_title">Activation radius</string>
+    <string name="gamepad_flick_stick_snap_title">Snap angle</string>
+    <string name="gamepad_gyro_fusion_title">Sensor fusion (experimental)</string>
+    <string name="gamepad_gyro_fusion_subtitle">Mahony filter — corrects pitch/roll with gravity; yaw keeps gyro calibration</string>
+    <string name="gamepad_profile_export_file">Export profile</string>
+    <string name="gamepad_profile_import_file">Import profile</string>
+    <string name="gamepad_profile_export_failed">Profile export failed</string>
+    <string name="gamepad_profile_import_failed">Invalid profile file</string>
+    <string name="gamepad_profile_imported_file">Profile imported</string>
+
     <string name="gamepad_layer_mode_hold">Hold</string>
     <string name="gamepad_layer_mode_toggle">Toggle</string>
     <string name="gamepad_layer_mode_double_tap">Double-tap</string>
-    <string name="gamepad_rumble_title">Controller rumble (menu)</string>
+            <string name="radial_menu_title">Radial Menu</string>
+    <string name="radial_menu_editor_title">Radial Menu editor</string>
+    <string name="radial_menu_trigger_layer_title">Trigger layer</string>
+    <string name="radial_menu_trigger_none">None (off)</string>
+    <string name="radial_menu_sector_count_title">Sectors</string>
+    <string name="radial_menu_sector_label">Sector %d</string>
+    <string name="radial_menu_macro_empty">No macro</string>
+    <string name="radial_menu_capture">Capture keys</string>
+    <string name="radial_menu_capture_running">Press keys… (BACK ends)</string>
+    <string name="radial_menu_clear_macro">Clear</string>
+<string name="gamepad_layer_tick_title">Layer activation tick</string>
+    <string name="gamepad_layer_tick_subtitle">Short haptic click when a layer activates (guarded by the rumble switch)</string>
+<string name="gamepad_rumble_title">Controller rumble (menu)</string>
     <string name="gamepad_rumble_subtitle">Vibrate the controller on menu confirmations (per-device effects in the remap profile)</string>
     <string name="gamepad_devices_title">Connected controllers</string>
     <string name="gamepad_devices_empty">No controller connected</string>

@@ -27,7 +27,7 @@ import android.view.InputDevice
 object GamepadHaptics {
 
     /** Efeitos de menu — padrões curtos (D4: sutil na ativação, menor no back). */
-    enum class HapticEffect { ACTIVATE, BACK }
+    enum class HapticEffect { ACTIVATE, BACK, LAYER_TICK }
 
     /**
      * P2-5: mix SDL para device de 1 motor — `low*0.6 + high*0.4` (clamp 0..1).
@@ -75,6 +75,9 @@ object GamepadHaptics {
         val enabled = when (effect) {
             HapticEffect.ACTIVATE -> profile?.rumbleOnActivate ?: true
             HapticEffect.BACK -> profile?.rumbleOnBack ?: true
+            // F2.3: tick de camada não tem gate de perfil (global apenas) — nunca
+            // passa por aqui (ver [tickDevice]), mas o when precisa ser exaustivo.
+            HapticEffect.LAYER_TICK -> true
         }
         if (!enabled) return
         if (device == null) {
@@ -84,9 +87,35 @@ object GamepadHaptics {
         val (low, high) = when (effect) {
             HapticEffect.ACTIVATE -> 0.4f to 0.2f
             HapticEffect.BACK -> 0.3f to 0.15f
+            HapticEffect.LAYER_TICK -> 0.4f to 0.2f
         }
         val durationMs = if (effect == HapticEffect.ACTIVATE) 18L else 12L
         rumbleDevice(deviceId, low, high, durationMs)
+    }
+
+    /**
+     * F2.3 (spec 2026-08-15-input-core-avancado): tick háptico na ativação de camada
+     * (U3) e no setor do radial menu — `EFFECT_CLICK` (API 30+; fallback one-shot
+     * 10 ms). Gate: `gamepadRumbleEnabled` guarda TUDO + toggle dedicado
+     * `gamepadLayerTickEnabled` (SettingsGroupGamepad). Device sem vibrator =
+     * no-op silencioso (V11 — nunca vibra o telefone por tick).
+     */
+    fun tickDevice(deviceId: Int) {
+        if (!PrefManager.gamepadRumbleEnabled) return
+        if (!PrefManager.gamepadLayerTickEnabled) return
+        val vibrators = deviceVibrators(deviceId) ?: return
+        if (vibrators.isEmpty()) return
+        for (vibrator in vibrators) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                runCatching {
+                    vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+                }.onFailure {
+                    vibrate(vibrator, LAYER_TICK_FALLBACK_MS)
+                }
+            } else {
+                vibrate(vibrator, LAYER_TICK_FALLBACK_MS)
+            }
+        }
     }
 
     /**
@@ -169,6 +198,9 @@ object GamepadHaptics {
             vibrator.vibrate(durationMs)
         }
     }
+
+    /** Fallback do tick de camada em API < 30 (one-shot curto). */
+    private const val LAYER_TICK_FALLBACK_MS = 10L
 
     /** P2-5: one-shot com amplitude 0..255; 0 = cancel; fallback defensivo (SDL). */
     private fun vibrateWithAmplitude(vibrator: Vibrator, intensity: Float, durationMs: Long) {

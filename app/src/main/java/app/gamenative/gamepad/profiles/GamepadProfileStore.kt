@@ -142,6 +142,19 @@ class GamepadProfileStore(private val file: File) {
                 rumbleOnBack = override.rumbleOnBack ?: base.rumbleOnBack,
                 touchpadDoubleTapRightClick = override.touchpadDoubleTapRightClick
                     ?: base.touchpadDoubleTapRightClick,
+                // F1 (spec 2026-08-15-input-core-avancado): mesmos null-preserva.
+                leftStickDeadzoneMode = override.leftStickDeadzoneMode ?: base.leftStickDeadzoneMode,
+                rightStickDeadzoneMode = override.rightStickDeadzoneMode ?: base.rightStickDeadzoneMode,
+                leftStickCurve = override.leftStickCurve ?: base.leftStickCurve,
+                rightStickCurve = override.rightStickCurve ?: base.rightStickCurve,
+                leftStickLut = override.leftStickLut ?: base.leftStickLut,
+                rightStickLut = override.rightStickLut ?: base.rightStickLut,
+                flickStickEnabled = override.flickStickEnabled ?: base.flickStickEnabled,
+                flickStickActivationRadius = override.flickStickActivationRadius ?: base.flickStickActivationRadius,
+                flickStickSnapAngle = override.flickStickSnapAngle ?: base.flickStickSnapAngle,
+                gyroFusionEnabled = override.gyroFusionEnabled ?: base.gyroFusionEnabled,
+                gyroFusionKp = override.gyroFusionKp ?: base.gyroFusionKp,
+                gyroFusionKi = override.gyroFusionKi ?: base.gyroFusionKi,
             )
         }
     }
