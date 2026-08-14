@@ -1452,4 +1452,25 @@ object PrefManager {
             }
         }
 
+    /* Gamepad universal (spec 2026-08-13 — gamepad-universal-correcao, Passo 1) */
+    private val GAMEPAD_UNIVERSAL_ENABLED = booleanPreferencesKey("gamepadUniversalEnabled")
+    var gamepadUniversalEnabled: Boolean
+        get() = getPref(GAMEPAD_UNIVERSAL_ENABLED, false)
+        set(value) { setPref(GAMEPAD_UNIVERSAL_ENABLED, value) }
+
+    private val GAMEPAD_STICK_DEADZONE = floatPreferencesKey("gamepadStickDeadzone")
+    var gamepadStickDeadzone: Float
+        get() = getPref(GAMEPAD_STICK_DEADZONE, 0.15f)
+        set(value) { setPref(GAMEPAD_STICK_DEADZONE, value) }
+
+    private val GAMEPAD_MENU_STICK_DEADZONE = floatPreferencesKey("gamepadMenuStickDeadzone")
+    var gamepadMenuStickDeadzone: Float
+        get() = getPref(GAMEPAD_MENU_STICK_DEADZONE, 0.45f)
+        set(value) { setPref(GAMEPAD_MENU_STICK_DEADZONE, value) }
+
+    private val GAMEPAD_SWAP_OK_CANCEL = booleanPreferencesKey("gamepadSwapOkCancel")
+    var gamepadSwapOkCancel: Boolean
+        get() = getPref(GAMEPAD_SWAP_OK_CANCEL, false)
+        set(value) { setPref(GAMEPAD_SWAP_OK_CANCEL, value) }
+
 }
