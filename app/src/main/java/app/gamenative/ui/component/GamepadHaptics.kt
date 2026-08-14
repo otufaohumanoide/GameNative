@@ -20,13 +20,32 @@ import android.view.InputDevice
  *
  * Efeitos de MENU por perfil (rumbleOnActivate/rumbleOnBack, §1.2): o bridge resolve
  * o perfil do device e silencia quando o usuário desligou. O rumble do JOGO (ponte
- * Wine/XInput → Vibrator) foi DIMENSIONADO no spec (§1.3) e é follow-up com spec
- * próprio.
+ * Wine/XInput → Vibrator) foi DIMENSIONADO no spec (§1.3) e ganhou contrato no P2-5
+ * (spec 2026-08-14-gamepad-upgrades-pendencias): [rumbleDevice] é a assinatura única
+ * low/high/duration/cancel que a ponte futura traduz — zero retrabalho.
  */
 object GamepadHaptics {
 
     /** Efeitos de menu — padrões curtos (D4: sutil na ativação, menor no back). */
     enum class HapticEffect { ACTIVATE, BACK }
+
+    /**
+     * P2-5: mix SDL para device de 1 motor — `low*0.6 + high*0.4` (clamp 0..1).
+     * Pura (testada em JVM).
+     */
+    fun mixIntensity(low: Float, high: Float): Float =
+        (low * 0.6f + high * 0.4f).coerceIn(0f, 1f)
+
+    /**
+     * P2-5: amplitude do one-shot — `round(intensity*255)` clamp ≤255; 0 = cancel
+     * (intensidade <= 0 OU round < 1 ⇒ vibrator.cancel(), padrão SDL exato:
+     * `value < 1 → vibrator.cancel()`). Pura (testada em JVM).
+     */
+    fun amplitudeFor(intensity: Float): Int {
+        if (intensity <= 0f) return 0
+        val value = kotlin.math.round(intensity * 255f).toInt()
+        return if (value < 1) 0 else value.coerceAtMost(255)
+    }
 
     fun isGamepadConnected(): Boolean = InputDevice.getDeviceIds().any { id ->
         val device = InputDevice.getDevice(id)
@@ -45,6 +64,8 @@ object GamepadHaptics {
      * Vibra o DEVICE (U5). Respeita `PrefManager.gamepadRumbleEnabled` e o perfil do
      * device (rumbleOnActivate/rumbleOnBack — perfil vence global). DeviceId
      * desconhecido → fallback `vibrate(context)` (comportamento histórico).
+     * P2-5: os efeitos de menu passam pelo MESMO contrato do rumble do jogo
+     * ([rumbleDevice]) — um único ponto de vibração.
      */
     fun vibrateDevice(context: Context, deviceId: Int, effect: HapticEffect) {
         if (!PrefManager.gamepadRumbleEnabled) return
@@ -60,34 +81,72 @@ object GamepadHaptics {
             vibrate(context, if (effect == HapticEffect.ACTIVATE) 18L else 12L)
             return
         }
-        val vibrator = deviceVibrator(deviceId) ?: return
-        if (!vibrator.hasVibrator()) return
+        val (low, high) = when (effect) {
+            HapticEffect.ACTIVATE -> 0.4f to 0.2f
+            HapticEffect.BACK -> 0.3f to 0.15f
+        }
         val durationMs = if (effect == HapticEffect.ACTIVATE) 18L else 12L
-        vibrate(vibrator, durationMs)
+        rumbleDevice(deviceId, low, high, durationMs)
     }
 
-    /** API 16+: vibrator DO device (deprecado em 31, mas funciona em tudo — V11). */
-    private fun deviceVibrator(deviceId: Int): Vibrator? {
+    /**
+     * P2-5 (spec 2026-08-14-gamepad-upgrades-pendencias): contrato de rumble do JOGO —
+     * assinatura única `(deviceId, low 0..1, high 0..1, durationMs)` (padrão SDL
+     * `rumble(device_id, low, high, duration_ms)`):
+     * - Device com **≥2 vibrators**: motor 0 = low, motor 1 = high (DualSense expõe 2);
+     * - Device com **1 vibrator**: mix `low*0.6 + high*0.4`;
+     * - `low == high == 0` ⇒ `vibrator.cancel()` (parar é parte do contrato);
+     * - Amplitude: [amplitudeFor] (clamp 1..255; <1 = cancel); try/catch com fallback
+     *   para o one-shot de amplitude default (API <26/defensivo, padrão SDL).
+     *
+     * `gamepadRumbleEnabled` guarda TUDO (efeitos de menu E jogo — a ponte
+     * Wine/XInput futura só traduz low/high/duration para esta função).
+     */
+    fun rumbleDevice(deviceId: Int, low: Float, high: Float, durationMs: Long) {
+        if (!PrefManager.gamepadRumbleEnabled) return
+        val vibrators = deviceVibrators(deviceId) ?: return
+        if (vibrators.isEmpty()) return
+        if (low <= 0f && high <= 0f) {
+            // Jogos mandam rumble contínuo com durações longas e depois cancelam.
+            vibrators.forEach { runCatching { it.cancel() } }
+            return
+        }
+        if (vibrators.size >= 2) {
+            vibrateWithAmplitude(vibrators[0], low, durationMs)
+            vibrateWithAmplitude(vibrators[1], high, durationMs)
+        } else {
+            vibrateWithAmplitude(vibrators[0], mixIntensity(low, high), durationMs)
+        }
+    }
+
+    /**
+     * P2-5: vibrators DO device — API 31+ via VibratorManager (ids individuais;
+     * DualSense expõe 2); fallback para o `getVibrator()` legado (API 16+, funcional
+     * em tudo). null = sem vibrator.
+     */
+    private fun deviceVibrators(deviceId: Int): List<Vibrator>? {
         val inputDevice = InputDevice.getDevice(deviceId) ?: return null
         return runCatching {
-            @Suppress("DEPRECATION")
-            inputDevice.vibrator.takeIf { it.hasVibrator() }
-        }.getOrNull()
-            ?: runCatching { vibratorManagerVibrator(deviceId) }.getOrNull()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val manager = inputDevice.vibratorManager
+                val ids = manager?.vibratorIds
+                if (ids != null && ids.isNotEmpty()) {
+                    ids.map { id -> manager.getVibrator(id).takeIf { it.hasVibrator() } }
+                        .filterNotNull()
+                        .ifEmpty { legacyVibrators(inputDevice) }
+                } else {
+                    legacyVibrators(inputDevice)
+                }
+            } else {
+                legacyVibrators(inputDevice)
+            }
+        }.getOrNull()?.takeIf { it.isNotEmpty() }
     }
 
-    /** Fallback API 31+: VibratorManager.getVibrator(id do device), quando existir. */
-    private fun vibratorManagerVibrator(deviceId: Int): Vibrator? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
-        val inputDevice = InputDevice.getDevice(deviceId) ?: return null
-        val manager = inputDevice.vibratorManager ?: return null
-        val ids = manager.vibratorIds
-        if (ids == null || ids.isEmpty()) return null
-        // O id do device nem sempre está na lista — primeiro match pelo próprio id,
-        // senão o default (o vibrator do device costuma ser o único além do telefone).
-        val vibrator = manager.getVibrator(deviceId)
-        return vibrator.takeIf { it.hasVibrator() }
-            ?: manager.defaultVibrator.takeIf { it.hasVibrator() && manager.vibratorIds.size == 1 }
+    @Suppress("DEPRECATION")
+    private fun legacyVibrators(inputDevice: InputDevice): List<Vibrator> {
+        val vibrator = inputDevice.vibrator
+        return if (vibrator.hasVibrator()) listOf(vibrator) else emptyList()
     }
 
     private fun systemVibrator(context: Context): Vibrator? = when {
@@ -108,6 +167,27 @@ object GamepadHaptics {
         } else {
             @Suppress("DEPRECATION")
             vibrator.vibrate(durationMs)
+        }
+    }
+
+    /** P2-5: one-shot com amplitude 0..255; 0 = cancel; fallback defensivo (SDL). */
+    private fun vibrateWithAmplitude(vibrator: Vibrator, intensity: Float, durationMs: Long) {
+        val amplitude = amplitudeFor(intensity)
+        if (amplitude == 0) {
+            runCatching { vibrator.cancel() }
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                vibrator.vibrate(VibrationEffect.createOneShot(durationMs, amplitude))
+            }.onFailure {
+                runCatching {
+                    vibrator.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            runCatching { vibrator.vibrate(durationMs) }
         }
     }
 }
