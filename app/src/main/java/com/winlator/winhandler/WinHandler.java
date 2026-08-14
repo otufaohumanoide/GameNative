@@ -846,8 +846,10 @@ public class WinHandler {
     private boolean startDeviceVibration(int deviceId, short lowFreq, short highFreq) {
         float low = (lowFreq & 0xFFFF) / 65535.0f;
         float high = (highFreq & 0xFFFF) / 65535.0f;
-        GamepadHaptics.INSTANCE.rumbleDevice(deviceId, low, high, CONTROLLER_RUMBLE_DURATION_MS);
-        return low > 0f || high > 0f;
+        // Limpeza 1.3-4 (doc pendentes-e-validacao-gamepad-universal): o retorno é o
+        // resultado REAL do rumbleDevice — isRumbling só liga quando a vibração de
+        // fato disparou (gate OFF/sem vibrator ⇒ false ⇒ o poller não "rumbleia").
+        return GamepadHaptics.INSTANCE.rumbleDevice(deviceId, low, high, CONTROLLER_RUMBLE_DURATION_MS);
     }
 
     /** F2.1: cancel é parte do contrato P2-5 (low == high == 0 ⇒ vibrator.cancel()). */

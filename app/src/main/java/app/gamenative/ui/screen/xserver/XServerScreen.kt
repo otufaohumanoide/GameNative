@@ -2904,7 +2904,7 @@ fun XServerScreen(
         // F0 (spec 2026-08-15-input-core-avancado): HUD de latência (t0 ingestão → t1
         // PhysicalControllerHandler) — arquivo próprio (limite dex; só UMA chamada aqui).
         // Toggle: `setprop debug.gamenative.latency 1`; dump agregado via `latency:report`.
-        LatencyDebugOverlay(enabled = true)
+        LatencyDebugOverlay()
 
         // F3.1 (spec 2026-08-15-input-core-avancado): Radial Menu — host em arquivo
         // próprio (limite dex); reusa pauseForOverlayIfAllowed (spec pede).

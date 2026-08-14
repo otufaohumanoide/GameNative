@@ -67,8 +67,10 @@ class GamepadProfileStore(private val file: File) {
         val parsed = runCatching {
             json.decodeFromString<Map<String, GamepadProfile>>(text)
         }.getOrElse { emptyMap() }
-        cached = parsed
-        return parsed
+        // Limpeza 1.3-3: LUTs sanitizadas no LOAD (uma vez por entrada) — nunca por
+        // evento no hot path. O disco mantém o JSON original (política V1).
+        cached = parsed.mapValues { (_, profile) -> profile.withSanitizedLuts() }
+        return cached!!
     }
 
     private fun write(entries: Map<String, GamepadProfile>) {

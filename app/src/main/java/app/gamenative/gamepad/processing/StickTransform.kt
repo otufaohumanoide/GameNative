@@ -75,7 +75,9 @@ object StickTransform {
             ResponseCurve.LINEAR -> m
             ResponseCurve.EXPONENTIAL -> m * m
             ResponseCurve.SCURVE -> m * m * (3f - 2f * m) // smoothstep
-            ResponseCurve.LUT -> lutValue(m, sanitizeLut(config.lut))
+            // Limpeza 1.3-3: a LUT chega SANITIZADA (store sanitiza no load; imports
+            // sanitizam no parse) — nada de re-sanitizar por evento no hot path.
+            ResponseCurve.LUT -> lutValue(m, config.lut)
         }.coerceIn(0f, 1f)
     }
 

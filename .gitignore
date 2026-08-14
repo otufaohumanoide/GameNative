@@ -83,3 +83,9 @@ nowinandroid/
 # Shader catalog sync: local tarball/extraction cache (spec §3.3 — never commit)
 tools/shaders/cache/
 .reasonix/
+
+# Clones de referência para estudo (dolphin, SDL, DS4Windows etc. — ~1.7 GB).
+# Nunca commitar; apenas reference/sdl/*.md (notas de pesquisa) entra no git.
+reference/
+!reference/sdl/
+!reference/sdl/*.md

@@ -37,14 +37,14 @@ import kotlinx.coroutines.delay
  * (harness V12) faz o dump agregado no logcat sem depender do HUD.
  */
 @Composable
-fun LatencyDebugOverlay(enabled: Boolean) {
+fun LatencyDebugOverlay() {
     if (!BuildConfig.DEBUG) return
     var visible by remember { mutableStateOf(false) }
     var snapshots by remember { mutableStateOf<Map<LatencyTracker.Source, LatencyTracker.Snapshot>?>(null) }
 
-    LaunchedEffect(enabled) {
-        while (enabled) {
-            val on = readLatencyProperty() == "1"
+    LaunchedEffect(Unit) {
+        while (true) {
+            val on = DebugPropertyCache.read(LATENCY_PROPERTY) == "1"
             LatencyTracker.enabled = on
             if (on) {
                 visible = true
@@ -92,9 +92,5 @@ fun LatencyDebugOverlay(enabled: Boolean) {
 
 private fun fmtMs(v: Float): String = "%.2f".format(v)
 
-private fun readLatencyProperty(): String = try {
-    val process = Runtime.getRuntime().exec(arrayOf("getprop", "debug.gamenative.latency"))
-    process.inputStream.bufferedReader().use { it.readText().trim() }
-} catch (_: Throwable) {
-    ""
-}
+/** Propriedade do toggle (ver DebugPropertyCache — leitura com cache compartilhado). */
+const val LATENCY_PROPERTY = "debug.gamenative.latency"

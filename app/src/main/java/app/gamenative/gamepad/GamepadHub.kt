@@ -42,6 +42,7 @@ import app.gamenative.gamepad.processing.StickSample
 import app.gamenative.gamepad.profiles.GamepadProfile
 import app.gamenative.gamepad.profiles.GamepadProfileStore
 import app.gamenative.gamepad.profiles.ProfileResolver
+import app.gamenative.ui.component.DebugPropertyCache
 import app.gamenative.ui.component.GamepadHaptics
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,6 +80,9 @@ class GamepadHub(context: Context) {
 
         /** F1.3: Kp default do Mahony (padrão do paper). */
         const val DEFAULT_FUSION_KP = 0.5f
+
+        /** Propriedade do trace de amostras de sensor (default off — logcat legível). */
+        const val SENSOR_TRACE_PROPERTY = "debug.gamenative.sensortrace"
     }
 
     private val appContext = context.applicationContext
@@ -457,7 +461,12 @@ class GamepadHub(context: Context) {
             accelY = accelY,
             accelZ = accelZ,
         )
-        logLogical(device, event)
+        // O sensor entrega ~40 Hz — logar TODA amostra inunda o logcat e gira o
+        // buffer em segundos (sessão on-device 2026-08-14: navegação de menu ficou
+        // ilegível). Só loga com `debug.gamenative.sensortrace 1`.
+        if (DebugPropertyCache.read(SENSOR_TRACE_PROPERTY) == "1") {
+            logLogical(device, event)
+        }
         PluviaApp.events.emit(GamepadInputEvent(event))
         if (!output.active) return
 
@@ -716,8 +725,9 @@ class GamepadHub(context: Context) {
         sensorSource?.onDeviceAdded(deviceId)
         PluviaApp.events.emit(GamepadDeviceAddedEvent(device))
         Timber.d(
-            "GamepadHub: added id=%d name=%s vendor=%04x product=%04x class=%s",
+            "GamepadHub: added id=%d name=%s vendor=%04x product=%04x class=%s battery=%s gyro=%b touchpad=%b",
             deviceId, device.name, device.vendorId, device.productId, deviceClass,
+            device.batteryPercent?.toString() ?: "-", device.hasGyro, device.hasTouchpad,
         )
     }
 

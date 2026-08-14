@@ -5,6 +5,7 @@ import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.layers.LayerTriggerSpec
 import app.gamenative.gamepad.processing.DeadzoneMode
 import app.gamenative.gamepad.processing.ResponseCurve
+import app.gamenative.gamepad.processing.StickTransform
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -70,6 +71,18 @@ data class GamepadProfile(
     // F3.3: versão do schema (export/import cloud-ready; chaves novas preservadas — V1).
     val schemaVersion: Int = 1,
 ) {
+    /**
+     * Limpeza 1.3-3 (doc pendentes-e-validacao-gamepad-universal): LUTs sanitizadas
+     * UMA vez no LOAD do store — o hot path (StickTransform por MotionEvent) nunca
+     * re-sanitiza. LUT inválida (vazia após limpeza) vira null (sem preferência).
+     */
+    fun withSanitizedLuts(): GamepadProfile {
+        val left = leftStickLut?.let { StickTransform.sanitizeLut(it) }?.takeIf { it.isNotEmpty() }
+        val right = rightStickLut?.let { StickTransform.sanitizeLut(it) }?.takeIf { it.isNotEmpty() }
+        if (left == leftStickLut && right == rightStickLut) return this
+        return copy(leftStickLut = left, rightStickLut = right)
+    }
+
     /** Perfil indistinguível de "sem preferência": salvar REMOVE a entrada (padrão do repo). */
     fun isDefault(): Boolean =
         faceStyle == null &&

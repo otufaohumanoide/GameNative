@@ -99,3 +99,27 @@ class StickTransformTest {
         assertEquals(0.25f, result.y, 0.001f)
     }
 }
+
+/** Limpeza 1.3-3 (doc pendentes): sanitização no LOAD do perfil, nunca por evento. */
+class StickTransformLoadSanitizeTest {
+
+    @org.junit.Test
+    fun `withSanitizedLuts clamp e descarta lixo`() {
+        val profile = app.gamenative.gamepad.profiles.GamepadProfile(
+            leftStickLut = listOf(-1f, 0.5f, 2f, Float.NaN),
+            rightStickLut = listOf(Float.NaN),
+        )
+        val clean = profile.withSanitizedLuts()
+        org.junit.Assert.assertEquals(listOf(0f, 0.5f, 1f), clean.leftStickLut)
+        // LUT inválida (vazia após limpeza) vira null — sem preferência
+        org.junit.Assert.assertNull(clean.rightStickLut)
+    }
+
+    @org.junit.Test
+    fun `withSanitizedLuts sem mudanca devolve a mesma instancia`() {
+        val profile = app.gamenative.gamepad.profiles.GamepadProfile(
+            leftStickLut = listOf(0f, 0.5f, 1f),
+        )
+        org.junit.Assert.assertSame(profile, profile.withSanitizedLuts())
+    }
+}

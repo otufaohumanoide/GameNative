@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import app.gamenative.BuildConfig
 import app.gamenative.PluviaApp
+import app.gamenative.PrefManager
 import kotlinx.coroutines.delay
 
 /**
@@ -84,12 +85,10 @@ fun DebugGamepadInputHarness(enabled: Boolean) {
     }
 }
 
-private fun readInputProperty(): String = try {
-    val process = Runtime.getRuntime().exec(arrayOf("getprop", "debug.gamenative.input"))
-    process.inputStream.bufferedReader().use { it.readText().trim() }
-} catch (_: Throwable) {
-    ""
-}
+private fun readInputProperty(): String =
+    DebugPropertyCache.read(INPUT_PROPERTY)
+
+private const val INPUT_PROPERTY = "debug.gamenative.input"
 
 private fun gamepadDeviceId(): Int? {
     val ids = InputDevice.getDeviceIds()
@@ -127,9 +126,48 @@ private fun gamepadDeviceId(): Int? {
 private fun handleCommand(command: String, activity: Activity) {
     val parts = command.split(":")
     when (parts[0]) {
+        // Doc pendentes-e-validacao-gamepad-universal (§1.1 ativar + §2 "sem o
+        // controle físico"): MIUI bloqueia `adb input` — o toggle da Settings não é
+        // alcançável por toque remoto. Verbo `pref:` com WHITELIST (nunca pref
+        // arbitrário): pref:universal:1|0, pref:touchpadmouse:1|0, pref:rumble:1|0,
+        // pref:layertick:1|0.
+        "pref" -> {
+            val name = parts.getOrNull(1)
+            val value = parts.getOrNull(2) == "1"
+            when (name) {
+                "universal" -> {
+                    PrefManager.gamepadUniversalEnabled = value
+                    Log.d("DebugGamepad", "pref universal=$value")
+                }
+                "touchpadmouse" -> {
+                    PrefManager.gamepadTouchpadMouseEnabled = value
+                    Log.d("DebugGamepad", "pref touchpadmouse=$value")
+                }
+                "rumble" -> {
+                    PrefManager.gamepadRumbleEnabled = value
+                    Log.d("DebugGamepad", "pref rumble=$value")
+                }
+                "layertick" -> {
+                    PrefManager.gamepadLayerTickEnabled = value
+                    Log.d("DebugGamepad", "pref layertick=$value")
+                }
+                else -> Log.d("DebugGamepad", "pref unknown: $name")
+            }
+        }
         // F0 (spec 2026-08-15-input-core-avancado, V12+): dump agregado da medição de
         // latência (p50/p95 por fonte) no logcat — não depende do HUD estar visível,
         // só da coleta ligada via `debug.gamenative.latency 1`.
+        // R7 (doc pendentes-e-validacao-gamepad-universal, §1.4): diagnóstico de
+        // rumble por device — rumble:low:high:duration (0..1, ms). Chama o MESMO
+        // contrato P2-5 do jogo/menu (GamepadHaptics.rumbleDevice).
+        "rumble" -> {
+            val low = parts.getOrNull(1)?.toFloatOrNull() ?: 0.5f
+            val high = parts.getOrNull(2)?.toFloatOrNull() ?: 0.5f
+            val duration = parts.getOrNull(3)?.toLongOrNull() ?: 200L
+            val deviceId = gamepadDeviceId() ?: return
+            val vibrated = GamepadHaptics.rumbleDevice(deviceId, low, high, duration)
+            Log.d("DebugGamepad", "rumble dev=$deviceId low=$low high=$high dur=$duration -> $vibrated")
+        }
         "latency" -> {
             when (parts.getOrNull(1)) {
                 "report" -> Log.d("LatencyTracker", app.gamenative.gamepad.processing.LatencyTracker.report())
@@ -200,9 +238,11 @@ private fun handleCommand(command: String, activity: Activity) {
                 now, now, action, 1,
                 arrayOf(pointerProps), arrayOf(pointerCoords),
                 0, 0, 1f, 1f, deviceId, 0,
-                // CLASS_POINTER é o que o gate de ghost input filtra — o caminho do
-                // touchpad→mouse (U2) é exercitado de ponta a ponta.
-                InputDevice.SOURCE_JOYSTICK or InputDevice.SOURCE_CLASS_POINTER, 0,
+                // P5 (spec 2026-08-14-gamepad-upgrades-pendencias): fantasma = fonte
+                // POINTER-class SEM classe JOYSTICK (dedo puro no touchpad). Fonte
+                // só-POINTER = exatamente o que o gate consome E o forwarder do
+                // touchpad→mouse (U2/V7) lê no mesmo ponto — caminho de ponta a ponta.
+                InputDevice.SOURCE_CLASS_POINTER, 0,
             )
             activity.dispatchGenericMotionEvent(ev)
             Log.d("DebugGamepad", "motion ${parts[0]} $x $y")

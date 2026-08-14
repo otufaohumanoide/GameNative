@@ -103,6 +103,9 @@ object GamepadHaptics {
     fun tickDevice(deviceId: Int) {
         if (!PrefManager.gamepadRumbleEnabled) return
         if (!PrefManager.gamepadLayerTickEnabled) return
+        // Log ANTES da checagem de vibrators: evidência do CALL (ativação de camada/
+        // setor) mesmo quando o device não expõe vibrator (ex.: DS4 via USB).
+        timber.log.Timber.d("GamepadHaptics: LAYER_TICK device=%d", deviceId)
         val vibrators = deviceVibrators(deviceId) ?: return
         if (vibrators.isEmpty()) return
         for (vibrator in vibrators) {
@@ -131,14 +134,14 @@ object GamepadHaptics {
      * `gamepadRumbleEnabled` guarda TUDO (efeitos de menu E jogo — a ponte
      * Wine/XInput futura só traduz low/high/duration para esta função).
      */
-    fun rumbleDevice(deviceId: Int, low: Float, high: Float, durationMs: Long) {
-        if (!PrefManager.gamepadRumbleEnabled) return
-        val vibrators = deviceVibrators(deviceId) ?: return
-        if (vibrators.isEmpty()) return
+    fun rumbleDevice(deviceId: Int, low: Float, high: Float, durationMs: Long): Boolean {
+        if (!PrefManager.gamepadRumbleEnabled) return false
+        val vibrators = deviceVibrators(deviceId) ?: return false
+        if (vibrators.isEmpty()) return false
         if (low <= 0f && high <= 0f) {
             // Jogos mandam rumble contínuo com durações longas e depois cancelam.
             vibrators.forEach { runCatching { it.cancel() } }
-            return
+            return false
         }
         if (vibrators.size >= 2) {
             vibrateWithAmplitude(vibrators[0], low, durationMs)
@@ -146,6 +149,9 @@ object GamepadHaptics {
         } else {
             vibrateWithAmplitude(vibrators[0], mixIntensity(low, high), durationMs)
         }
+        // Limpeza 1.3-4: retorno REAL — true = vibração de fato disparada (o
+        // WinHandler usa para precisar o isRumbling; cancel/gate-off/sem-vibrator = false).
+        return true
     }
 
     /**
