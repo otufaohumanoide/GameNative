@@ -1480,6 +1480,13 @@ object PrefManager {
         get() = getPref(GAMEPAD_TOUCHPAD_MOUSE_ENABLED, false)
         set(value) { setPref(GAMEPAD_TOUCHPAD_MOUSE_ENABLED, value) }
 
+    /* U5 (spec 2026-08-14-gamepad-u5-rumble): rumble do MENU por device. Default ON
+       (comportamento histórico — vibração de confirmação); perfil pode silenciar. */
+    private val GAMEPAD_RUMBLE_ENABLED = booleanPreferencesKey("gamepadRumbleEnabled")
+    var gamepadRumbleEnabled: Boolean
+        get() = getPref(GAMEPAD_RUMBLE_ENABLED, true)
+        set(value) { setPref(GAMEPAD_RUMBLE_ENABLED, value) }
+
     private val GAMEPAD_TOUCHPAD_SENSITIVITY = floatPreferencesKey("gamepadTouchpadSensitivity")
     var gamepadTouchpadSensitivity: Float
         get() = getPref(GAMEPAD_TOUCHPAD_SENSITIVITY, 1.0f)

@@ -1,6 +1,7 @@
 package app.gamenative.ui.screen.settings
 
 import android.content.res.Configuration
+import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -56,6 +57,13 @@ fun SettingsGroupGamepad() {
     } else {
         PluviaApp.gamepadHub.activeDevice.collectAsState().value
     }
+    // U7 (spec 2026-08-14-gamepad-u7-battery): lista de controles com bateria e
+    // capacidades (coletadas no hotplug — pull fora do hot path, V3).
+    val connectedDevices = if (isPreview) {
+        emptyMap<Int, app.gamenative.gamepad.GamepadDevice>()
+    } else {
+        PluviaApp.gamepadHub.connectedDevices.collectAsState().value
+    }
 
     var universalEnabled by rememberSaveable {
         mutableStateOf(if (isPreview) false else PrefManager.gamepadUniversalEnabled)
@@ -76,8 +84,36 @@ fun SettingsGroupGamepad() {
     var touchpadSensitivity by rememberSaveable {
         mutableStateOf(if (isPreview) 1.0f else PrefManager.gamepadTouchpadSensitivity)
     }
+    var rumbleEnabled by rememberSaveable {
+        mutableStateOf(if (isPreview) true else PrefManager.gamepadRumbleEnabled)
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
+        // U7: controles conectados (nome, % de bateria API 31+, badges de capacidade).
+        if (connectedDevices.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.gamepad_devices_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            connectedDevices.values.forEach { device ->
+                ConnectedDeviceRow(
+                    device = device,
+                    isActive = activeDevice?.deviceId == device.deviceId,
+                )
+            }
+            GamepadSettingsDivider()
+        } else if (!isPreview) {
+            Text(
+                text = stringResource(R.string.gamepad_devices_empty),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            GamepadSettingsDivider()
+        }
+
         GamepadSettingsSwitchRow(
             title = stringResource(R.string.gamepad_settings_universal_title),
             subtitle = stringResource(R.string.gamepad_settings_universal_subtitle),
@@ -143,6 +179,18 @@ fun SettingsGroupGamepad() {
         )
         GamepadSettingsDivider()
 
+        // U5 (spec 2026-08-14-gamepad-u5-rumble): rumble do menu por device.
+        GamepadSettingsSwitchRow(
+            title = stringResource(R.string.gamepad_rumble_title),
+            subtitle = stringResource(R.string.gamepad_rumble_subtitle),
+            checked = rumbleEnabled,
+            onCheckedChange = {
+                rumbleEnabled = it
+                PrefManager.gamepadRumbleEnabled = it
+            },
+        )
+        GamepadSettingsDivider()
+
         // M3: remap alcançável pela UI. Sem device conectado → linha desabilitada com hint
         // (o diálogo precisa do device ativo do hub para capturar bindings físicos).
         val remapEnabled = activeDevice != null
@@ -174,6 +222,66 @@ fun SettingsGroupGamepad() {
             onDismiss = { showRemapDialog = false },
         )
     }
+}
+
+/**
+ * U7 (spec 2026-08-14-gamepad-u7-battery): linha de um controle conectado — nome,
+ * bateria (API 31+; hidden quando desconhecida — V11) e badges de capacidade
+ * (GYRO/TOUCHPAD, mesma coleta do U1).
+ */
+@Composable
+private fun ConnectedDeviceRow(
+    device: app.gamenative.gamepad.GamepadDevice,
+    isActive: Boolean,
+) {
+    val battery = device.batteryPercent
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = device.name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+            color = if (isActive) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+            modifier = Modifier.weight(1f),
+        )
+        if (battery != null) {
+            Text(
+                text = stringResource(R.string.gamepad_battery_format, battery),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (device.hasGyro) {
+            CapabilityBadge(stringResource(R.string.gamepad_cap_gyro))
+        }
+        if (device.hasTouchpad) {
+            CapabilityBadge(stringResource(R.string.gamepad_cap_touchpad))
+        }
+    }
+}
+
+@Composable
+private fun CapabilityBadge(label: String) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .background(
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                RoundedCornerShape(6.dp),
+            )
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }
 
 @Composable

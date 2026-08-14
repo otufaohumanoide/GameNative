@@ -2351,6 +2351,13 @@
     <string name="gamepad_layer_mode_hold">Hold</string>
     <string name="gamepad_layer_mode_toggle">Toggle</string>
     <string name="gamepad_layer_mode_double_tap">Double-tap</string>
+    <string name="gamepad_rumble_title">Controller rumble (menu)</string>
+    <string name="gamepad_rumble_subtitle">Vibrate the controller on menu confirmations (per-device effects in the remap profile)</string>
+    <string name="gamepad_devices_title">Connected controllers</string>
+    <string name="gamepad_devices_empty">No controller connected</string>
+    <string name="gamepad_battery_format">%1$d%%</string>
+    <string name="gamepad_cap_gyro">GYRO</string>
+    <string name="gamepad_cap_touchpad">TOUCHPAD</string>
 <string name="gamepad_glyph_dpad_up">↑</string>
     <string name="gamepad_glyph_dpad_down">↓</string>
     <string name="gamepad_glyph_dpad_left">←</string>

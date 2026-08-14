@@ -2219,6 +2219,13 @@
     <string name="gamepad_layer_mode_hold">Segurar</string>
     <string name="gamepad_layer_mode_toggle">Alternar</string>
     <string name="gamepad_layer_mode_double_tap">Duplo toque</string>
+    <string name="gamepad_rumble_title">Vibração do controle (menu)</string>
+    <string name="gamepad_rumble_subtitle">Vibrar o controle nas confirmações de menu (efeitos por device no perfil de remap)</string>
+    <string name="gamepad_devices_title">Controles conectados</string>
+    <string name="gamepad_devices_empty">Nenhum controle conectado</string>
+    <string name="gamepad_battery_format">%1$d%%</string>
+    <string name="gamepad_cap_gyro">GIROSCÓPIO</string>
+    <string name="gamepad_cap_touchpad">TOUCHPAD</string>
     <string name="gamepad_glyph_dpad_up">↑</string>
     <string name="gamepad_glyph_dpad_down">↓</string>
     <string name="gamepad_glyph_dpad_left">←</string>

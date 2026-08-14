@@ -47,7 +47,8 @@ fun GamepadKeyBridge(enabled: Boolean) {
                     ?: KeyEvent.KEYCODE_BUTTON_A -> {
                     if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                         // Translate confirm -> DPAD_CENTER (activation key Compose understands).
-                        GamepadHaptics.vibrate(view.context)
+                        // U5: vibra o DEVICE (perfil rumbleOnActivate ?: global).
+                        GamepadHaptics.vibrateDevice(view.context, event.deviceId, GamepadHaptics.HapticEffect.ACTIVATE)
                         val down = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER)
                         val up = KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER)
                         view.dispatchKeyEvent(down)

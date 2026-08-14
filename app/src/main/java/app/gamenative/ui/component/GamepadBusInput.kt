@@ -253,7 +253,8 @@ fun BusGamepadKeyBridge(
                 ?: KeyEvent.KEYCODE_BUTTON_A
             if (event.keyCode == confirmKey) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    GamepadHaptics.vibrate(view.context)
+                    // U5: vibra o DEVICE (perfil rumbleOnActivate ?: global).
+                    GamepadHaptics.vibrateDevice(view.context, event.deviceId, GamepadHaptics.HapticEffect.ACTIVATE)
                     view.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER))
                     view.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER))
                 }
