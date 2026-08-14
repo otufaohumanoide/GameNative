@@ -211,6 +211,9 @@ private fun handleCommand(command: String, activity: Activity) {
                 gyroX = x,
                 gyroY = y,
                 gyroZ = z,
+                accelX = 0f,
+                accelY = 0f,
+                accelZ = 0f,
                 nowMs = SystemClock.uptimeMillis(),
             )
         }

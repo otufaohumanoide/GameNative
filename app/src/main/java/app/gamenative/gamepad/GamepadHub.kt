@@ -342,7 +342,16 @@ class GamepadHub(context: Context) {
      *   não integral; o PhysicalControllerHandler mapeia no right stick do virtual
      *   gamepad e zera quando a rotação para).
      */
-    fun onSensorSample(deviceId: Int, gyroX: Float, gyroY: Float, gyroZ: Float, nowMs: Long) {
+    fun onSensorSample(
+        deviceId: Int,
+        gyroX: Float,
+        gyroY: Float,
+        gyroZ: Float,
+        accelX: Float,
+        accelY: Float,
+        accelZ: Float,
+        nowMs: Long,
+    ) {
         if (!PrefManager.gamepadUniversalEnabled) return
         val device = deviceFor(deviceId) ?: return
         if (device.deviceClass != DeviceClass.CONTROLLER && device.deviceClass != DeviceClass.TOUCHPAD) return
@@ -350,7 +359,7 @@ class GamepadHub(context: Context) {
         val profile = profileFor(deviceId, activeAppId)
         val gyroState = gyroStates.getOrPut(deviceId) { GyroState() }
         val output = GyroProcessor.process(
-            sample = GyroSample(gyroX, gyroY, gyroZ, nowMs),
+            sample = GyroSample(gyroX, gyroY, gyroZ, nowMs, accelX, accelY, accelZ),
             state = gyroState,
             config = GyroConfig(deadzone = profile.gyroDeadzone ?: DEFAULT_GYRO_DEADZONE),
             activate = gyroActivateHeld(deviceId, profile),
@@ -361,9 +370,10 @@ class GamepadHub(context: Context) {
             gyroX = gyroX,
             gyroY = gyroY,
             gyroZ = gyroZ,
-            accelX = 0f,
-            accelY = 0f,
-            accelZ = 0f,
+            // P2-3: accel real do device (a fonte registra os DOIS — padrão SDL).
+            accelX = accelX,
+            accelY = accelY,
+            accelZ = accelZ,
         )
         logLogical(device, event)
         PluviaApp.events.emit(GamepadInputEvent(event))
