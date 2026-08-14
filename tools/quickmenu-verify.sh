@@ -107,5 +107,24 @@ echo "--- GamepadLogical emitted (gate ON): $(grep -c 'GamepadLogical:' "$LOG")"
 echo "--- hub buttonStates clean on remove: $(grep -c 'GamepadHub: removed' "$LOG")"
 H key:110; sleep 1.5   # close
 
+echo "== [H] Upgrades do intuito (spec 2026-08-14-gamepad-intuito-validacao-upgrades) =="
+echo "NOTE: U1/U2 exigem o gate gamepadUniversalEnabled ON (UI) e as prefs de touchpad/gyro;"
+echo "      o harness entrega os verbos — a leitura do resultado é manual (cursor/câmera)."
+H key:110; sleep 1.0
+echo "--- U6 (LibraryScreen): navegar com A (confirm) e B (cancel) — com swap ON no
+echo "    settings, B confirma e A cancela; Nintendo: direita confirma."
+echo "--- U2 (touchpad): com gamepadTouchpadMouseEnabled ON, no jogo:"
+H touch:0.6:0.5; sleep 0.2; H touch:0.4:0.5; sleep 0.2; H touch:0.6:0.5   # move cursor
+H touchtap                                                               # clique
+echo "    (ver cursor andando no Silksong; touchpad REAL do DS4 idem)"
+echo "--- U1 (gyro): com perfil gyroMode=MOUSE e gate ON, no jogo:"
+H gyro:0:0:-1; sleep 0.2; H gyro:0:0:0    # yaw sintético → cursor
+echo "    (sensor real via BT: recenter na ativação; unregister em pause — grep GamepadSensor)"
+echo "--- GamepadSensor lifecycle: $(grep -c 'GamepadSensor: gyro registered' "$LOG") registered / $(grep -c 'GamepadSensor: gyro unregistered' "$LOG") unregistered"
+echo "--- U3/U4 (camadas): com layerTriggers no perfil e gate ON, segurar o trigger"
+echo "    deve remapear no jogo; gate OFF = byte-identical (O1 da Onda 2)."
+echo "--- U7: seção Gamepad mostra % + badges (DS4 via BT); API < 31 esconde."
+H key:110; sleep 1.0
+
 kill "$(cat /tmp/qm_logcat.pid)" 2>/dev/null
 echo "Full log: $LOG"
