@@ -2213,6 +2213,12 @@
     <string name="gamepad_gyro_activate_title">Botão de ativação</string>
     <string name="gamepad_gyro_activate_always">Sempre ativo</string>
     <string name="gamepad_gyro_activate_unmapped">Essa tecla não é um botão do controle</string>
+    <string name="gamepad_layer_default">Padrão</string>
+    <string name="gamepad_layer_trigger_title">Gatilho da camada</string>
+    <string name="gamepad_layer_no_trigger">Sem gatilho (a camada nunca ativa)</string>
+    <string name="gamepad_layer_mode_hold">Segurar</string>
+    <string name="gamepad_layer_mode_toggle">Alternar</string>
+    <string name="gamepad_layer_mode_double_tap">Duplo toque</string>
     <string name="gamepad_glyph_dpad_up">↑</string>
     <string name="gamepad_glyph_dpad_down">↓</string>
     <string name="gamepad_glyph_dpad_left">←</string>

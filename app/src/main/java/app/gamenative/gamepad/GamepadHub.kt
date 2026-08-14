@@ -13,10 +13,15 @@ import app.gamenative.PrefManager
 import app.gamenative.events.GamepadDeviceAddedEvent
 import app.gamenative.events.GamepadDeviceRemovedEvent
 import app.gamenative.events.GamepadInputEvent
+import app.gamenative.gamepad.layers.LayerResolver
+import app.gamenative.gamepad.layers.LayerState
 import app.gamenative.gamepad.mapping.EventTranslator
+import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.MappingDatabase
 import app.gamenative.gamepad.mapping.RawAxisInput
+import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.mapping.RawKeyInput
+import app.gamenative.gamepad.remap.GamepadBindingCodec
 import app.gamenative.gamepad.processing.DeadzoneConfig
 import app.gamenative.gamepad.processing.GyroConfig
 import app.gamenative.gamepad.processing.GyroState
@@ -209,6 +214,120 @@ class GamepadHub(context: Context) {
         invalidateProfiles()
     }
 
+    // U3: estado de camadas por device (V6 — morto no removeDevice).
+    private val layerStates = mutableMapOf<Int, LayerState>()
+
+    /** Camada ativa do device (U3/U4); null = DEFAULT. */
+    fun activeLayerFor(deviceId: Int): String? = layerStates[deviceId]?.activeLayer
+
+    /**
+     * U4 (spec 2026-08-14-gamepad-u3-u4-layers-remap-jogo, §2.1): binding de camada
+     * EFETIVO (DEFAULT + ativa) para um botão lógico — o PhysicalControllerHandler
+     * consulta ANTES de injetar o ExternalControllerBinding (precedência: binding
+     * explícito universal vence; sem binding → caminho byte-identical). Cache M1.
+     */
+    fun layerBindingFor(deviceId: Int, button: GamepadButton): String? {
+        val device = deviceFor(deviceId) ?: return null
+        val profile = profileFor(deviceId, activeAppId)
+        return LayerResolver.effectiveBindings(profile.layers, layerStates[deviceId]?.activeLayer)[button.name]
+    }
+
+    /** U3 §1.3 (1): triggers resolvem no botão FÍSICO (antes do remap). */
+    private fun resolveLayerTriggers(
+        layerState: LayerState,
+        profile: GamepadProfile,
+        event: InputEvent,
+    ) {
+        val button = when (event) {
+            is InputEvent.ButtonDown -> event.button
+            is InputEvent.ButtonUp -> event.button
+            else -> return
+        }
+        val trigger = profile.layerTriggers.entries.firstOrNull { (_, spec) ->
+            spec.button == button.name
+        } ?: return
+        val now = android.os.SystemClock.uptimeMillis()
+        when (event) {
+            is InputEvent.ButtonDown -> LayerResolver.onButtonDown(layerState, trigger.key, trigger.value, now)
+            is InputEvent.ButtonUp -> LayerResolver.onButtonUp(layerState, trigger.key, trigger.value, now)
+            else -> {}
+        }
+    }
+
+    /**
+     * U3 §1.3 (2): emite o evento lógico com o remap da camada ativa aplicado
+     * (DEFAULT + camada ativa); sem binding na camada → evento original. O gyro
+     * activate (U1) rastreia o botão PÓS-remap (consistência com o remap físico).
+     */
+    private fun emitLogical(
+        device: GamepadDevice,
+        mapping: GamepadMapping,
+        profile: GamepadProfile,
+        layerState: LayerState,
+        event: InputEvent,
+        deviceId: Int,
+    ): Boolean {
+        val emitted = remapEvent(device, mapping, event, layerState)
+        val activateButton = profile.gyroActivateButton
+        for (e in emitted) {
+            if (activateButton != null && e is InputEvent.ButtonDown && e.button.name == activateButton) {
+                gyroActivateHeld[deviceId] = activateButton
+            } else if (activateButton != null && e is InputEvent.ButtonUp && e.button.name == activateButton) {
+                gyroActivateHeld.remove(deviceId)
+            }
+            logLogical(device, e)
+            PluviaApp.events.emit(GamepadInputEvent(e))
+        }
+        return emitted.isNotEmpty()
+    }
+
+    /** Aplica o remap da camada ativa a um evento de botão (U3). */
+    private fun remapEvent(
+        device: GamepadDevice,
+        mapping: GamepadMapping,
+        event: InputEvent,
+        layerState: LayerState,
+    ): List<InputEvent> {
+        val bindings = LayerResolver.effectiveBindings(
+            profileFor(device.deviceId, activeAppId).layers,
+            layerState.activeLayer,
+        )
+        if (bindings.isEmpty()) return listOf(event)
+        val button = when (event) {
+            is InputEvent.ButtonDown -> event.button
+            is InputEvent.ButtonUp -> event.button
+            else -> return listOf(event)
+        }
+        val token = bindings[button.name] ?: return listOf(event)
+        val binding = GamepadBindingCodec.decode(token) ?: return listOf(event)
+        val down = event is InputEvent.ButtonDown
+        return when (binding) {
+            is RawBinding.Key -> {
+                val target = mapping.buttons.entries
+                    .firstOrNull { (_, b) -> b is RawBinding.Key && b.keyCode == binding.keyCode }
+                    ?.key
+                if (target == null) emptyList() else {
+                    listOf(
+                        if (down) InputEvent.ButtonDown(device.deviceId, target)
+                        else InputEvent.ButtonUp(device.deviceId, target),
+                    )
+                }
+            }
+            is RawBinding.Axis -> {
+                val target = mapping.axes.entries
+                    .firstOrNull { (_, b) -> b is RawBinding.Axis && b.axis == binding.axis }
+                    ?.key
+                if (target == null) emptyList() else {
+                    val value = if (down) binding.direction.toFloat() else 0f
+                    listOf(InputEvent.AxisMotion(device.deviceId, target, value))
+                }
+            }
+            // Hat não é alvo de remap de botão no caminho lógico (decisão registrada —
+            // o remap de dpad no jogo passa pelo canal de tecla).
+            is RawBinding.Hat -> emptyList()
+        }
+    }
+
     /**
      * U1/V12 (spec 2026-08-14-gamepad-u1-gyro): amostra de sensor (giroscópio) de um
      * device — chamada pelo GamepadSensorSource (callback em thread PRÓPRIA — nunca no
@@ -288,17 +407,12 @@ class GamepadHub(context: Context) {
         val mapping = mappingFor(device)
         val events = EventTranslator.translateKey(raw, mapping)
         if (events.isEmpty()) return false
-        val activateButton = profileFor(raw.deviceId, activeAppId).gyroActivateButton
+        val profile = profileFor(raw.deviceId, activeAppId)
+        val activateButton = profile.gyroActivateButton
+        val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
         for (event in events) {
-            // U1: ativação do gyro por botão (hold) — rastreada no caminho LÓGICO
-            // (pós-tradução; pós-remap de camada no U3). Estado por device (V6).
-            if (activateButton != null && event is InputEvent.ButtonDown && event.button.name == activateButton) {
-                gyroActivateHeld[raw.deviceId] = activateButton
-            } else if (activateButton != null && event is InputEvent.ButtonUp && event.button.name == activateButton) {
-                gyroActivateHeld.remove(raw.deviceId)
-            }
-            logLogical(device, event)
-            PluviaApp.events.emit(GamepadInputEvent(event))
+            resolveLayerTriggers(layerState, profile, event)
+            emitLogical(device, mapping, profile, layerState, event, raw.deviceId)
         }
         return true
     }
@@ -324,6 +438,7 @@ class GamepadHub(context: Context) {
 
         // O tradutor descreve o ESTADO da amostra (hat/meia-eixo); o hub vira transição.
         val state = buttonStates.getOrPut(raw.deviceId) { mutableSetOf() }
+        val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
         var emitted = false
         for (event in events) {
             val forward = when (event) {
@@ -333,9 +448,9 @@ class GamepadHub(context: Context) {
                 else -> false
             }
             if (forward) {
-                logLogical(device, event)
-                PluviaApp.events.emit(GamepadInputEvent(event))
-                emitted = true
+                // U3: triggers de camada (botão FÍSICO) + remap pela camada ativa.
+                resolveLayerTriggers(layerState, profile, event)
+                emitted = emitLogical(device, mapping, profile, layerState, event, raw.deviceId) || emitted
             }
         }
         return emitted
@@ -413,6 +528,8 @@ class GamepadHub(context: Context) {
         // U1 (V6): estado do gyro morre junto; listener de sensor desregistrado (V3).
         gyroStates.remove(deviceId)
         gyroActivateHeld.remove(deviceId)
+        // U3 (V6): camadas ativas morrem junto (deviceId efêmero).
+        layerStates.remove(deviceId)
         sensorSource?.onDeviceRemoved(deviceId)
         val current = _connectedDevices.value
         if (deviceId !in current) return

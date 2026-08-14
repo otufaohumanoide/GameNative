@@ -9,9 +9,13 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
+import app.gamenative.gamepad.GamepadButton
+import app.gamenative.gamepad.mapping.MappingDatabase
+import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.processing.DeadzoneConfig
 import app.gamenative.gamepad.processing.DeadzoneProcessor
 import app.gamenative.gamepad.processing.StickSample
+import app.gamenative.gamepad.remap.GamepadBindingCodec
 import com.winlator.inputcontrols.Binding
 import com.winlator.inputcontrols.ControlElement
 import com.winlator.inputcontrols.ControlsProfile
@@ -78,6 +82,11 @@ class PhysicalControllerHandler(
      */
     fun cleanup() {
         releaseActiveAxes()
+        // U4: solta bindings de eixos remapeados segurados (state limpo).
+        for (binding in remappedAxisBindings.values) {
+            handleInputEvent(binding, false, 0f)
+        }
+        remappedAxisBindings.clear()
         mouseMoveTimer?.cancel()
         mouseMoveTimer = null
         mouseMoveOffset.set(0f, 0f)
@@ -91,6 +100,12 @@ class PhysicalControllerHandler(
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
         if (profile != null && event.repeatCount == 0) {
+            // U4 (spec 2026-08-14-gamepad-u3-u4-layers-remap-jogo, §2.1): remap da
+            // camada universal (gate ON) — binding EXPLÍCITO vence; sem binding o
+            // fluxo cai no ExternalControllerBinding (byte-identical, V10).
+            if (PrefManager.gamepadUniversalEnabled && applyUniversalKeyRemap(event)) {
+                return true
+            }
             val controller = profile?.getController(event.deviceId)
             if (controller != null) {
                 val controllerBinding = controller.getControllerBinding(event.keyCode)
@@ -120,6 +135,49 @@ class PhysicalControllerHandler(
             }
         }
         return false
+    }
+
+    /**
+     * U4: aplica o binding da camada universal (DEFAULT + camada ativa) para uma tecla
+     * crua. Retorna true quando o remap CONSUMIU o evento (injeção feita OU alvo sem
+     * binding — o remap explícito substitui o botão original).
+     */
+    private fun applyUniversalKeyRemap(event: KeyEvent): Boolean {
+        val hub = PluviaApp.gamepadHub
+        val device = hub.deviceFor(event.deviceId) ?: return false
+        val mapping = MappingDatabase.mappingFor(device.vendorId, device.productId)
+            ?: MappingDatabase.defaultAndroidMapping(device.faceStyle)
+        val logical = mapping.buttons.entries
+            .firstOrNull { (_, b) -> b is RawBinding.Key && b.keyCode == event.keyCode }
+            ?.key ?: return false
+        val token = hub.layerBindingFor(event.deviceId, logical) ?: return false
+        val binding = GamepadBindingCodec.decode(token) ?: return false
+        val controller = profile?.getController(event.deviceId) ?: return false
+        val isDown = event.action == KeyEvent.ACTION_DOWN
+
+        val targetKeyCode = when (binding) {
+            is RawBinding.Key -> binding.keyCode
+            is RawBinding.Axis -> ExternalControllerBinding.getKeyCodeForAxis(
+                binding.axis,
+                binding.direction.toByte(),
+            )
+            // Hat não é traduzido no caminho do jogo (decisão U4 v1 — dpad via tecla).
+            is RawBinding.Hat -> return true
+        }
+        val targetBinding = controller.getControllerBinding(targetKeyCode)
+        if (targetBinding != null) {
+            val offset = if (isDown &&
+                (targetBinding.binding == Binding.GAMEPAD_BUTTON_L2 || targetBinding.binding == Binding.GAMEPAD_BUTTON_R2)
+            ) 1f else 0f
+            handleInputEvent(targetBinding.binding, isDown, offset)
+            val winHandler = xServer?.winHandler
+            val state = profile?.gamepadState
+            if (winHandler != null) {
+                winHandler.sendGamepadState()
+                winHandler.sendVirtualGamepadState(state)
+            }
+        }
+        return true
     }
 
     private fun deviceHasTriggerAxis(device: InputDevice?, keyCode: Int): Boolean {
@@ -155,23 +213,43 @@ class PhysicalControllerHandler(
                 if (PrefManager.gamepadUniversalEnabled) {
                     applyProfileDeadzone(controller)
                 }
-                // Process trigger buttons (L2/R2)
-                var controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_L2)
-                if (controllerBinding != null) {
-                    handleInputEvent(
-                        controllerBinding.binding,
-                        controller.state.triggerL > 0f,
-                        controller.state.triggerL
-                    )
+                // Process trigger buttons (L2/R2) — U4: com remap universal explícito
+                // de LEFT_TRIGGER/RIGHT_TRIGGER, o binding da camada vence.
+                val hub = PluviaApp.gamepadHub
+                val l2Remap = if (PrefManager.gamepadUniversalEnabled) {
+                    hub.layerBindingFor(event.deviceId, GamepadButton.LEFT_TRIGGER)
+                } else {
+                    null
+                }
+                val r2Remap = if (PrefManager.gamepadUniversalEnabled) {
+                    hub.layerBindingFor(event.deviceId, GamepadButton.RIGHT_TRIGGER)
+                } else {
+                    null
+                }
+                if (l2Remap == null) {
+                    val controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_L2)
+                    if (controllerBinding != null) {
+                        handleInputEvent(
+                            controllerBinding.binding,
+                            controller.state.triggerL > 0f,
+                            controller.state.triggerL
+                        )
+                    }
+                } else {
+                    handleRemappedAxis(controller, KeyEvent.KEYCODE_BUTTON_L2, controller.state.triggerL, l2Remap)
                 }
 
-                controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_R2)
-                if (controllerBinding != null) {
-                    handleInputEvent(
-                        controllerBinding.binding,
-                        controller.state.triggerR > 0f,
-                        controller.state.triggerR
-                    )
+                if (r2Remap == null) {
+                    val controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_R2)
+                    if (controllerBinding != null) {
+                        handleInputEvent(
+                            controllerBinding.binding,
+                            controller.state.triggerR > 0f,
+                            controller.state.triggerR
+                        )
+                    }
+                } else {
+                    handleRemappedAxis(controller, KeyEvent.KEYCODE_BUTTON_R2, controller.state.triggerR, r2Remap)
                 }
 
                 // Process analog stick input
@@ -347,6 +425,23 @@ class PhysicalControllerHandler(
         )
 
         for (i in axes.indices) {
+            // U4: sticks com binding explícito na camada universal são injetados pelo
+            // binding ALVO (o eixo original não passa pelo activeAxisBindings — o
+            // controle de release é próprio). Hats (i >= 4) não são remapeados no
+            // caminho do jogo (decisão U4 v1 — dpad via canal de tecla).
+            val logicalButton = when (axes[i]) {
+                MotionEvent.AXIS_X, MotionEvent.AXIS_Y -> GamepadButton.LEFT_STICK
+                MotionEvent.AXIS_Z, MotionEvent.AXIS_RZ -> GamepadButton.RIGHT_STICK
+                else -> null
+            }
+            if (logicalButton != null && PrefManager.gamepadUniversalEnabled) {
+                val token = PluviaApp.gamepadHub.layerBindingFor(controller.deviceId, logicalButton)
+                if (token != null) {
+                    handleRemappedAxis(controller, axes[i], values[i], token)
+                    continue
+                }
+            }
+
             val posKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axes[i], 1.toByte())
             val negKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axes[i], (-1).toByte())
 
@@ -378,6 +473,44 @@ class PhysicalControllerHandler(
                     }
                 }
             }
+        }
+    }
+
+    /** Bindings-alvo atualmente segurados de eixos remapeados (U4) — por eixo cru. */
+    private val remappedAxisBindings = mutableMapOf<Int, Binding>()
+
+    /**
+     * U4: injeta o binding ALVO de um eixo remapeado pela camada universal (tecla ou
+     * eixo), com o valor do eixo de origem. Libera quando o valor cai abaixo da
+     * deadzone (release controlado por [remappedAxisBindings] — o eixo original não
+     * passa pelo fluxo normal).
+     */
+    private fun handleRemappedAxis(
+        controller: ExternalController,
+        sourceAxis: Int,
+        value: Float,
+        token: String,
+    ) {
+        val binding = GamepadBindingCodec.decode(token) ?: return
+        val targetKeyCode = when (binding) {
+            is RawBinding.Key -> binding.keyCode
+            is RawBinding.Axis -> ExternalControllerBinding.getKeyCodeForAxis(
+                binding.axis,
+                binding.direction.toByte(),
+            )
+            is RawBinding.Hat -> return
+        }
+        val target = controller.getControllerBinding(targetKeyCode) ?: return
+        val pressed = kotlin.math.abs(value) > ControlElement.STICK_DEAD_ZONE
+        val wasPressed = remappedAxisBindings[sourceAxis] != null
+        if (pressed) {
+            if (!wasPressed || target.binding.isGamepad) {
+                handleInputEvent(target.binding, true, value)
+            }
+            remappedAxisBindings[sourceAxis] = target.binding
+        } else if (wasPressed) {
+            handleInputEvent(target.binding, false, 0f)
+            remappedAxisBindings.remove(sourceAxis)
         }
     }
 

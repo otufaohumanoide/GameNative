@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -46,6 +47,8 @@ import app.gamenative.R
 import app.gamenative.events.AndroidEvent
 import app.gamenative.gamepad.FaceStyle
 import app.gamenative.gamepad.GyroMode
+import app.gamenative.gamepad.layers.LayerTriggerMode
+import app.gamenative.gamepad.layers.LayerTriggerSpec
 import app.gamenative.gamepad.GamepadButton
 import app.gamenative.gamepad.GamepadDevice
 import app.gamenative.gamepad.glyphs.GamepadGlyphProvider
@@ -86,13 +89,22 @@ fun GamepadRemapDialog(
     var gyroDeadzone by remember { mutableStateOf(profile.gyroDeadzone ?: 0.05f) }
     var gyroActivateButton by remember { mutableStateOf(profile.gyroActivateButton) }
     var captureGyroActivate by remember { mutableStateOf(false) }
+    // U3 (spec 2026-08-14-gamepad-u3-u4-layers-remap-jogo, §1.4): camada em edição,
+    // triggers de camada (capture do botão + modo) e nova camada.
+    var selectedLayer by remember { mutableStateOf(ActionLayer.DEFAULT.name) }
+    var layerTriggers by remember { mutableStateOf(profile.layerTriggers) }
+    var captureLayerTrigger by remember { mutableStateOf(false) }
+    var pendingTriggerMode by remember { mutableStateOf(LayerTriggerMode.HOLD) }
     var status by remember { mutableStateOf<String?>(null) }
 
-    val defaultLayer = layers[ActionLayer.DEFAULT.name] ?: emptyMap()
+    fun layerMap(layerName: String): Map<String, String> = layers[layerName] ?: emptyMap()
 
     fun bindingFor(button: GamepadButton): RawBinding? {
-        val token = defaultLayer[button.name] ?: return mapping.buttons[button]
-        return GamepadBindingCodec.decode(token) ?: mapping.buttons[button]
+        val token = layerMap(selectedLayer)[button.name]
+        if (token != null) return GamepadBindingCodec.decode(token)
+        // A camada só sobrepõe o que define; DEFAULT mostra o binding do mapping.
+        if (selectedLayer == ActionLayer.DEFAULT.name) return mapping.buttons[button]
+        return null
     }
 
     fun commitBinding(button: GamepadButton, binding: RawBinding) {
@@ -103,23 +115,25 @@ fun GamepadRemapDialog(
             status = context.getString(R.string.gamepad_remap_conflict)
             return
         }
-        val newLayer = defaultLayer + (button.name to GamepadBindingCodec.encode(binding))
-        layers = layers + (ActionLayer.DEFAULT.name to newLayer)
+        val newLayer = layerMap(selectedLayer) + (button.name to GamepadBindingCodec.encode(binding))
+        layers = layers + (selectedLayer to newLayer)
         status = null
     }
 
     fun clearBinding(button: GamepadButton) {
-        if (button.name !in defaultLayer) return
-        layers = layers + (ActionLayer.DEFAULT.name to (defaultLayer - button.name))
+        if (button.name !in layerMap(selectedLayer)) return
+        layers = layers + (selectedLayer to (layerMap(selectedLayer) - button.name))
         status = null
     }
 
     // Captura via eventos do BUS cru enquanto captureTarget != null OU
     // captureGyroActivate (o escopo de foco fica desabilitado: TODO o input do
     // controle vira binding).
-    DisposableEffect(captureTarget, captureGyroActivate) {
+    DisposableEffect(captureTarget, captureGyroActivate, captureLayerTrigger) {
         val target = captureTarget
-        if (target == null && !captureGyroActivate) return@DisposableEffect onDispose {}
+        if (target == null && !captureGyroActivate && !captureLayerTrigger) {
+            return@DisposableEffect onDispose {}
+        }
 
         fun handleKey(androidEvent: AndroidEvent.KeyEvent): Boolean {
             val ev = androidEvent.event ?: return false
@@ -129,10 +143,29 @@ fun GamepadRemapDialog(
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
                         captureTarget = null
                         captureGyroActivate = false
+                        captureLayerTrigger = false
                         status = context.getString(R.string.gamepad_remap_capture_cancelled)
                     }
                     else -> {
-                        if (captureGyroActivate) {
+                        if (captureLayerTrigger) {
+                            // U3: o botão do trigger é um GamepadButton LÓGICO
+                            // (conversão reversa do keycode cru via mapping).
+                            val logical = mapping.buttons.entries
+                                .firstOrNull { it.value == RawBinding.Key(ev.keyCode) }
+                                ?.key
+                            if (logical != null) {
+                                layerTriggers = layerTriggers + (
+                                    selectedLayer to LayerTriggerSpec(
+                                        button = logical.name,
+                                        mode = pendingTriggerMode,
+                                    )
+                                )
+                                status = null
+                            } else {
+                                status = context.getString(R.string.gamepad_gyro_activate_unmapped)
+                            }
+                            captureLayerTrigger = false
+                        } else if (captureGyroActivate) {
                             // U1: o botão de ativação é um GamepadButton LÓGICO —
                             // converte o keycode cru via mapping reverso.
                             val logical = mapping.buttons.entries
@@ -190,7 +223,7 @@ fun GamepadRemapDialog(
         val initialFocus = remember { FocusRequester() }
         // Enquanto captura, o escopo de foco fica OFF: todo input do controle é captura.
         GamepadFocusScope(
-            enabled = captureTarget == null,
+            enabled = captureTarget == null && !captureGyroActivate && !captureLayerTrigger,
             backAction = onDismiss,
             initialFocusRequester = initialFocus,
         ) {
@@ -198,7 +231,11 @@ fun GamepadRemapDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(
-                        if (captureTarget == null) Modifier.gamepadBackHandler(onDismiss) else Modifier,
+                        if (captureTarget == null && !captureGyroActivate && !captureLayerTrigger) {
+                            Modifier.gamepadBackHandler(onDismiss)
+                        } else {
+                            Modifier
+                        },
                     ),
                 color = MaterialTheme.colorScheme.background,
             ) {
@@ -226,6 +263,58 @@ fun GamepadRemapDialog(
                         )
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    // ── U3: camadas (DEFAULT + extras) ──
+                    LayerSelectorRow(
+                        layers = layers.keys.toList(),
+                        selectedLayer = selectedLayer,
+                        onSelect = {
+                            selectedLayer = it
+                            status = null
+                        },
+                        onAdd = {
+                            // Nome padrão "LAYER_N" (rename é follow-up cosmético).
+                            var n = 1
+                            while (layers.containsKey("LAYER_$n")) n++
+                            layers = layers + ("LAYER_$n" to emptyMap())
+                            selectedLayer = "LAYER_$n"
+                        },
+                        onRemove = {
+                            if (it != ActionLayer.DEFAULT.name) {
+                                layers = layers - it
+                                layerTriggers = layerTriggers - it
+                                if (selectedLayer == it) selectedLayer = ActionLayer.DEFAULT.name
+                            }
+                        },
+                    )
+                    // U3: trigger da camada selecionada (a DEFAULT é a base e não tem
+                    // ativação própria).
+                    if (selectedLayer != ActionLayer.DEFAULT.name) {
+                        LayerTriggerRow(
+                            trigger = layerTriggers[selectedLayer],
+                            onModeChange = { newMode ->
+                                pendingTriggerMode = newMode
+                                val existing = layerTriggers[selectedLayer]
+                                if (existing != null) {
+                                    layerTriggers = layerTriggers +
+                                        (selectedLayer to existing.copy(mode = newMode))
+                                }
+                            },
+                            capturing = captureLayerTrigger,
+                            onCapture = {
+                                captureLayerTrigger = !captureLayerTrigger
+                                captureTarget = null
+                                captureGyroActivate = false
+                                status = null
+                            },
+                            onClearTrigger = {
+                                layerTriggers = layerTriggers - selectedLayer
+                                status = null
+                            },
+                            faceStyle = device.faceStyle,
+                        )
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                     // ── Lista de botões ──
                     Column(
@@ -337,6 +426,7 @@ fun GamepadRemapDialog(
                             TextButton(onClick = {
                                 val json = profile.copy(
                                 layers = layers,
+                                layerTriggers = layerTriggers,
                                 gyroMode = if (gyroMode == GyroMode.OFF) null else gyroMode,
                                 gyroSensitivity = if (gyroSensitivity == 1f) null else gyroSensitivity,
                                 gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
@@ -472,6 +562,203 @@ private fun keyName(keyCode: Int): String = when (keyCode) {
         "B$genericIndex" // B1..B16 (BUTTON_1..16)
     }
     else -> "key:$keyCode"
+}
+
+/** U3 — seletor de camadas (DEFAULT + extras) com add/remove navegável por gamepad. */
+@Composable
+private fun LayerSelectorRow(
+    layers: List<String>,
+    selectedLayer: String,
+    onSelect: (String) -> Unit,
+    onAdd: () -> Unit,
+    onRemove: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        val allLayers = listOf(ActionLayer.DEFAULT.name) + layers.filter { it != ActionLayer.DEFAULT.name }
+        allLayers.forEach { name ->
+            LayerChip(
+                name = name,
+                selected = name == selectedLayer,
+                removable = name != ActionLayer.DEFAULT.name,
+                onClick = { onSelect(name) },
+                onRemove = { onRemove(name) },
+            )
+        }
+        LayerChip(
+            name = "+",
+            selected = false,
+            removable = false,
+            onClick = onAdd,
+            onRemove = {},
+        )
+    }
+}
+
+/** U3 — chip de camada (gamepadSelectable; "x" remove quando aplicável). */
+@Composable
+private fun LayerChip(
+    name: String,
+    selected: Boolean,
+    removable: Boolean,
+    onClick: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier
+            .gamepadSelectable(
+                selected = selected,
+                onClick = onClick,
+                shape = RoundedCornerShape(8.dp),
+                interactionSource = interactionSource,
+            )
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = if (name == ActionLayer.DEFAULT.name) {
+                stringResource(R.string.gamepad_layer_default)
+            } else {
+                name
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+        if (removable) {
+            Text(
+                text = "✕",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.gamepadSelectable(
+                    selected = false,
+                    onClick = onRemove,
+                    shape = RoundedCornerShape(4.dp),
+                    interactionSource = remember { MutableInteractionSource() },
+                ),
+            )
+        }
+    }
+}
+
+/** U3 — linha de trigger da camada (botão + modo; capture mode para o botão). */
+@Composable
+private fun LayerTriggerRow(
+    trigger: LayerTriggerSpec?,
+    onModeChange: (LayerTriggerMode) -> Unit,
+    capturing: Boolean,
+    onCapture: () -> Unit,
+    onClearTrigger: () -> Unit,
+    faceStyle: FaceStyle,
+) {
+    val captureInteraction = remember { MutableInteractionSource() }
+    val triggerLabel = if (trigger != null) {
+        val button = runCatching { GamepadButton.valueOf(trigger.button) }.getOrNull()
+        val buttonLabel = if (button != null) {
+            stringResource(GamepadGlyphProvider.labelRes(button, faceStyle))
+        } else {
+            trigger.button
+        }
+        "$buttonLabel · " + stringResource(
+            when (trigger.mode) {
+                LayerTriggerMode.HOLD -> R.string.gamepad_layer_mode_hold
+                LayerTriggerMode.TOGGLE -> R.string.gamepad_layer_mode_toggle
+                LayerTriggerMode.DOUBLE_TAP -> R.string.gamepad_layer_mode_double_tap
+            },
+        )
+    } else {
+        stringResource(R.string.gamepad_layer_no_trigger)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .gamepadSelectable(
+                selected = capturing,
+                onClick = onCapture,
+                shape = RoundedCornerShape(8.dp),
+                interactionSource = captureInteraction,
+            )
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.gamepad_layer_trigger_title),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = if (capturing) {
+                stringResource(R.string.gamepad_remap_press_to_bind)
+            } else {
+                triggerLabel
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (trigger != null && !capturing) {
+            TextButton(onClick = onClearTrigger) {
+                Text(stringResource(R.string.gamepad_remap_clear))
+            }
+        }
+    }
+    if (trigger != null && !capturing) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            LayerTriggerModeChip(LayerTriggerMode.HOLD, trigger.mode == LayerTriggerMode.HOLD, Modifier.weight(1f)) { onModeChange(LayerTriggerMode.HOLD) }
+            LayerTriggerModeChip(LayerTriggerMode.TOGGLE, trigger.mode == LayerTriggerMode.TOGGLE, Modifier.weight(1f)) { onModeChange(LayerTriggerMode.TOGGLE) }
+            LayerTriggerModeChip(LayerTriggerMode.DOUBLE_TAP, trigger.mode == LayerTriggerMode.DOUBLE_TAP, Modifier.weight(1f)) { onModeChange(LayerTriggerMode.DOUBLE_TAP) }
+        }
+    }
+}
+
+/** U3 — chip de modo do trigger. */
+@Composable
+private fun LayerTriggerModeChip(
+    mode: LayerTriggerMode,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        modifier = modifier
+            .gamepadSelectable(
+                selected = selected,
+                onClick = onClick,
+                shape = RoundedCornerShape(8.dp),
+                interactionSource = interactionSource,
+            )
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = stringResource(
+                when (mode) {
+                    LayerTriggerMode.HOLD -> R.string.gamepad_layer_mode_hold
+                    LayerTriggerMode.TOGGLE -> R.string.gamepad_layer_mode_toggle
+                    LayerTriggerMode.DOUBLE_TAP -> R.string.gamepad_layer_mode_double_tap
+                },
+            ),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
 }
 
 /** U1 — linha de seleção de modo do gyro (OFF/MOUSE/CAMERA). */
