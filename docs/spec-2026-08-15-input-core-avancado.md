@@ -10,18 +10,22 @@ a anterior verificada. F0 é pré-requisito de qualquer otimização.
 
 **Status geral (2026-08-14, sessão de implementação — detalhes em
 `spec-2026-08-15-input-core-avancado-impl.md`):**
-- F0 — ✅ instrumentação entregue e verificada (HUD + `latency:report` no device);
-  ⏳ baseline p95 pendente (DS4 desligado — religar manualmente e rodar o protocolo
-  da seção F0).
+- F0 — ✅ COMPLETO: instrumentação + baseline medido (KEY p95 4,60 ms / MOTION
+  4,82 ms / SENSOR 3,11 ms) ⇒ **migração C++/Rust arquivada por falta de evidência**.
 - F1 — ✅ completo (StickTransform, FlickStick, GyroFusion/Mahony, SdlControllerDb
   com asset pinado 42f28e22, 12 campos de perfil, GUI no remap dialog, 36 testes
-  novos). On-device pendente (exige controle físico).
+  novos). On-device (2026-08-14): remap dialog abre pelo QuickMenu com as seções
+  novas; gyro CAMERA validado com sensor REAL (SENSOR p95 3,11 ms); mapear botão e
+  jogar com curva/flick = interação manual do usuário.
 - F2 — ✅ F2.1 (rumble consolidado no contrato P2-5), F2.2 (decisão (c) registrada
   acima — sem código), F2.3 (LAYER_TICK + toggle), F2.4 (auditoria feita + gap de
-  foco fechado).
+  foco fechado). On-device: contrato chamado e retornando o resultado REAL (novo
+  Boolean do rumbleDevice); DS4 via USB não expõe vibrator no stack MIUI (limitação
+  documentada no spec U5) — rumble físico re-testar em BT.
 - F3 — ✅ F3.1 (radial menu: core/store/executor/overlay/editor + item no QuickMenu),
   F3.2 (setActiveAppId com re-emissão de bindings), F3.3 (schemaVersion + export/
-  import por arquivo SAF). On-device pendente (exige controle físico).
+  import por arquivo SAF). On-device (2026-08-14): overlay abre/fecha com o gatilho
+  HOLD (screenshots), jogo pausa/retoma; execução de macro com dedo real = manual.
 
 ---
 
@@ -87,12 +91,17 @@ pendente + janela de frescor 100 ms, 11 testes JVM verdes), stamps em
 `GamepadHub.onSensorSample` (t0 SENSOR) e `PhysicalControllerHandler.onKeyEvent/
 onGenericMotionEvent/applyCameraGyro` (t1); HUD verificado no device (bbox verde
 no topo-esquerdo, linhas `KEY/MOTION/SENSOR: no samples`); verbo `latency:report`
-confirmado no logcat. **On-device pendente:** baseline Mi 11/DS4 — religamento remoto impossível
-(sem root). Tentativa de medição em 2026-08-14 (noite): DS4 conectou
-(devices 72/73/74, hub adicionou o sub-device CONTROLLER), mas a BATERIA morreu
-durante a sessão antes de coletar amostras — pendente de nova carga/outro
-controle. Protocolo pronto: ligar coleta (`debug.gamenative.latency 1`) → jogar
-Silksong → `latency:report`. Nada de migração C++/Rust até o baseline.
+confirmado no logcat. **BASELINE MEDIDO (2026-08-14 noite, Mi 11 + DS4 via USB, Silksong) — critério
+de saída ALCANÇADO:**
+- KEY: n=434 p50=2,74 ms p95=**4,60 ms** (max 70,97 — outlier de GC/pause)
+- MOTION: n=706 p50=3,08 ms p95=**4,82 ms**
+- SENSOR: n=4096 (anel cheio, tráfego REAL do sensor a ~40 Hz) p50=1,88 ms p95=**3,11 ms**
+- **p95 ≪ 16 ms ⇒ migração C++/Rust ARQUIVADA por falta de evidência** (decisão
+  registrada conforme a regra do spec). O pipeline Kotlin na main thread entrega
+  a latência alvo com folga; `/dev/input` raw + JNI segue arquivado.
+- Nota: tentativa anterior (DS4 em BT) morreu na bateria; a medição fechou com o
+  controle no USB (mesma pilha Android do app — o caminho medido é dispatch→handler,
+  independente do transporte).
 
 ### F1 — Input Core (Kotlin puro + GUI por device)
 
