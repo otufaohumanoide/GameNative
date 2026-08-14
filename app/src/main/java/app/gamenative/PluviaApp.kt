@@ -10,6 +10,8 @@ import app.gamenative.db.dao.GOGGameDao
 import app.gamenative.events.EventDispatcher
 import app.gamenative.powercontrol.PowerManager
 import app.gamenative.gamepad.GamepadHub
+import app.gamenative.gamepad.GamepadTouchpadForwarder
+import app.gamenative.gamepad.XServerTouchpadMouseSink
 import app.gamenative.service.ActiveGameRegistry
 import app.gamenative.service.DownloadService
 import app.gamenative.service.SteamService
@@ -78,6 +80,15 @@ class PluviaApp : SplitCompatApplication() {
         // Init our datastore preferences.
         PrefManager.init(this)
         FrontendSyncManager.init(this)
+
+        // U2 (spec 2026-08-14-gamepad-u2-touchpad-mouse): forwarder do touchpad do
+        // controle → mouse, lido pelo MainActivity NO PONTO do gate de ghost input
+        // (antes do consume). Sink default = XServer (jogo rodando); no-op sem jogo.
+        // Inicializado ANTES do hub: o removeDevice do hub chama onDeviceRemoved do
+        // forwarder — a ordem de init evita o lateinit vazio durante o start() do hub.
+        gamepadTouchpad = GamepadTouchpadForwarder().apply {
+            sink = XServerTouchpadMouseSink()
+        }
 
         // Gamepad universal (spec 2026-08-13-onda2, §1.1): hub app-scoped — o ÚNICO
         // InputDeviceListener do app. MainActivity tem MÚLTIPLAS instâncias
@@ -210,6 +221,10 @@ class PluviaApp : SplitCompatApplication() {
         /** Gamepad hub app-scoped (spec 2026-08-13-onda2 §1.1) — inicializado no onCreate. */
         @Volatile
         lateinit var gamepadHub: GamepadHub
+
+        /** U2 — touchpad do controle → mouse (spec 2026-08-14-gamepad-u2-touchpad-mouse). */
+        @Volatile
+        lateinit var gamepadTouchpad: GamepadTouchpadForwarder
 
         internal var onDestinationChangedListener: NavChangedListener? = null
 

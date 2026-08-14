@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import app.gamenative.BuildConfig
+import app.gamenative.PluviaApp
 import kotlinx.coroutines.delay
 
 /**
@@ -30,6 +31,16 @@ import kotlinx.coroutines.delay
  *   stick:<x>:<y>            hold the left stick at x/y (e.g. stick:0:0.8 = down); repeated
  *                            ACTION_MOVE until `stick:0:0`
  *   hat:<x>:<y>              same for the D-pad hat
+ *
+ * V12 (spec 2026-08-14-gamepad-intuito-validacao-upgrades, V12 — verbos novos):
+ *   touch:x:y                finger no touchpad em (x,y) normalizado [0..1] — ACTION_MOVE
+ *                            com SOURCE_CLASS_POINTER (exercita o gate do ghost input
+ *                            ANTES do consume: o forwarder do U2 lê no mesmo ponto)
+ *   touchdown:x:y            finger-down (ACTION_DOWN)
+ *   touchup:x:y              finger-up (ACTION_UP)
+ *   touchtap                 touchdown + touchup (tap → clique esquerdo no jogo)
+ *   gyro:x:y:z               amostra de giroscópio sintética (rad/s) — injetada DIRETO
+ *                            no hub.onSensorSample (U1; sem sensor real no harness)
  *
  * NOTE (2026-08-12, spec pipeline-hardening): the PS/Home button is KEYCODE_BUTTON_MODE =
  * 110 — NOT 188 (KEYCODE_BUTTON_1, a generic pad button that neither the XServerScreen
@@ -151,6 +162,57 @@ private fun handleCommand(command: String, activity: Activity) {
                 }
             }
             Log.d("DebugGamepad", "key $keyCode $hold")
+        }
+        "touch", "touchdown", "touchup" -> {
+            val x = parts.getOrNull(1)?.toFloatOrNull() ?: 0.5f
+            val y = parts.getOrNull(2)?.toFloatOrNull() ?: 0.5f
+            val deviceId = gamepadDeviceId() ?: 0
+            val now = SystemClock.uptimeMillis()
+            val pointerProps = MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
+            val pointerCoords = MotionEvent.PointerCoords().apply {
+                this.x = x * 1000f
+                this.y = y * 1000f
+                setAxisValue(MotionEvent.AXIS_X, x)
+                setAxisValue(MotionEvent.AXIS_Y, y)
+            }
+            val action = when (parts[0]) {
+                "touchdown" -> MotionEvent.ACTION_DOWN
+                "touchup" -> MotionEvent.ACTION_UP
+                else -> MotionEvent.ACTION_MOVE
+            }
+            val ev = MotionEvent.obtain(
+                now, now, action, 1,
+                arrayOf(pointerProps), arrayOf(pointerCoords),
+                0, 0, 1f, 1f, deviceId, 0,
+                // CLASS_POINTER é o que o gate de ghost input filtra — o caminho do
+                // touchpad→mouse (U2) é exercitado de ponta a ponta.
+                InputDevice.SOURCE_JOYSTICK or InputDevice.SOURCE_CLASS_POINTER, 0,
+            )
+            activity.dispatchGenericMotionEvent(ev)
+            Log.d("DebugGamepad", "motion ${parts[0]} $x $y")
+        }
+        "touchtap" -> {
+            handleCommand("touchdown:0.5:0.5", activity)
+            handleCommand("touchup:0.5:0.5", activity)
+        }
+        "gyro" -> {
+            val x = parts.getOrNull(1)?.toFloatOrNull() ?: 0f
+            val y = parts.getOrNull(2)?.toFloatOrNull() ?: 0f
+            val z = parts.getOrNull(3)?.toFloatOrNull() ?: 0f
+            val deviceId = gamepadDeviceId() ?: 0
+            Log.d("DebugGamepad", "gyro $x $y $z devId=$deviceId")
+            // V12 (U1): sem sensor real no harness — injeta direto no mesmo método que
+            // o callback do sensor chama (GamepadHub.onSensorSample).
+            PluviaApp.gamepadHub.onSensorSample(
+                deviceId = deviceId,
+                gyroX = x,
+                gyroY = y,
+                gyroZ = z,
+                nowMs = SystemClock.uptimeMillis(),
+            )
         }
         "stick", "hat" -> {
             val x = parts.getOrNull(1)?.toFloatOrNull() ?: return

@@ -1,7 +1,10 @@
 package app.gamenative.gamepad
 
 import android.content.Context
+import android.hardware.BatteryState
+import android.hardware.Sensor
 import android.hardware.input.InputManager
+import android.os.Build
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -109,6 +112,7 @@ class GamepadHub(context: Context) {
         _activeDevice.value = null
         buttonStates.clear()
         for (deviceId in alive) {
+            PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)
             PluviaApp.events.emit(GamepadDeviceRemovedEvent(deviceId))
             Timber.d("GamepadHub: removed %d (stop)", deviceId)
         }
@@ -192,6 +196,31 @@ class GamepadHub(context: Context) {
         invalidateProfiles()
     }
 
+    /**
+     * U1/V12 (spec 2026-08-14-gamepad-u1-gyro): amostra de sensor (giroscópio) de um
+     * device — chamada pelo GamepadSensorSource (callback em thread própria) e pelo
+     * harness (`gyro:x:y:z`). Gate-aware como onKey/onAxis. O processamento completo
+     * (GyroProcessor + injeção MOUSE/CAMERA) vive no U1; aqui o evento lógico é
+     * emitido (vocabulário V4) e a ativação por botão é rastreada.
+     */
+    fun onSensorSample(deviceId: Int, gyroX: Float, gyroY: Float, gyroZ: Float, nowMs: Long) {
+        if (!PrefManager.gamepadUniversalEnabled) return
+        val device = deviceFor(deviceId) ?: return
+        if (device.deviceClass != DeviceClass.CONTROLLER && device.deviceClass != DeviceClass.TOUCHPAD) return
+        if (!device.hasGyro) return
+        val event = InputEvent.SensorUpdate(
+            deviceId = deviceId,
+            gyroX = gyroX,
+            gyroY = gyroY,
+            gyroZ = gyroZ,
+            accelX = 0f,
+            accelY = 0f,
+            accelZ = 0f,
+        )
+        logLogical(device, event)
+        PluviaApp.events.emit(GamepadInputEvent(event))
+    }
+
     /** Traduz um KeyEvent cru e emite GamepadInputEvent no bus (gate-aware). */
     fun onKey(raw: RawKeyInput): Boolean {
         if (!PrefManager.gamepadUniversalEnabled) return false
@@ -265,6 +294,29 @@ class GamepadHub(context: Context) {
         if (deviceClass == DeviceClass.UNKNOWN || deviceClass == DeviceClass.SENSOR) return
         val faceStyle = MappingDatabase.mappingFor(inputDevice.vendorId, inputDevice.productId)
             ?.faceStyle ?: FaceStyle.GENERIC
+        // U1/U7 (V11): capacidades coletadas no hotplug (fora do hot path — pull).
+        // Gyro: API 31+ via getSensorManager do device; API < 31 → false (degradação
+        // silenciosa — a UI esconde, nunca mostra erro). Touchpad: CLASS_POINTER.
+        val hasGyro = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            runCatching {
+                inputDevice.getSensorManager()?.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null
+            }.getOrDefault(false)
+        val hasTouchpad = (inputDevice.sources and InputDevice.SOURCE_CLASS_POINTER) != 0
+        val batteryPercent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                val state = inputDevice.batteryState
+                if (state.isPresent && state.capacity >= 0f) {
+                    when (state.status) {
+                        BatteryState.STATUS_CHARGING, BatteryState.STATUS_FULL -> 100
+                        else -> (state.capacity * 100f).toInt()
+                    }
+                } else {
+                    null
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
         val device = GamepadDevice(
             deviceId = deviceId,
             descriptor = inputDevice.descriptor,
@@ -273,6 +325,9 @@ class GamepadHub(context: Context) {
             name = inputDevice.name,
             deviceClass = deviceClass,
             faceStyle = faceStyle,
+            hasGyro = hasGyro,
+            hasTouchpad = hasTouchpad,
+            batteryPercent = batteryPercent,
         )
         _connectedDevices.value = _connectedDevices.value + (deviceId to device)
         refreshActive()
@@ -286,6 +341,9 @@ class GamepadHub(context: Context) {
 
     private fun removeDevice(deviceId: Int) {
         buttonStates.remove(deviceId)
+        // U2 (V6): estado do touchpad→mouse morre junto com o device (mesmo padrão
+        // buttonStates — o deviceId efêmero pode ser reusado por outro hardware).
+        PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)
         val current = _connectedDevices.value
         if (deviceId !in current) return
         _connectedDevices.value = current - deviceId

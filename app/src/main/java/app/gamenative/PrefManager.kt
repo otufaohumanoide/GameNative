@@ -1473,4 +1473,16 @@ object PrefManager {
         get() = getPref(GAMEPAD_SWAP_OK_CANCEL, false)
         set(value) { setPref(GAMEPAD_SWAP_OK_CANCEL, value) }
 
+    /* U2 (spec 2026-08-14-gamepad-u2-touchpad-mouse): touchpad do controle → mouse.
+       Default OFF — opt-in; com OFF o caminho é byte-identical (V10). */
+    private val GAMEPAD_TOUCHPAD_MOUSE_ENABLED = booleanPreferencesKey("gamepadTouchpadMouseEnabled")
+    var gamepadTouchpadMouseEnabled: Boolean
+        get() = getPref(GAMEPAD_TOUCHPAD_MOUSE_ENABLED, false)
+        set(value) { setPref(GAMEPAD_TOUCHPAD_MOUSE_ENABLED, value) }
+
+    private val GAMEPAD_TOUCHPAD_SENSITIVITY = floatPreferencesKey("gamepadTouchpadSensitivity")
+    var gamepadTouchpadSensitivity: Float
+        get() = getPref(GAMEPAD_TOUCHPAD_SENSITIVITY, 1.0f)
+        set(value) { setPref(GAMEPAD_TOUCHPAD_SENSITIVITY, value) }
+
 }

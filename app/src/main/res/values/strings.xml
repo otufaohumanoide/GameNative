@@ -2332,6 +2332,10 @@
     <string name="gamepad_settings_remap_title">Remap controls</string>
     <string name="gamepad_settings_remap_subtitle">Rebind %1$s buttons (default layer)</string>
     <string name="gamepad_settings_remap_no_device">Connect a controller to remap it</string>
+    <string name="gamepad_touchpad_mouse_title">Controller touchpad → mouse</string>
+    <string name="gamepad_touchpad_mouse_subtitle">Move the cursor with the DS4/DualSense touchpad; tap to click (in-game)</string>
+    <string name="gamepad_touchpad_sensitivity_title">Touchpad sensitivity</string>
+    <string name="gamepad_touchpad_sensitivity_subtitle">Cursor speed for touchpad movement</string>
 <string name="gamepad_glyph_dpad_up">↑</string>
     <string name="gamepad_glyph_dpad_down">↓</string>
     <string name="gamepad_glyph_dpad_left">←</string>

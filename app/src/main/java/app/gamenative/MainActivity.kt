@@ -52,6 +52,7 @@ import app.gamenative.utils.AnimatedPngDecoder
 import app.gamenative.data.GameSource
 import app.gamenative.powercontrol.PowerManager
 import app.gamenative.gamepad.mapping.AndroidInputAdapter
+import app.gamenative.gamepad.GamepadTouchpadForwarder
 import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.IconDecoder
 import app.gamenative.utils.IntentLaunchManager
@@ -637,6 +638,13 @@ class MainActivity : ComponentActivity() {
             ExternalController.isGameController(ev.device) &&
             (ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0
         ) {
+            // U2 (spec 2026-08-14-gamepad-u2-touchpad-mouse, §1.4 — V7): o gate vira
+            // ROTEADOR — o consumidor do touchpad→mouse lê o MESMO ponto ANTES do
+            // consume (única exceção do V7). O consume continua valendo para
+            // navegação/jogo: fantasmas nunca chegam ao foco nem ao jogo.
+            if (PrefManager.gamepadTouchpadMouseEnabled) {
+                AndroidInputAdapter.toRawTouch(ev)?.let { PluviaApp.gamepadTouchpad.onRawTouch(it) }
+            }
             return true
         }
 

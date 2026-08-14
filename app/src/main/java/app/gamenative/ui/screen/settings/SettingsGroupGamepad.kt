@@ -70,6 +70,12 @@ fun SettingsGroupGamepad() {
         mutableStateOf(if (isPreview) 0.45f else PrefManager.gamepadMenuStickDeadzone)
     }
     var showRemapDialog by rememberSaveable { mutableStateOf(false) }
+    var touchpadMouseEnabled by rememberSaveable {
+        mutableStateOf(if (isPreview) false else PrefManager.gamepadTouchpadMouseEnabled)
+    }
+    var touchpadSensitivity by rememberSaveable {
+        mutableStateOf(if (isPreview) 1.0f else PrefManager.gamepadTouchpadSensitivity)
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         GamepadSettingsSwitchRow(
@@ -109,6 +115,30 @@ fun SettingsGroupGamepad() {
             onValueChange = {
                 menuStickDeadzone = it
                 PrefManager.gamepadMenuStickDeadzone = it
+            },
+        )
+        GamepadSettingsDivider()
+
+        // U2 (spec 2026-08-14-gamepad-u2-touchpad-mouse, §1.5): touchpad do controle →
+        // mouse (opt-in; default OFF — byte-identical com OFF). O touchpad continua
+        // consumido pelo gate de ghost input; o forwarder lê no mesmo ponto.
+        GamepadSettingsSwitchRow(
+            title = stringResource(R.string.gamepad_touchpad_mouse_title),
+            subtitle = stringResource(R.string.gamepad_touchpad_mouse_subtitle),
+            checked = touchpadMouseEnabled,
+            onCheckedChange = {
+                touchpadMouseEnabled = it
+                PrefManager.gamepadTouchpadMouseEnabled = it
+            },
+        )
+        GamepadSettingsDivider()
+        GamepadSettingsSliderRow(
+            title = stringResource(R.string.gamepad_touchpad_sensitivity_title),
+            subtitle = stringResource(R.string.gamepad_touchpad_sensitivity_subtitle),
+            value = touchpadSensitivity,
+            onValueChange = {
+                touchpadSensitivity = it
+                PrefManager.gamepadTouchpadSensitivity = it
             },
         )
         GamepadSettingsDivider()
