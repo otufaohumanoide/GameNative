@@ -517,6 +517,9 @@ fun XServerScreen(
             physicalControllerHandler = null
             // U1: sem container, o CAMERA mode não tem alvo — limpa o sink (no-op).
             PluviaApp.gamepadHub.gyroCameraSink = null
+            // P1-3: sem container, sensores voltam a suspender (idempotente — cobre
+            // os caminhos de saída que não passam por exit()).
+            PluviaApp.gamepadSensorSource.setSuspended(true)
             exitWatchJob?.cancel()
             exitWatchJob = null
             keyboardEscMenuHandler.cancel()
@@ -2411,6 +2414,12 @@ fun XServerScreen(
                 }
             }
             PluviaApp.xServerView = xServerView
+
+            // P1-3 (spec 2026-08-14-gamepad-upgrades-pendencias): o XServerScreen é o
+            // dono da retomada dos sensores — container de pé ⇒ registra (o onResume
+            // do MainActivity só cobre o retorno ao foreground COM jogo já aberto).
+            // Idempotente; o exit()/onDispose devolvem a suspensão.
+            PluviaApp.gamepadSensorSource.setSuspended(false)
 
             val gameHost = FrameLayout(context).apply {
                 layoutParams = FrameLayout.LayoutParams(
@@ -4671,6 +4680,12 @@ private fun exit(
         Timber.i("Exit already in progress, ignoring duplicate request")
         return
     }
+
+    // P1-3 (spec 2026-08-14-gamepad-upgrades-pendencias): exit do container com o app
+    // em foreground devolvia NENHUM setSuspended(true) — listeners de sensor ficavam
+    // registrados até o próximo onPause (o vazamento de bateria que o V3 existe para
+    // impedir). Idempotente; o onDispose cobre os demais caminhos.
+    PluviaApp.gamepadSensorSource.setSuspended(true)
 
     PostHog.capture(
         event = "game_exited",

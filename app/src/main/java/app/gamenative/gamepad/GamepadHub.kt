@@ -330,8 +330,9 @@ class GamepadHub(context: Context) {
 
     /**
      * U1/V12 (spec 2026-08-14-gamepad-u1-gyro): amostra de sensor (giroscópio) de um
-     * device — chamada pelo GamepadSensorSource (callback em thread PRÓPRIA — nunca no
-     * dispatch, V3) e pelo harness (`gyro:x:y:z`). Gate-aware como onKey/onAxis.
+     * device — chamada pelo GamepadSensorSource (entrega na MAIN thread — P2-7, o
+     * registerListener usa o Looper de quem registrou) e pelo harness (`gyro:x:y:z`).
+     * Gate-aware como onKey/onAxis.
      *
      * Pipeline: perfil (cache M1) → GyroProcessor (puro, estado por device V6) →
      * evento lógico emitido (vocabulário V4) → injeção:

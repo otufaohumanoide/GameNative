@@ -303,11 +303,10 @@ class PhysicalControllerHandler(
     }
 
     /**
-     * U1 (spec 2026-08-14-gamepad-u1-gyro): CAMERA mode — acumula os deltas do gyro
-     * (radianos) no RIGHT STICK do virtual gamepad (mouse-look) e envia o estado.
-     * Escala: `deltaXRad * 40 * sensitivity` → valor de stick (clamp [-1, 1]).
-     * Chamado pela thread do sensor (callback próprio — V3); só mexe no estado do
-     * gamepad virtual, sem tocar no dispatch.
+     * U1 (spec 2026-08-14-gamepad-u1-gyro): CAMERA mode — mapeia a VELOCIDADE angular
+     * do gyro (rad/s) em deflexão do RIGHT STICK do virtual gamepad (mouse-look) e
+     * envia o estado. Chamado pela main thread (sink do hub — P2-7); só mexe no
+     * estado do gamepad virtual, sem tocar no dispatch.
      */
     fun applyCameraGyro(deltaXRad: Float, deltaYRad: Float, sensitivity: Float) {
         val state = profile?.gamepadState ?: return

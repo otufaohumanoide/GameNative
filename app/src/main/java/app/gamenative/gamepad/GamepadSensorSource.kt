@@ -12,7 +12,14 @@ import timber.log.Timber
 /**
  * Fonte de sensores por device (spec 2026-08-14-gamepad-u1-gyro, §1.4 — doc de
  * intuito U1): `InputDevice.getSensorManager()` (API **31+**) com listener no manager
- * DO device. Eventos chegam por callback em THREAD PRÓPRIA — nunca no dispatch (V3).
+ * DO device.
+ *
+ * Threading (P2-7 do spec 2026-08-14-gamepad-upgrades-pendencias — decisão A):
+ * `registerListener` sem Handler associa o listener ao Looper da thread que chamou
+ * [setSuspended]/[onDeviceAdded] — SEMPRE a main (MainActivity.onResume/onPause e
+ * XServerScreen). Entrega portanto na MAIN THREAD, nunca concorrente; registrar
+ * listeners de sensor de outra thread exigiria Handler explícito + coleções
+ * sincronizadas (decisão B — não adotada).
  *
  * Lifecycle (V3 — vazamento = bateria drenando com o app "fechado"):
  * - [setSuspended]: register quando o container roda E o app está em foreground;
@@ -64,6 +71,12 @@ class GamepadSensorSource(private val hub: GamepadHub) {
         for (device in hub.connectedDevices.value.values) {
             if (device.deviceClass == DeviceClass.UNKNOWN || device.deviceClass == DeviceClass.SENSOR) continue
             if (!device.hasGyro) continue
+            // P1-3 (spec 2026-08-14-gamepad-upgrades-pendencias): registro dirigido
+            // pelo USO (padrão SDL — só registra com consumidor ativo). Perfil
+            // efetivo consultado fora do hot path (cache M1); gyroMode OFF ⇒ o dado
+            // não tem destino ⇒ não registra (bateria).
+            val mode = hub.profileFor(device.deviceId, hub.activeAppId).gyroMode ?: GyroMode.OFF
+            if (mode == GyroMode.OFF) continue
             register(device.deviceId)
         }
     }
@@ -76,8 +89,9 @@ class GamepadSensorSource(private val hub: GamepadHub) {
         val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
-                // Thread própria do sensor — o hub processa PURO e injeta no sink
-                // (XServer aceita de qualquer thread); nenhuma coroutine aqui (V3).
+                // Entrega na main thread (P2-7 — registerListener sem Handler usa o
+                // Looper de quem registrou). O hub processa PURO e injeta no sink;
+                // nenhuma coroutine aqui (V3).
                 hub.onSensorSample(
                     deviceId = deviceId,
                     gyroX = event.values[0],
