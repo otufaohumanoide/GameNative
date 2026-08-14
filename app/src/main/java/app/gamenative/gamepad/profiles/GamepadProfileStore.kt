@@ -140,6 +140,8 @@ class GamepadProfileStore(private val file: File) {
                 layerTriggers = base.layerTriggers + override.layerTriggers,
                 rumbleOnActivate = override.rumbleOnActivate ?: base.rumbleOnActivate,
                 rumbleOnBack = override.rumbleOnBack ?: base.rumbleOnBack,
+                touchpadDoubleTapRightClick = override.touchpadDoubleTapRightClick
+                    ?: base.touchpadDoubleTapRightClick,
             )
         }
     }

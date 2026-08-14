@@ -45,6 +45,9 @@ data class GamepadProfile(
     // U5 (spec 2026-08-14-gamepad-u5-rumble): haptics do menu por device.
     val rumbleOnActivate: Boolean? = null,
     val rumbleOnBack: Boolean? = null,
+    // P2-6 (spec 2026-08-14-touchpad-drag-double-tap): duplo-toque do touchpad =
+    // clique direito (opt-in por perfil; null = OFF — 2 cliques, comportamento U2).
+    val touchpadDoubleTapRightClick: Boolean? = null,
 ) {
     /** Perfil indistinguível de "sem preferência": salvar REMOVE a entrada (padrão do repo). */
     fun isDefault(): Boolean =
@@ -61,7 +64,8 @@ data class GamepadProfile(
             gyroActivateButton == null &&
             layerTriggers.isEmpty() &&
             rumbleOnActivate == null &&
-            rumbleOnBack == null
+            rumbleOnBack == null &&
+            touchpadDoubleTapRightClick == null
 
     fun toJson(): String = json.encodeToString(GamepadProfile.serializer(), this)
 

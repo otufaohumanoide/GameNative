@@ -32,6 +32,10 @@ class GamepadTouchpadForwarder {
     interface TouchpadMouseSink {
         fun move(deltaX: Int, deltaY: Int)
         fun click()
+        // P2-6 (spec 2026-08-14-touchpad-drag-double-tap): arrasto e duplo-toque.
+        fun pressLeft()
+        fun releaseLeft()
+        fun rightClick()
     }
 
     private val states = mutableMapOf<Int, TouchpadState>()
@@ -48,16 +52,31 @@ class GamepadTouchpadForwarder {
         if (device.deviceClass == DeviceClass.UNKNOWN || device.deviceClass == DeviceClass.SENSOR) return false
 
         val state = states.getOrPut(raw.deviceId) { TouchpadState() }
+        // P2-6: duplo-toque = clique direito é opt-in POR PERFIL (default OFF — o
+        // comportamento U2 de 2 cliques fica byte-identical, V10).
+        val profile = PluviaApp.gamepadHub.profileFor(raw.deviceId, PluviaApp.gamepadHub.activeAppId)
         val decision = TouchpadProcessor.process(
             sample = TouchSample(down = raw.down, x = raw.x, y = raw.y, nowMs = raw.nowMs),
             state = state,
-            config = TouchpadConfig(sensitivity = PrefManager.gamepadTouchpadSensitivity),
+            config = TouchpadConfig(
+                sensitivity = PrefManager.gamepadTouchpadSensitivity,
+                doubleTapRightClick = profile.touchpadDoubleTapRightClick ?: false,
+            ),
         )
         if (decision.deltaX != 0 || decision.deltaY != 0) {
             sink.move(decision.deltaX, decision.deltaY)
         }
+        if (decision.dragPress) {
+            sink.pressLeft()
+        }
+        if (decision.dragRelease) {
+            sink.releaseLeft()
+        }
         if (decision.tap) {
             sink.click()
+        }
+        if (decision.rightClick) {
+            sink.rightClick()
         }
         return true
     }
@@ -70,6 +89,9 @@ class GamepadTouchpadForwarder {
     private object NoopSink : TouchpadMouseSink {
         override fun move(deltaX: Int, deltaY: Int) {}
         override fun click() {}
+        override fun pressLeft() {}
+        override fun releaseLeft() {}
+        override fun rightClick() {}
     }
 }
 
@@ -91,5 +113,26 @@ class XServerTouchpadMouseSink : GamepadTouchpadForwarder.TouchpadMouseSink {
         xServer.injectPointerButtonPress(Pointer.Button.BUTTON_LEFT)
         xServer.injectPointerButtonRelease(Pointer.Button.BUTTON_LEFT)
         Timber.d("GamepadTouchpad: tap -> click")
+    }
+
+    // P2-6 (spec 2026-08-14-touchpad-drag-double-tap): arrasto = BUTTON_LEFT
+    // pressionado contínuo (press/release em transições); duplo-toque = BUTTON_RIGHT.
+    override fun pressLeft() {
+        val xServer = PluviaApp.xServerView?.getxServer() ?: return
+        xServer.injectPointerButtonPress(Pointer.Button.BUTTON_LEFT)
+        Timber.d("GamepadTouchpad: drag press")
+    }
+
+    override fun releaseLeft() {
+        val xServer = PluviaApp.xServerView?.getxServer() ?: return
+        xServer.injectPointerButtonRelease(Pointer.Button.BUTTON_LEFT)
+        Timber.d("GamepadTouchpad: drag release")
+    }
+
+    override fun rightClick() {
+        val xServer = PluviaApp.xServerView?.getxServer() ?: return
+        xServer.injectPointerButtonPress(Pointer.Button.BUTTON_RIGHT)
+        xServer.injectPointerButtonRelease(Pointer.Button.BUTTON_RIGHT)
+        Timber.d("GamepadTouchpad: double-tap -> right click")
     }
 }
