@@ -51,6 +51,7 @@ import app.gamenative.ui.util.SnackbarHostController
 import app.gamenative.utils.AnimatedPngDecoder
 import app.gamenative.data.GameSource
 import app.gamenative.powercontrol.PowerManager
+import app.gamenative.gamepad.mapping.AndroidInputAdapter
 import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.IconDecoder
 import app.gamenative.utils.IntentLaunchManager
@@ -140,21 +141,6 @@ class MainActivity : ComponentActivity() {
         finishAndRemoveTask()
     }
 
-    private var controllerInputManager: InputManager? = null
-    private val controllerDeviceListener = object : InputManager.InputDeviceListener {
-        override fun onInputDeviceAdded(deviceId: Int) {
-            ControllerManager.getInstance().onDeviceConnected(deviceId)
-        }
-
-        override fun onInputDeviceRemoved(deviceId: Int) {
-            ControllerManager.getInstance().onDeviceDisconnected(deviceId)
-        }
-
-        override fun onInputDeviceChanged(deviceId: Int) {
-            ControllerManager.getInstance().onDeviceConnected(deviceId)
-        }
-    }
-
     private var index = totalIndex++
 
     // Add a property to keep a reference to the orientation sensor listener
@@ -212,8 +198,8 @@ class MainActivity : ComponentActivity() {
 
         // Initialize the controller management system
         ControllerManager.getInstance().init(applicationContext)
-        controllerInputManager = getSystemService(Context.INPUT_SERVICE) as InputManager
-        controllerInputManager?.registerInputDeviceListener(controllerDeviceListener, null)
+        // O InputDeviceListener ÚNICO é o GamepadHub (spec 2026-08-13-onda2 §1.1) —
+        // registrado no PluviaApp.onCreate; o listener por-Activity foi removido.
 
         ContainerUtils.setContainerDefaults(applicationContext)
 
@@ -381,9 +367,6 @@ class MainActivity : ComponentActivity() {
         }
 
         super.onDestroy()
-
-        controllerInputManager?.unregisterInputDeviceListener(controllerDeviceListener)
-        controllerInputManager = null
 
         PluviaApp.events.off<AndroidEvent.SetSystemUIVisibility, Unit>(onSetSystemUi)
         PluviaApp.events.off<AndroidEvent.StartOrientator, Unit>(onStartOrientator)
@@ -607,6 +590,11 @@ class MainActivity : ComponentActivity() {
             keyEvent.any { it }
         } == true
 
+        // Onda 2 (spec 2026-08-13-onda2 §1.2): o hub traduz o cru para eventos lógicos
+        // e emite no bus (multicast, gate-aware). NUNCA altera o retorno do dispatch —
+        // a decisão de janela continua sendo dos listeners crus.
+        PluviaApp.gamepadHub.onKey(AndroidInputAdapter.toRawKey(event))
+
         // TODO: Temp'd removed this.
         //  Idealy, compose handles back presses automaticially in which we can override it in certain composables.
         //  Since LibraryScreen uses its own navigation system, this will need to be re-worked accordingly.
@@ -655,6 +643,12 @@ class MainActivity : ComponentActivity() {
         val eventDispatched = PluviaApp.events.emit(AndroidEvent.MotionEvent(ev)) { event ->
             event.any { it }
         } == true
+
+        // Onda 2: hub traduz motion cru → eventos lógicos (gate-aware; retorno não altera
+        // a decisão de janela — multicast).
+        if (ev != null) {
+            PluviaApp.gamepadHub.onAxis(AndroidInputAdapter.toRawAxis(ev))
+        }
 
         return if (!eventDispatched) super.dispatchGenericMotionEvent(ev) else true
     }

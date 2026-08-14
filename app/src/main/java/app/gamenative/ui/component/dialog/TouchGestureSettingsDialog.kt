@@ -67,7 +67,6 @@ import app.gamenative.ui.theme.PluviaSurfaceElevated
 import com.alorma.compose.settings.ui.SettingsSwitch
 import com.winlator.inputcontrols.Binding
 import app.gamenative.ui.component.GamepadKeyBridge
-import app.gamenative.ui.component.JoystickFocusNavigator
 
 /**
  * Full-screen dialog for configuring per-game touch gesture settings.

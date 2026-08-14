@@ -7,6 +7,11 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import app.gamenative.PluviaApp
+import app.gamenative.PrefManager
+import app.gamenative.gamepad.processing.DeadzoneConfig
+import app.gamenative.gamepad.processing.DeadzoneProcessor
+import app.gamenative.gamepad.processing.StickSample
 import com.winlator.inputcontrols.Binding
 import com.winlator.inputcontrols.ControlElement
 import com.winlator.inputcontrols.ControlsProfile
@@ -142,6 +147,14 @@ class PhysicalControllerHandler(
         if (profile != null) {
             val controller = profile?.getController(event.deviceId)
             if (controller != null && controller.updateStateFromMotionEvent(event)) {
+                // E2 (spec 2026-08-13-onda2 §1.7): deadzone por device via perfil da
+                // camada universal — APENAS quando o perfil override explicitamente
+                // (gate ON). Sem override o caminho fica byte-identical (V10): o
+                // ExternalController usa a `flat` do próprio device; o fallback
+                // STICK_DEAD_ZONE 0.15f não é aplicado aqui de propósito.
+                if (PrefManager.gamepadUniversalEnabled) {
+                    applyProfileDeadzone(controller)
+                }
                 // Process trigger buttons (L2/R2)
                 var controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_L2)
                 if (controllerBinding != null) {
@@ -174,6 +187,41 @@ class PhysicalControllerHandler(
             }
         }
         return false
+    }
+
+    /**
+     * E2 (spec 2026-08-13-onda2 §1.7): aplica a deadzone do PERFIL UNIVERSAL no estado
+     * do ExternalController — sticks em par radial (DeadzoneProcessor.process), triggers
+     * axiais. Só roda quando o perfil override EXPLICITAMENTE o valor; sem override o
+     * caminho fica byte-identical (regressão V10 preservada — o ExternalController já
+     * aplica a `flat` do próprio device via getCenteredAxis).
+     */
+    private fun applyProfileDeadzone(controller: ExternalController) {
+        val deviceId = controller.deviceId
+        if (deviceId == -1) return
+        val profile = PluviaApp.gamepadHub.profileFor(deviceId, PluviaApp.gamepadHub.activeAppId)
+        profile.leftStickDeadzone?.let { dead ->
+            val result = DeadzoneProcessor.process(
+                StickSample(controller.state.thumbLX, controller.state.thumbLY),
+                DeadzoneConfig(leftStick = dead, rightStick = dead),
+            )
+            controller.state.thumbLX = result.x
+            controller.state.thumbLY = result.y
+        }
+        profile.rightStickDeadzone?.let { dead ->
+            val result = DeadzoneProcessor.process(
+                StickSample(controller.state.thumbRX, controller.state.thumbRY),
+                DeadzoneConfig(leftStick = dead, rightStick = dead),
+            )
+            controller.state.thumbRX = result.x
+            controller.state.thumbRY = result.y
+        }
+        profile.leftTriggerDeadzone?.let { dead ->
+            controller.state.triggerL = DeadzoneProcessor.processAxis(controller.state.triggerL, dead)
+        }
+        profile.rightTriggerDeadzone?.let { dead ->
+            controller.state.triggerR = DeadzoneProcessor.processAxis(controller.state.triggerR, dead)
+        }
     }
 
     /**

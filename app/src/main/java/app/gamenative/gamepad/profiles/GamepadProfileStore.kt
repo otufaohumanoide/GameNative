@@ -13,6 +13,15 @@ import kotlinx.serialization.json.Json
  */
 class GamepadProfileStore(private val file: File) {
 
+    /**
+     * Cache em memória por instância (spec 2026-08-14-onda2-pos-implementacao, M1 — L1):
+     * o hot path do gamepad (hub.profileFor, ~120 Hz por stick) não pode pagar disco +
+     * JSON por evento. O store é single-instance no hub e o arquivo só muda por
+     * [save]/[clear] DESTE processo (sem concorrente de escritor), então nunca há
+     * invalidação externa: [load] serve do cache, [save]/[clear] atualizam cache E disco.
+     */
+    private var cached: Map<String, GamepadProfile>? = null
+
     fun load(key: String): GamepadProfile? = entries()[key]
 
     /** Persiste [profile] para [key]; um perfil default REMOVE a entrada (sem arquivo = sem preferência). */
@@ -34,13 +43,20 @@ class GamepadProfileStore(private val file: File) {
     }
 
     private fun entries(): Map<String, GamepadProfile> {
-        if (!file.isFile) return emptyMap()
-        return runCatching {
+        cached?.let { return it }
+        if (!file.isFile) {
+            cached = emptyMap()
+            return cached!!
+        }
+        val parsed = runCatching {
             json.decodeFromString<Map<String, GamepadProfile>>(file.readText())
         }.getOrElse { emptyMap() }
+        cached = parsed
+        return parsed
     }
 
     private fun write(entries: Map<String, GamepadProfile>) {
+        cached = entries
         // Sem entrada = sem arquivo (default em tudo).
         if (entries.isEmpty()) {
             file.delete()

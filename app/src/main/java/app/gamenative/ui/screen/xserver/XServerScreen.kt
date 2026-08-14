@@ -98,6 +98,8 @@ import app.gamenative.data.LibraryItem
 import app.gamenative.data.ShooterModeConfig
 import app.gamenative.data.SteamApp
 import app.gamenative.events.AndroidEvent
+import app.gamenative.events.GamepadDeviceAddedEvent
+import app.gamenative.events.GamepadDeviceRemovedEvent
 import app.gamenative.events.SteamEvent
 import app.gamenative.ui.enums.Orientation
 import java.util.EnumSet
@@ -1461,36 +1463,33 @@ fun XServerScreen(
         showQuickMenu = true
     }
 
+    // Onda 2 (spec 2026-08-13-onda2 §1.3): o InputDeviceListener ÚNICO é o GamepadHub
+    // (app-scoped, registrado no PluviaApp.onCreate). Esta tela assina os eventos de
+    // hotplug do bus com o MESMO corpo do listener antigo — comportamento preservado,
+    // sem o registro duplicado (alivia o limite de método dex do XServerScreen).
     DisposableEffect(Unit) {
-        val inputManager = context.getSystemService(Context.INPUT_SERVICE) as InputManager
-
-        val deviceListener = object : InputManager.InputDeviceListener {
-            override fun onInputDeviceAdded(deviceId: Int) {
-                ControllerManager.getInstance().onDeviceConnected(deviceId)
-                scanForExternalDevices()
-                val device = InputDevice.getDevice(deviceId) ?: return
-                evaluateDevice(device)
-            }
-
-            override fun onInputDeviceRemoved(deviceId: Int) {
-                ControllerManager.getInstance().onDeviceDisconnected(deviceId)
-                scanForExternalDevices()
-            }
-
-            override fun onInputDeviceChanged(deviceId: Int) {
-                ControllerManager.getInstance().onDeviceConnected(deviceId)
-                scanForExternalDevices()
-                val device = InputDevice.getDevice(deviceId) ?: return
-                evaluateDevice(device)
-            }
+        fun handleAdded(event: GamepadDeviceAddedEvent) {
+            ControllerManager.getInstance().onDeviceConnected(event.device.deviceId)
+            scanForExternalDevices()
+            val device = InputDevice.getDevice(event.device.deviceId)
+            if (device != null) evaluateDevice(device)
         }
 
-        inputManager.registerInputDeviceListener(deviceListener, null)
+        fun handleRemoved(event: GamepadDeviceRemovedEvent) {
+            ControllerManager.getInstance().onDeviceDisconnected(event.deviceId)
+            scanForExternalDevices()
+        }
+
+        val addedHandler: (GamepadDeviceAddedEvent) -> Unit = ::handleAdded
+        val removedHandler: (GamepadDeviceRemovedEvent) -> Unit = ::handleRemoved
+        PluviaApp.events.on<GamepadDeviceAddedEvent, Unit>(addedHandler)
+        PluviaApp.events.on<GamepadDeviceRemovedEvent, Unit>(removedHandler)
         ControllerManager.getInstance().resetSessionActivity()
         scanForExternalDevices()
 
         onDispose {
-            inputManager.unregisterInputDeviceListener(deviceListener)
+            PluviaApp.events.off<GamepadDeviceAddedEvent, Unit>(addedHandler)
+            PluviaApp.events.off<GamepadDeviceRemovedEvent, Unit>(removedHandler)
         }
     }
 
@@ -1545,6 +1544,10 @@ fun XServerScreen(
     } else {
         OverlayInputContext.NONE
     }
+
+    // Onda 2 (spec 2026-08-13-onda2 §1.4): appId vivo para perfis por jogo — mesmo padrão
+    // do holder acima: escrito NA composição, lido pelos handlers do hub no call time.
+    PluviaApp.gamepadHub.activeAppId = container.id
 
     // M2 (spec 2026-08-12): emit = MULTICAST — every bus listener runs, no early stop;
     // "consumption" is only the window decision (MainActivity returns true when ANY

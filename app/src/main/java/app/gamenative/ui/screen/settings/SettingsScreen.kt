@@ -130,6 +130,19 @@ private fun SettingsScreenContent(
                     SettingsGroupEmulation()
                 }
 
+                // Gamepad section (spec 2026-08-14-onda2-pos-implementacao, M2/M3):
+                // gate universal + swap OK/Cancel + deadzones globais + remap.
+                // Fora do preview: o hub é lateinit no PluviaApp (não existe em preview).
+                if (!LocalInspectionMode.current) {
+                    SettingsSection(
+                        title = stringResource(R.string.settings_gamepad_title),
+                        icon = Icons.Default.Gamepad,
+                        iconTint = PluviaTheme.colors.accentSuccess,
+                    ) {
+                        SettingsGroupGamepad()
+                    }
+                }
+
                 // Interface section
                 SettingsSection(
                     title = stringResource(R.string.settings_interface_title),

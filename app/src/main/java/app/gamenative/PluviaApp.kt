@@ -9,6 +9,7 @@ import app.gamenative.db.dao.AmazonGameDao
 import app.gamenative.db.dao.GOGGameDao
 import app.gamenative.events.EventDispatcher
 import app.gamenative.powercontrol.PowerManager
+import app.gamenative.gamepad.GamepadHub
 import app.gamenative.service.ActiveGameRegistry
 import app.gamenative.service.DownloadService
 import app.gamenative.service.SteamService
@@ -77,6 +78,12 @@ class PluviaApp : SplitCompatApplication() {
         // Init our datastore preferences.
         PrefManager.init(this)
         FrontendSyncManager.init(this)
+
+        // Gamepad universal (spec 2026-08-13-onda2, §1.1): hub app-scoped — o ÚNICO
+        // InputDeviceListener do app. MainActivity tem MÚLTIPLAS instâncias
+        // (multi-janela/external display); um hub por Activity registraria N listeners
+        // duplicados (o exato bug C3 do hardening). O hub vive até o processo morrer.
+        gamepadHub = GamepadHub(this).also { it.start() }
 
         // Initialize GOGConstants
         app.gamenative.service.gog.GOGConstants.init(this)
@@ -199,6 +206,11 @@ class PluviaApp : SplitCompatApplication() {
     companion object {
         @JvmField
         val events: EventDispatcher = EventDispatcher()
+
+        /** Gamepad hub app-scoped (spec 2026-08-13-onda2 §1.1) — inicializado no onCreate. */
+        @Volatile
+        lateinit var gamepadHub: GamepadHub
+
         internal var onDestinationChangedListener: NavChangedListener? = null
 
         // TODO: find a way to make this saveable, this is terrible (leak that memory baby)

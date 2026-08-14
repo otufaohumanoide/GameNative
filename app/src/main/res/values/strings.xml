@@ -2320,7 +2320,19 @@
     <string name="gamepad_remap_binding_none">Unbound</string>
     <string name="gamepad_remap_axis_format">Axis %1$d %2$s</string>
     <string name="gamepad_remap_hat_format">Hat %1$d mask %2$d</string>
-    <string name="gamepad_glyph_dpad_up">↑</string>
+<!-- ══════════ Gamepad settings (spec 2026-08-14 — onda2 pos-implementação, M2/M3) ══════════ -->
+    <string name="settings_gamepad_title">Gamepad</string>
+    <string name="gamepad_settings_universal_title">Universal gamepad support</string>
+    <string name="gamepad_settings_universal_subtitle">Translate any controller into logical gamepad events (menu + in-game)</string>
+    <string name="gamepad_swap_ok_cancel">Swap OK/Cancel buttons</string>
+    <string name="gamepad_swap_ok_cancel_subtitle">Equivalent to RetroArch\'s menu_swap_ok_cancel_buttons</string>
+    <string name="gamepad_deadzone_stick_title">Stick deadzone (in-game)</string>
+    <string name="gamepad_deadzone_menu_stick_title">Stick deadzone (menu)</string>
+    <string name="gamepad_deadzone_subtitle">Ignore stick movement below this threshold</string>
+    <string name="gamepad_settings_remap_title">Remap controls</string>
+    <string name="gamepad_settings_remap_subtitle">Rebind %1$s buttons (default layer)</string>
+    <string name="gamepad_settings_remap_no_device">Connect a controller to remap it</string>
+<string name="gamepad_glyph_dpad_up">↑</string>
     <string name="gamepad_glyph_dpad_down">↓</string>
     <string name="gamepad_glyph_dpad_left">←</string>
     <string name="gamepad_glyph_dpad_right">→</string>

@@ -71,6 +71,37 @@ class GamepadProfileStoreTest {
         assertNull(s.load("STEAM_1293830")?.leftStickDeadzone)
     }
 
+    // ── cache em memória (spec 2026-08-14-onda2-pos-implementacao, M1 — L1) ──
+
+    @Test
+    fun `cache serves reads after the file is deleted`() {
+        val s = store()
+        s.save("054c09cc", profile(leftStickDeadzone = 0.25f))
+        assertEquals(0.25f, s.load("054c09cc")?.leftStickDeadzone!!, 0.001f)
+        // O cache da instância serve a leitura seguinte SEM tocar o disco.
+        assertTrue(File(tmp.root, "profiles.json").delete())
+        assertEquals(0.25f, s.load("054c09cc")?.leftStickDeadzone!!, 0.001f)
+        // Uma instância nova (outro processo) vê o estado real (arquivo ausente).
+        assertNull(store().load("054c09cc"))
+    }
+
+    @Test
+    fun `cache reflects save and clear immediately`() {
+        val s = store()
+        s.save("054c09cc", profile(leftStickDeadzone = 0.25f))
+        s.save("054c09cc", profile(leftStickDeadzone = 0.4f))
+        assertEquals(0.4f, s.load("054c09cc")?.leftStickDeadzone!!, 0.001f)
+        s.save("054c09cc", GamepadProfile()) // default remove — também no cache
+        assertNull(s.load("054c09cc"))
+        s.save("054c09cc", profile(leftStickDeadzone = 0.3f))
+        s.clear("054c09cc")
+        assertNull(s.load("054c09cc"))
+        // Entradas não relacionadas permanecem no cache após clear da chave alvo.
+        s.save("045e028e", profile(leftStickDeadzone = 0.2f))
+        s.clear("054c09cc")
+        assertEquals(0.2f, s.load("045e028e")?.leftStickDeadzone!!, 0.001f)
+    }
+
     // ── default remove / clear / arquivo some ──
 
     @Test

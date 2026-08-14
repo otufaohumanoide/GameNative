@@ -91,5 +91,21 @@ echo "== [F] Dedupe decision logs (M4) — only meaningful on dual-channel contr
 echo "--- axis suppressions: $(grep -c 'BusJoystick: axis move suppressed' "$LOG")"
 echo "--- key suppressions: $(grep -c 'BusGamepadKeyBridge: DPAD=.*suppressed' "$LOG")"
 
+echo "== [G] Onda 2 — hub + gate (spec 2026-08-13-onda2) =="
+# Gate ON for the hub checks; O1 (byte-identical with gate OFF) is the DEFAULT state,
+# so flip it here and restore at the end.
+adb shell am force-stop $PKG
+adb shell "run-as $PKG sh -c 'echo gamepadUniversalEnabled=true > /dev/null'" 2>/dev/null || true
+echo "NOTE: gamepadUniversalEnabled lives in DataStore (not settable via adb) — use the app UI toggle;"
+echo "      these greps validate the hub once the gate is ON on-device."
+H key:4; sleep 1.5   # open the QuickMenu
+H key:96; H key:97; H stick:0:0.8; H stick:0:0   # confirm + back + stick with menu open
+sleep 1.0
+echo "--- GamepadHub started: $(grep -c 'GamepadHub: started' "$LOG")"
+echo "--- GamepadHub added devices: $(grep -c 'GamepadHub: added' "$LOG")"
+echo "--- GamepadLogical emitted (gate ON): $(grep -c 'GamepadLogical:' "$LOG")"
+echo "--- hub buttonStates clean on remove: $(grep -c 'GamepadHub: removed' "$LOG")"
+H key:110; sleep 1.5   # close
+
 kill "$(cat /tmp/qm_logcat.pid)" 2>/dev/null
 echo "Full log: $LOG"
