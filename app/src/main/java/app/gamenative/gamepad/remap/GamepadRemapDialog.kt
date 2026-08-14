@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -95,6 +96,11 @@ fun GamepadRemapDialog(
     var layerTriggers by remember { mutableStateOf(profile.layerTriggers) }
     var captureLayerTrigger by remember { mutableStateOf(false) }
     var pendingTriggerMode by remember { mutableStateOf(LayerTriggerMode.HOLD) }
+    // P2-6 (spec 2026-08-14-touchpad-drag-double-tap): duplo-toque do touchpad =
+    // clique direito (opt-in por perfil; null = OFF — 2 cliques, comportamento U2).
+    var touchpadDoubleTapRightClick by remember {
+        mutableStateOf(profile.touchpadDoubleTapRightClick ?: false)
+    }
     var status by remember { mutableStateOf<String?>(null) }
 
     fun layerMap(layerName: String): Map<String, String> = layers[layerName] ?: emptyMap()
@@ -154,13 +160,24 @@ fun GamepadRemapDialog(
                                 .firstOrNull { it.value == RawBinding.Key(ev.keyCode) }
                                 ?.key
                             if (logical != null) {
-                                layerTriggers = layerTriggers + (
-                                    selectedLayer to LayerTriggerSpec(
-                                        button = logical.name,
-                                        mode = pendingTriggerMode,
+                                // P3-3 (spec 2026-08-14-gamepad-upgrades-pendencias):
+                                // dois triggers no MESMO botão = comportamento
+                                // indefinido (o hub usa firstOrNull). Bloqueia com
+                                // erro inline — padrão key-mapper.
+                                val conflict = layerTriggers.entries.any { (layer, spec) ->
+                                    layer != selectedLayer && spec.button == logical.name
+                                }
+                                if (conflict) {
+                                    status = context.getString(R.string.gamepad_layer_trigger_conflict)
+                                } else {
+                                    layerTriggers = layerTriggers + (
+                                        selectedLayer to LayerTriggerSpec(
+                                            button = logical.name,
+                                            mode = pendingTriggerMode,
+                                        )
                                     )
-                                )
-                                status = null
+                                    status = null
+                                }
                             } else {
                                 status = context.getString(R.string.gamepad_gyro_activate_unmapped)
                             }
@@ -361,10 +378,17 @@ fun GamepadRemapDialog(
                             range = 0.1f..3.0f,
                             onValueChange = { gyroSensitivity = it },
                         )
+                        // P2-4 (spec 2026-08-14-gamepad-upgrades-pendencias): a UI
+                        // exibe a deadzone em °/s (unidade dos usuários — Dolphin/
+                        // JoyShock/Steam Input); a persistência continua rad/s (sem
+                        // migração). Slider 0–30°/s; default 0.05 rad ≈ 2.9°/s.
                         GyroSliderRow(
                             title = stringResource(R.string.gamepad_gyro_deadzone_title),
                             value = gyroDeadzone,
-                            range = 0.0f..0.3f,
+                            range = 0.0f..GYRO_DEADZONE_MAX_RAD_S,
+                            format = { rad ->
+                                String.format(java.util.Locale.US, "%.1f°/s", rad * RAD_TO_DEG)
+                            },
                             onValueChange = { gyroDeadzone = it },
                         )
                         // Botão de ativação (capture mode — mesmo padrão do remap).
@@ -410,6 +434,42 @@ fun GamepadRemapDialog(
                         }
                     }
 
+                    // ── P2-6: Touchpad (spec 2026-08-14-touchpad-drag-double-tap) ──
+                    // Duplo-toque = clique direito (opt-in por perfil; OFF = 2 cliques,
+                    // byte-identical com o U2 — V10).
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    val touchpadInteraction = remember { MutableInteractionSource() }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .gamepadSelectable(
+                                selected = touchpadDoubleTapRightClick,
+                                onClick = { touchpadDoubleTapRightClick = !touchpadDoubleTapRightClick },
+                                shape = RoundedCornerShape(8.dp),
+                                interactionSource = touchpadInteraction,
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.gamepad_touchpad_double_tap_title),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = stringResource(R.string.gamepad_touchpad_double_tap_subtitle),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = touchpadDoubleTapRightClick,
+                            onCheckedChange = { touchpadDoubleTapRightClick = it },
+                            modifier = Modifier.focusProperties { canFocus = false },
+                        )
+                    }
+
                     // ── Footer ──
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -431,6 +491,8 @@ fun GamepadRemapDialog(
                                 gyroSensitivity = if (gyroSensitivity == 1f) null else gyroSensitivity,
                                 gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
                                 gyroActivateButton = gyroActivateButton,
+                                touchpadDoubleTapRightClick =
+                                    if (touchpadDoubleTapRightClick) true else null,
                             ).toJson()
                                 val clip = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 clip.setPrimaryClip(ClipData.newPlainText("gamepad_profile", json))
@@ -450,6 +512,8 @@ fun GamepadRemapDialog(
                                     gyroSensitivity = imported.gyroSensitivity ?: 1f
                                     gyroDeadzone = imported.gyroDeadzone ?: 0.05f
                                     gyroActivateButton = imported.gyroActivateButton
+                                    touchpadDoubleTapRightClick =
+                                        imported.touchpadDoubleTapRightClick ?: false
                                     status = context.getString(R.string.gamepad_remap_imported)
                                 }
                             }) {
@@ -472,6 +536,8 @@ fun GamepadRemapDialog(
                                     gyroSensitivity = if (gyroSensitivity == 1f) null else gyroSensitivity,
                                     gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
                                     gyroActivateButton = gyroActivateButton,
+                                    touchpadDoubleTapRightClick =
+                                        if (touchpadDoubleTapRightClick) true else null,
                                 ),
                             )
                         }) {
@@ -799,13 +865,18 @@ private fun GyroModeRow(
     }
 }
 
-/** U1 — slider de ajuste do gyro com A-lock (mesmo padrão dos settings). */
+/**
+ * U1 — slider de ajuste do gyro com A-lock (mesmo padrão dos settings). P2-4: o
+ * valor exibido passa por [format] (ex.: °/s para a deadzone) — o valor interno
+ * permanece na unidade persistida (rad/s).
+ */
 @Composable
 private fun GyroSliderRow(
     title: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     onValueChange: (Float) -> Unit,
+    format: (Float) -> String = { String.format(java.util.Locale.US, "%.2f", it) },
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     var isLocked by remember { mutableStateOf(false) }
@@ -843,13 +914,19 @@ private fun GyroSliderRow(
                     .focusProperties { canFocus = false },
             )
             Text(
-                text = String.format(java.util.Locale.US, "%.2f", value),
+                text = format(value),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
+
+/** °/s (unidade da UI) — P2-4. */
+private const val RAD_TO_DEG = 180f / kotlin.math.PI.toFloat()
+
+/** Máximo da deadzone na UI: 30°/s convertido para rad/s (persistência). */
+private const val GYRO_DEADZONE_MAX_RAD_S = 30f / RAD_TO_DEG
 
 /** Eixo dominante capturável (exclui hat — o dpad já tem botões próprios). */
 private fun strongestCapturableAxis(ev: MotionEvent): Triple<Int, Int, Float>? {

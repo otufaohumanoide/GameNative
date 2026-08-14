@@ -2348,6 +2348,9 @@
     <string name="gamepad_layer_default">Default</string>
     <string name="gamepad_layer_trigger_title">Layer trigger</string>
     <string name="gamepad_layer_no_trigger">No trigger (layer never activates)</string>
+    <string name="gamepad_layer_trigger_conflict">That button is already the trigger of another layer</string>
+    <string name="gamepad_touchpad_double_tap_title">Double-tap = right click</string>
+    <string name="gamepad_touchpad_double_tap_subtitle">Two quick taps send the right button (off: two left clicks)</string>
     <string name="gamepad_layer_mode_hold">Hold</string>
     <string name="gamepad_layer_mode_toggle">Toggle</string>
     <string name="gamepad_layer_mode_double_tap">Double-tap</string>

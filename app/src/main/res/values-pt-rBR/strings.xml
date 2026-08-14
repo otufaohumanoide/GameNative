@@ -2216,6 +2216,9 @@
     <string name="gamepad_layer_default">Padrão</string>
     <string name="gamepad_layer_trigger_title">Gatilho da camada</string>
     <string name="gamepad_layer_no_trigger">Sem gatilho (a camada nunca ativa)</string>
+    <string name="gamepad_layer_trigger_conflict">Esse botão já é o gatilho de outra camada</string>
+    <string name="gamepad_touchpad_double_tap_title">Toque duplo = clique direito</string>
+    <string name="gamepad_touchpad_double_tap_subtitle">Dois toques rápidos enviam o botão direito (off: dois cliques esquerdos)</string>
     <string name="gamepad_layer_mode_hold">Segurar</string>
     <string name="gamepad_layer_mode_toggle">Alternar</string>
     <string name="gamepad_layer_mode_double_tap">Duplo toque</string>
