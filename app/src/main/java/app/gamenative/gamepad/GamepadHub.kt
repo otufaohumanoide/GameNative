@@ -267,7 +267,7 @@ class GamepadHub(context: Context) {
         event: InputEvent,
         deviceId: Int,
     ): Boolean {
-        val emitted = remapEvent(device, mapping, event, layerState)
+        val emitted = remapEvent(device, mapping, profile, event, layerState)
         val activateButton = profile.gyroActivateButton
         for (e in emitted) {
             if (activateButton != null && e is InputEvent.ButtonDown && e.button.name == activateButton) {
@@ -281,15 +281,21 @@ class GamepadHub(context: Context) {
         return emitted.isNotEmpty()
     }
 
-    /** Aplica o remap da camada ativa a um evento de botão (U3). */
+    /**
+     * Aplica o remap da camada ativa a um evento de botão (U3). P3-6 (spec
+     * 2026-08-14-gamepad-upgrades-pendencias): recebe o [profile] já resolvido pelo
+     * chamador — antes re-resolvia `profileFor` por evento (chamada por
+     * botão×evento; o cache M1 tornava barato, mas o parâmetro já estava em mão).
+     */
     private fun remapEvent(
         device: GamepadDevice,
         mapping: GamepadMapping,
+        profile: GamepadProfile,
         event: InputEvent,
         layerState: LayerState,
     ): List<InputEvent> {
         val bindings = LayerResolver.effectiveBindings(
-            profileFor(device.deviceId, activeAppId).layers,
+            profile.layers,
             layerState.activeLayer,
         )
         if (bindings.isEmpty()) return listOf(event)
@@ -493,6 +499,31 @@ class GamepadHub(context: Context) {
     private fun mappingFor(device: GamepadDevice) =
         MappingDatabase.mappingFor(device.vendorId, device.productId)
             ?: MappingDatabase.defaultAndroidMapping(device.faceStyle)
+
+    /**
+     * P3-4 (spec 2026-08-14-gamepad-upgrades-pendencias): refresh PULL da bateria de
+     * um device — chamado ao ABRIR a seção Gamepad dos settings (fora do hot path,
+     * sem polling; mesmo padrão da coleta no hotplug). O nível coletado no addDevice
+     * ficava stale durante uma partida longa.
+     */
+    fun refreshBattery(deviceId: Int) {
+        val device = _connectedDevices.value[deviceId] ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val fresh = runCatching {
+            val inputDevice = InputDevice.getDevice(deviceId) ?: return@runCatching null
+            val state = inputDevice.batteryState
+            if (state.isPresent && state.capacity >= 0f) {
+                when (state.status) {
+                    BatteryState.STATUS_CHARGING, BatteryState.STATUS_FULL -> 100
+                    else -> (state.capacity * 100f).toInt()
+                }
+            } else {
+                null
+            }
+        }.getOrNull() ?: return
+        if (fresh == device.batteryPercent) return
+        _connectedDevices.value = _connectedDevices.value + (deviceId to device.copy(batteryPercent = fresh))
+    }
 
     private fun addDevice(deviceId: Int) {
         val inputDevice = InputDevice.getDevice(deviceId) ?: return

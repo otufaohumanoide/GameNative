@@ -15,6 +15,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -86,6 +87,17 @@ fun SettingsGroupGamepad() {
     }
     var rumbleEnabled by rememberSaveable {
         mutableStateOf(if (isPreview) true else PrefManager.gamepadRumbleEnabled)
+    }
+
+    // P3-4 (spec 2026-08-14-gamepad-upgrades-pendencias): refresh PULL da bateria ao
+    // ABRIR a seção (a SettingsScreen é um destino de navegação — compõe ao abrir e
+    // descarta ao sair). Fora do hot path, sem polling; o nível do hotplug ficava
+    // stale durante uma partida longa.
+    if (!isPreview) {
+        LaunchedEffect(Unit) {
+            val hub = PluviaApp.gamepadHub
+            hub.connectedDevices.value.keys.forEach(hub::refreshBattery)
+        }
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
