@@ -87,9 +87,12 @@ pendente + janela de frescor 100 ms, 11 testes JVM verdes), stamps em
 `GamepadHub.onSensorSample` (t0 SENSOR) e `PhysicalControllerHandler.onKeyEvent/
 onGenericMotionEvent/applyCameraGyro` (t1); HUD verificado no device (bbox verde
 no topo-esquerdo, linhas `KEY/MOTION/SENSOR: no samples`); verbo `latency:report`
-confirmado no logcat. **On-device pendente:** baseline Mi 11/DS4 — o DS4 está
-pareado mas DESLIGADO e não há como religá-lo via adb (sem root); a medição com
-amostras reais exige o controle ligado. Nada de migração C++/Rust até o baseline.
+confirmado no logcat. **On-device pendente:** baseline Mi 11/DS4 — religamento remoto impossível
+(sem root). Tentativa de medição em 2026-08-14 (noite): DS4 conectou
+(devices 72/73/74, hub adicionou o sub-device CONTROLLER), mas a BATERIA morreu
+durante a sessão antes de coletar amostras — pendente de nova carga/outro
+controle. Protocolo pronto: ligar coleta (`debug.gamenative.latency 1`) → jogar
+Silksong → `latency:report`. Nada de migração C++/Rust até o baseline.
 
 ### F1 — Input Core (Kotlin puro + GUI por device)
 
