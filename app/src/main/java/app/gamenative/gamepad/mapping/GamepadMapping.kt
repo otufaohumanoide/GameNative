@@ -35,6 +35,16 @@ data class GamepadMapping(
     fun confirmKeyCode(swapOkCancel: Boolean): Int? =
         (buttons[confirmButton(swapOkCancel)] as? RawBinding.Key)?.keyCode
 
+    /**
+     * O botão de CANCELAR do estilo (spec 2026-08-14, U6): o OUTRO face button do
+     * [confirmButton] — para Xbox/PlayStation/Generic é FACE_RIGHT (B), para Nintendo
+     * é FACE_BOTTOM (o botão de baixo cancela no layout Nintendo); `swapOkCancel`
+     * inverte ambos. Simétrico ao confirm: uma superfície de menu que trata "back"
+     * deve responder a este botão, não ao raw BUTTON_B posicional.
+     */
+    fun cancelButton(swapOkCancel: Boolean): GamepadButton =
+        otherFaceButton(confirmButton(swapOkCancel))
+
     private fun otherFaceButton(button: GamepadButton): GamepadButton = when (button) {
         GamepadButton.FACE_BOTTOM -> GamepadButton.FACE_RIGHT
         GamepadButton.FACE_RIGHT -> GamepadButton.FACE_BOTTOM

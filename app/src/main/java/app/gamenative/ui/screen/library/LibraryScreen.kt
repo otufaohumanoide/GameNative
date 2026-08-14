@@ -66,6 +66,8 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -77,6 +79,9 @@ import androidx.lifecycle.lifecycleScope
 import app.gamenative.BuildConfig
 import app.gamenative.PrefManager
 import app.gamenative.PluviaApp
+import app.gamenative.gamepad.GamepadButton as LogicalGamepadButton
+import app.gamenative.gamepad.LibraryGamepadKeys
+import app.gamenative.gamepad.LibraryKeySet
 import app.gamenative.R
 import app.gamenative.data.GameCompatibilityStatus
 import app.gamenative.data.GameSource
@@ -216,6 +221,7 @@ private fun LibraryScreenContent(
     isSteamConnected: Boolean = false,
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val lifecycleScope = LocalLifecycleOwner.current.lifecycleScope
 
     // M4 (spec 2026-08-12 — badge de shader na biblioteca): one read per screen entry
@@ -778,10 +784,17 @@ private fun LibraryScreenContent(
                 val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
                 val leftX = event.getAxisValue(MotionEvent.AXIS_X)
                 val leftY = event.getAxisValue(MotionEvent.AXIS_Y)
+                // U6 (spec 2026-08-14-gamepad-u6-libraryscreen-ok-cancel, §1.4): o
+                // threshold do STICK deixa de ser o 0.6 hardcoded e passa a ser a
+                // deadzone do MENU por device (hub.menuDeadzoneFor — perfil ?: global
+                // 0.45, o valor que toda a navegação de menu do repo já usa). O hat
+                // mantém 0.5 (padrão de todos os navigators; hat não é afetado por
+                // deadzone de stick).
+                val stickDeadZone = PluviaApp.gamepadHub.menuDeadzoneFor(event.deviceId)
                 val hasDirectionalAxis = kotlin.math.abs(hatX) >= 0.5f ||
                     kotlin.math.abs(hatY) >= 0.5f ||
-                    kotlin.math.abs(leftX) >= 0.6f ||
-                    kotlin.math.abs(leftY) >= 0.6f
+                    kotlin.math.abs(leftX) >= stickDeadZone ||
+                    kotlin.math.abs(leftY) >= stickDeadZone
 
                 if (isMoveLike && hasDirectionalAxis) {
                     requestContentFocusOrDefer()
@@ -821,7 +834,8 @@ private fun LibraryScreenContent(
                 // TODO: consider abstracting this
                 // Handle gamepad buttons
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
-                    val keyCode = keyEvent.nativeKeyEvent.keyCode
+                    val native = keyEvent.nativeKeyEvent
+                    val keyCode = native.keyCode
                     val canBootstrapContentFocus = selectedAppId == null &&
                         !state.isOptionsPanelOpen &&
                         !isSystemMenuOpen &&
@@ -831,6 +845,29 @@ private fun LibraryScreenContent(
                         // Don't pull focus to the grid while the user is on the tab bar (D-pad
                         // up/left/right and analog nudges aren't consumed by the bar otherwise).
                         !tabBarHasFocus
+
+                    // U6 (spec 2026-08-14-gamepad-u6-libraryscreen-ok-cancel, §1.3): os
+                    // atalhos da biblioteca passam a ouvir os keycodes LÓGICOS do device
+                    // (FaceStyle + swap + mapping por vendor/product da camada universal).
+                    // Device desconhecido do hub → fallback raw (byte-identical, V10).
+                    val keySet = PluviaApp.gamepadHub.libraryKeySetFor(native.deviceId)
+                        ?: LibraryKeySet.FALLBACK
+
+                    // Confirm por FaceStyle/swap: quando o confirm NÃO é um botão que o
+                    // `gamepadSelectable` já ativa (A/DPAD_CENTER), sintetiza DPAD_CENTER
+                    // na view (mesmo padrão do GamepadKeyBridge — o Compose só ativa em
+                    // Enter/DPAD_CENTER) e consome: o item focado ativa com o botão CERTO
+                    // do controle (ex.: Nintendo → botão da direita).
+                    if (keyCode == keySet.confirmKey &&
+                        keyCode != KeyEvent.KEYCODE_BUTTON_A &&
+                        keyCode != KeyEvent.KEYCODE_DPAD_CENTER
+                    ) {
+                        if (native.repeatCount == 0) {
+                            view.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER))
+                            view.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER))
+                        }
+                        return@onPreviewKeyEvent true
+                    }
 
                     when (keyCode) {
                         // Navigation keys should bootstrap focus even before any item is selected.
@@ -851,8 +888,8 @@ private fun LibraryScreenContent(
                             }
                         }
 
-                        // L1 button - previous tab
-                        KeyEvent.KEYCODE_BUTTON_L1 -> {
+                        // L1 button - previous tab (lógico — mapping do device)
+                        keySet.l1Key -> {
                             if (selectedAppId == null && !state.isOptionsPanelOpen && !isSystemMenuOpen) {
                                 if (canBootstrapContentFocus) {
                                     requestContentFocusOrDefer()
@@ -865,7 +902,7 @@ private fun LibraryScreenContent(
                         }
 
                         // R1 button - next tab
-                        KeyEvent.KEYCODE_BUTTON_R1 -> {
+                        keySet.r1Key -> {
                             if (selectedAppId == null && !state.isOptionsPanelOpen && !isSystemMenuOpen) {
                                 if (canBootstrapContentFocus) {
                                     requestContentFocusOrDefer()
@@ -878,7 +915,7 @@ private fun LibraryScreenContent(
                         }
 
                         // SELECT button - toggle options panel (library filters/sort)
-                        KeyEvent.KEYCODE_BUTTON_SELECT -> {
+                        keySet.selectKey -> {
                             if (selectedAppId == null && !isSystemMenuOpen) {
                                 onOptionsPanelToggle(!state.isOptionsPanelOpen)
                                 true
@@ -888,7 +925,7 @@ private fun LibraryScreenContent(
                         }
 
                         // START button - toggle system menu (profile/settings)
-                        KeyEvent.KEYCODE_BUTTON_START,
+                        keySet.startKey,
                         KeyEvent.KEYCODE_MENU,
                         -> {
                             if (selectedAppId == null && !state.isOptionsPanelOpen) {
@@ -899,8 +936,8 @@ private fun LibraryScreenContent(
                             }
                         }
 
-                        // Y button - toggle search
-                        KeyEvent.KEYCODE_BUTTON_Y -> {
+                        // Y button - toggle search (lógico — FACE_TOP do device)
+                        keySet.yKey -> {
                             if (selectedAppId == null && !state.isOptionsPanelOpen && !isSystemMenuOpen) {
                                 onIsSearching(!state.isSearching)
                                 true
@@ -909,8 +946,8 @@ private fun LibraryScreenContent(
                             }
                         }
 
-                        // X button - add custom game
-                        KeyEvent.KEYCODE_BUTTON_X -> {
+                        // X button - add custom game (lógico — FACE_LEFT do device)
+                        keySet.xKey -> {
                             if (selectedAppId == null && !state.isSearching && !state.isOptionsPanelOpen && !isSystemMenuOpen) {
                                 onAddCustomGameClick()
                                 true
@@ -919,10 +956,12 @@ private fun LibraryScreenContent(
                             }
                         }
 
-                        // B button - contextual back / open system menu
-                        KeyEvent.KEYCODE_BUTTON_B -> {
+                        // Cancel button (U6): o botão de CANCELAR do estilo (B no Xbox/PS,
+                        // A no Nintendo; invertido por swap) — contextual back / open
+                        // system menu. Substitui o raw BUTTON_B posicional.
+                        keySet.cancelKey -> {
                             if (selectedAppId != null) {
-                                // Let LibraryAppScreen handle its own B-button
+                                // Let LibraryAppScreen handle its own back button
                                 false
                             } else if (isSystemMenuOpen) {
                                 isSystemMenuOpen = false
@@ -1148,11 +1187,28 @@ private fun LibraryScreenContent(
 
         // Bottom action bar
         if (selectedAppId == null && !state.isOptionsPanelOpen && !isSystemMenuOpen) {
+            // U6 (spec 2026-08-14-gamepad-u6-libraryscreen-ok-cancel, §1.5): os hints de
+            // confirm/cancel seguem o botão LÓGICO do device ativo (FaceStyle + swap) —
+            // o glyph do GamepadActionBar já renderiza por FaceStyle; o botão rotulado
+            // agora bate com o keycode que a superfície realmente ouve. Sem device ativo
+            // (ou em preview) → A/B posicional (padrão histórico).
+            val confirmLocal = if (LocalInspectionMode.current) {
+                GamepadButton.A
+            } else {
+                when (PluviaApp.gamepadHub.confirmButtonFor(
+                    PluviaApp.gamepadHub.activeDevice.value?.deviceId ?: -1,
+                )) {
+                    LogicalGamepadButton.FACE_RIGHT -> GamepadButton.B
+                    else -> GamepadButton.A
+                }
+            }
+            val cancelLocal = if (confirmLocal == GamepadButton.A) GamepadButton.B else GamepadButton.A
+            val selectAction = LibraryActions.select.copy(button = confirmLocal)
             val libraryActions = if (state.isSearching) {
                 listOf(
-                    LibraryActions.select,
+                    selectAction,
                     GamepadAction(
-                        button = GamepadButton.B,
+                        button = cancelLocal,
                         labelResId = R.string.back,
                         onClick = {
                             onIsSearching(false)
@@ -1162,7 +1218,7 @@ private fun LibraryScreenContent(
                 )
             } else {
                 listOf(
-                    LibraryActions.select,
+                    selectAction,
                     GamepadAction(
                         button = GamepadButton.SELECT,
                         labelResId = R.string.options,
@@ -1174,7 +1230,7 @@ private fun LibraryScreenContent(
                         onClick = { isSystemMenuOpen = true },
                     ),
                     GamepadAction(
-                        button = GamepadButton.B,
+                        button = cancelLocal,
                         labelResId = R.string.menu,
                         onClick = { isSystemMenuOpen = true },
                     ),

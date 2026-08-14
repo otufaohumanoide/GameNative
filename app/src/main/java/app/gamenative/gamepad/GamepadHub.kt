@@ -141,6 +141,31 @@ class GamepadHub(context: Context) {
     }
 
     /**
+     * Conjunto de keycodes LÓGICOS da LibraryScreen (spec 2026-08-14, U6): confirm/
+     * cancel por FaceStyle + swap, atalhos traduzidos pelo mapping do device. null =
+     * device desconhecido (a superfície cai no fallback raw — byte-identical).
+     */
+    fun libraryKeySetFor(deviceId: Int): LibraryKeySet? {
+        val device = deviceFor(deviceId) ?: return null
+        return LibraryGamepadKeys.resolve(mappingFor(device), swapFor(deviceId))
+    }
+
+    /**
+     * Botão SEMÂNTICO de confirmação do device (U6 — ActionBar): FaceStyle + swap.
+     * null = device desconhecido (UI usa o default A).
+     */
+    fun confirmButtonFor(deviceId: Int): GamepadButton? {
+        val device = deviceFor(deviceId) ?: return null
+        return mappingFor(device).confirmButton(swapFor(deviceId))
+    }
+
+    /** Swap OK/Cancel efetivo do device: perfil ?: global. */
+    fun swapFor(deviceId: Int): Boolean {
+        val profile = profileFor(deviceId, activeAppId)
+        return profile.swapOkCancel ?: PrefManager.gamepadSwapOkCancel
+    }
+
+    /**
      * Perfil efetivo (device + jogo + globais) resolvido no momento do evento, servido
      * pelo cache (M1). Entrada estável dentro da sessão de um container; inválida em
      * hotplug (deviceId efêmero reusado) e em save de perfil.
