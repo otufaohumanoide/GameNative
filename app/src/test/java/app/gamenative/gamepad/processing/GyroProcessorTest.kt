@@ -132,6 +132,27 @@ class GyroProcessorTest {
     }
 
     @Test
+    fun `dt uses relative sensor timestamps not absolute time`() {
+        // P2-1 (spec 2026-08-14-gamepad-upgrades-pendencias): o dt vem do nowMs da
+        // amostra — preenchido pelo GamepadSensorSource com event.timestamp do sensor
+        // (ns→ms). O processador não tem relógio próprio: a MESMA sequência espaçada
+        // em 8 ms produz o mesmo delta em qualquer base absoluta (o callback pode
+        // atrasar na main thread sem inflar/deflacionar a integração).
+        val stateA = GyroState()
+        GyroProcessor.process(sample(0f, 0f, 0f, 1_000_000), stateA, config, activate = true)
+        val a1 = GyroProcessor.process(sample(0f, 0f, -1f, 1_000_008), stateA, config, activate = true)
+        val a2 = GyroProcessor.process(sample(0f, 0f, -1f, 1_000_016), stateA, config, activate = true)
+        val stateB = GyroState()
+        GyroProcessor.process(sample(0f, 0f, 0f, 42), stateB, config, activate = true)
+        val b1 = GyroProcessor.process(sample(0f, 0f, -1f, 50), stateB, config, activate = true)
+        val b2 = GyroProcessor.process(sample(0f, 0f, -1f, 58), stateB, config, activate = true)
+        assertEquals(a1.deltaXRad, b1.deltaXRad, 0.0005f)
+        assertEquals(a2.deltaXRad, b2.deltaXRad, 0.0005f)
+        // 1 rad/s × 8 ms = 0.008 rad (sanity do espaçamento).
+        assertEquals(0.008f, a1.deltaXRad, 0.0005f)
+    }
+
+    @Test
     fun `delta scales with dt`() {
         val state = GyroState()
         GyroProcessor.process(sample(0f, 0f, 0f, 0), state, config, activate = true)

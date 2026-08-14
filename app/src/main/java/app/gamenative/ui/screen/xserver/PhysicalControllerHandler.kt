@@ -10,10 +10,12 @@ import android.view.MotionEvent
 import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
 import app.gamenative.gamepad.GamepadButton
+import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.mapping.MappingDatabase
 import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.processing.DeadzoneConfig
 import app.gamenative.gamepad.processing.DeadzoneProcessor
+import app.gamenative.gamepad.processing.GyroStickMapping
 import app.gamenative.gamepad.processing.StickSample
 import app.gamenative.gamepad.remap.GamepadBindingCodec
 import com.winlator.inputcontrols.Binding
@@ -303,16 +305,18 @@ class PhysicalControllerHandler(
     }
 
     /**
-     * U1 (spec 2026-08-14-gamepad-u1-gyro): CAMERA mode — mapeia a VELOCIDADE angular
-     * do gyro (rad/s) em deflexão do RIGHT STICK do virtual gamepad (mouse-look) e
-     * envia o estado. Chamado pela main thread (sink do hub — P2-7); só mexe no
-     * estado do gamepad virtual, sem tocar no dispatch.
+     * U1/P1-2 (spec 2026-08-14-gamepad-upgrades-pendencias): CAMERA mode — mapeia a
+     * VELOCIDADE angular do gyro (rad/s) em deflexão do RIGHT STICK do virtual
+     * gamepad (mouse-look) e envia o estado. Controle de TAXA (padrão DS4Windows
+     * MouseJoystick/JoyShockLibrary): parar de girar ⇒ deflexão volta a 0 — o modelo
+     * antigo integrava deltas e o stick permanecia no último valor. Escrito por cima
+     * do stick físico (único escritor do campo: processJoystickInput pula os eixos do
+     * right stick com CAMERA ativo). Chamado pela main thread (sink do hub — P2-7).
      */
-    fun applyCameraGyro(deltaXRad: Float, deltaYRad: Float, sensitivity: Float) {
+    fun applyCameraGyro(yawRadS: Float, pitchRadS: Float, sensitivity: Float) {
         val state = profile?.gamepadState ?: return
-        val scale = 40f * sensitivity
-        state.thumbRX = (state.thumbRX + deltaXRad * scale).coerceIn(-1f, 1f)
-        state.thumbRY = (state.thumbRY + deltaYRad * scale).coerceIn(-1f, 1f)
+        state.thumbRX = GyroStickMapping.deflection(yawRadS, sensitivity)
+        state.thumbRY = GyroStickMapping.deflection(pitchRadS, sensitivity)
         val winHandler = xServer?.winHandler
         if (winHandler != null) {
             winHandler.sendGamepadState()
@@ -406,6 +410,14 @@ class PhysicalControllerHandler(
         // Reset mouse movement offset at the start - contributions will be added during processing
         mouseMoveOffset.set(0f, 0f)
 
+        // P1-2 (spec 2026-08-14-gamepad-upgrades-pendencias): CAMERA mode ativo ⇒ o
+        // gyro controla o right stick POR CIMA do físico (padrão DS4Windows — é um
+        // modo do perfil, não uma soma). Sem isto, o MotionEvent do stick físico e o
+        // sink do sensor escreviam o MESMO campo (thumbRX/RY) — flicker de câmera.
+        val cameraOwnsRightStick = PrefManager.gamepadUniversalEnabled &&
+            PluviaApp.gamepadHub.profileFor(controller.deviceId, PluviaApp.gamepadHub.activeAppId)
+                .gyroMode == GyroMode.CAMERA
+
         val axes = intArrayOf(
             MotionEvent.AXIS_X,
             MotionEvent.AXIS_Y,
@@ -424,6 +436,11 @@ class PhysicalControllerHandler(
         )
 
         for (i in axes.indices) {
+            // P1-2: CAMERA mode ⇒ right stick físico ignorado (gyro é o único
+            // escritor de thumbRX/RY do virtual gamepad enquanto o modo está ativo).
+            if (cameraOwnsRightStick && (axes[i] == MotionEvent.AXIS_Z || axes[i] == MotionEvent.AXIS_RZ)) {
+                continue
+            }
             // U4: sticks com binding explícito na camada universal são injetados pelo
             // binding ALVO (o eixo original não passa pelo activeAxisBindings — o
             // controle de release é próprio). Hats (i >= 4) não são remapeados no

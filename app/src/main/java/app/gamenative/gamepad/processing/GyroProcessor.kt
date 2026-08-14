@@ -46,11 +46,20 @@ data class GyroOutput(
     val deltaXRad: Float,
     /** Rotação acumulada desde a última amostra, em RADIANOS (pitch → deltaY). */
     val deltaYRad: Float,
+    /**
+     * Velocidade angular morta pela deadzone, em RAD/S (yaw) — P1-2 do spec
+     * 2026-08-14-gamepad-upgrades-pendencias: o CAMERA mode é controle de TAXA
+     * (padrão DS4Windows/JoyShockLibrary), não integral — a deflexão é função da
+     * velocidade, e parar de girar ⇒ deflexão volta a 0.
+     */
+    val yawRadS: Float,
+    /** Velocidade angular morta pela deadzone, em RAD/S (pitch) — ver [yawRadS]. */
+    val pitchRadS: Float,
     /** false = inativo (botão solto) ou primeira amostra (sem delta ainda). */
     val active: Boolean,
 ) {
     companion object {
-        val NONE = GyroOutput(0f, 0f, false)
+        val NONE = GyroOutput(0f, 0f, 0f, 0f, false)
     }
 }
 
@@ -73,8 +82,8 @@ object GyroProcessor {
         val last = state.lastSample
         state.lastSample = sample
         if (last == null) {
-            // Primeira amostra do período ativo: ancora, sem delta.
-            return GyroOutput(0f, 0f, true)
+            // Primeira amostra do período ativo: ancora, sem delta nem velocidade.
+            return GyroOutput(0f, 0f, 0f, 0f, true)
         }
 
         val dt = ((sample.nowMs - last.nowMs).coerceIn(1L, 100L)) / 1000f
@@ -92,6 +101,8 @@ object GyroProcessor {
         return GyroOutput(
             deltaXRad = yaw * dt,
             deltaYRad = pitch * dt,
+            yawRadS = yaw,
+            pitchRadS = pitch,
             active = true,
         )
     }

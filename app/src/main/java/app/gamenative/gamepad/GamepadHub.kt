@@ -337,8 +337,10 @@ class GamepadHub(context: Context) {
      * Pipeline: perfil (cache M1) → GyroProcessor (puro, estado por device V6) →
      * evento lógico emitido (vocabulário V4) → injeção:
      * - MOUSE → sink de mouse compartilhado (XServer injectPointerMoveDelta);
-     * - CAMERA → `gyroCameraSink` (setado pelo XServerScreen: acumula no right stick
-     *   do virtual gamepad via PhysicalControllerHandler).
+     * - CAMERA → `gyroCameraSink` (setado pelo XServerScreen — P1-1) com a
+     *   VELOCIDADE angular (rad/s, P1-2 — padrão DS4Windows: deflexão = f(velocidade),
+     *   não integral; o PhysicalControllerHandler mapeia no right stick do virtual
+     *   gamepad e zera quando a rotação para).
      */
     fun onSensorSample(deviceId: Int, gyroX: Float, gyroY: Float, gyroZ: Float, nowMs: Long) {
         if (!PrefManager.gamepadUniversalEnabled) return
@@ -377,15 +379,28 @@ class GamepadHub(context: Context) {
                 }
             }
             GyroMode.CAMERA -> {
-                gyroCameraSink?.invoke(output.deltaXRad, output.deltaYRad, sensitivity)
+                if (output.active) {
+                    // P1-2: velocidade angular (rad/s) morta pela deadzone — o sink
+                    // mapeia em deflexão (controle de taxa, padrão DS4Windows).
+                    gyroCameraSink?.invoke(output.yawRadS, output.pitchRadS, sensitivity)
+                } else {
+                    // Inativo (botão de ativação solto): garante o repouso do stick —
+                    // sem isto a deflexão congelava no último valor (o defeito do
+                    // modelo integral que o P1-2 elimina).
+                    gyroCameraSink?.invoke(0f, 0f, sensitivity)
+                }
             }
             GyroMode.OFF -> {}
         }
     }
 
-    /** Sink do CAMERA mode — setado pelo XServerScreen quando o container roda (limpo no exit). */
+    /**
+     * Sink do CAMERA mode — setado pelo XServerScreen quando o container roda (P1-1;
+     * holder vivo, limpo no exit/onDispose). Contrato P1-2: (yawRadS, pitchRadS,
+     * sensitivity) — VELOCIDADE angular, não delta integral.
+     */
     @Volatile
-    var gyroCameraSink: ((deltaXRad: Float, deltaYRad: Float, sensitivity: Float) -> Unit)? = null
+    var gyroCameraSink: ((yawRadS: Float, pitchRadS: Float, sensitivity: Float) -> Unit)? = null
 
     /** Fonte de sensores (U1) — injetada pelo PluviaApp; hotplug avisa o source. */
     var sensorSource: GamepadSensorSource? = null

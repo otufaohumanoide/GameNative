@@ -34,6 +34,10 @@ import timber.log.Timber
 class GamepadSensorSource(private val hub: GamepadHub) {
 
     private val registered = mutableMapOf<Int, SensorEventListener>()
+    // P2-1 (spec 2026-08-14-gamepad-upgrades-pendencias): último timestamp do SENSOR
+    // (ns) por device — guarda de monotonicidade para o dt derivado do evento.
+    // Acesso só da main thread (P2-7 — decisão A).
+    private val lastSensorTsNs = mutableMapOf<Int, Long>()
     private var started = false
 
     @Volatile
@@ -92,12 +96,25 @@ class GamepadSensorSource(private val hub: GamepadHub) {
                 // Entrega na main thread (P2-7 — registerListener sem Handler usa o
                 // Looper de quem registrou). O hub processa PURO e injeta no sink;
                 // nenhuma coroutine aqui (V3).
+                // P2-1: o dt deve refletir QUANDO O SENSOR MEDIU (event.timestamp, ns),
+                // não quando o app processou — o callback pode atrasar na main thread
+                // (jogo pesado) sem inflar/deflacionar a integração. Guarda de
+                // monotonicidade (padrão DS4Windows para timestamps duplicados):
+                // ts <= anterior ⇒ cai para o relógio do sistema.
+                val tsNs = event.timestamp
+                val prevNs = lastSensorTsNs[deviceId] ?: 0L
+                val nowMs = if (tsNs > prevNs) {
+                    lastSensorTsNs[deviceId] = tsNs
+                    tsNs / 1_000_000L
+                } else {
+                    SystemClock.uptimeMillis()
+                }
                 hub.onSensorSample(
                     deviceId = deviceId,
                     gyroX = event.values[0],
                     gyroY = event.values[1],
                     gyroZ = event.values[2],
-                    nowMs = SystemClock.uptimeMillis(),
+                    nowMs = nowMs,
                 )
             }
 

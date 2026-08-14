@@ -2490,6 +2490,14 @@ fun XServerScreen(
                     loadedProfile = targetProfile
                 }
 
+                // P1-1 (spec 2026-08-14-gamepad-upgrades-pendencias): instala o sink do
+                // CAMERA mode — holder vivo (o handler é recriado por container; mesma
+                // lição C1 do hardening — nunca capturar o handler da composição).
+                // Sem handler (sem profile) o sink é no-op; onDispose/exit limpam.
+                PluviaApp.gamepadHub.gyroCameraSink = { yawRadS, pitchRadS, sensitivity ->
+                    physicalControllerHandler?.applyCameraGyro(yawRadS, pitchRadS, sensitivity)
+                }
+
                 // Set overlay opacity from preferences if needed
                 val opacity = PrefManager.getFloat("controls_opacity", InputControlsView.DEFAULT_OVERLAY_OPACITY)
                 setOverlayOpacity(opacity)
