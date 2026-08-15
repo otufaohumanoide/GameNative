@@ -1,0 +1,27 @@
+{
+  "id": "racing-flick-stick",
+  "game": "dirt-rally",
+  "faceStyle": "XBOX",
+  "controller": "Xbox Series / DualShock 4",
+  "name": "Flick stick + response curve — rally",
+  "author": "gamenative-seed",
+  "description": "Flick stick on the right stick for hairpins, exponential curve on the left stick, custom 5-point LUT on the right stick (sanitized by the sync).",
+  "downloads": 205,
+  "profile": {
+    "leftStickDeadzone": 0.08,
+    "rightStickDeadzoneMode": "AXIAL",
+    "rightStickDeadzone": 0.1,
+    "leftStickCurve": "EXPONENTIAL",
+    "flickStickEnabled": true,
+    "flickStickActivationRadius": 0.85,
+    "flickStickSnapAngle": 0.0,
+    "rightStickLut": [
+      0.0,
+      0.3,
+      0.55,
+      0.8,
+      1.0
+    ],
+    "schemaVersion": 1
+  }
+}

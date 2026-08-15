@@ -52,6 +52,7 @@ import app.gamenative.ui.internal.fakeAppInfo
 import app.gamenative.ui.theme.PluviaTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Face4
 import androidx.compose.material3.Card
@@ -82,6 +83,7 @@ internal fun AppItem(
     enableFocusScale: Boolean = true,
     animateStats: Boolean = true,
     hasShader: Boolean = false,
+    hasProfileOverrides: Boolean = false,
 ) {
     val context = LocalContext.current
     var hideText by remember { mutableStateOf(true) }
@@ -134,6 +136,7 @@ internal fun AppItem(
             gameStats = gameStats,
             context = context,
             hasShader = hasShader,
+            hasProfileOverrides = hasProfileOverrides,
         )
 
         else -> GridViewCard(
@@ -158,6 +161,7 @@ internal fun AppItem(
             context = context,
             animateStats = animateStats,
             hasShader = hasShader,
+            hasProfileOverrides = hasProfileOverrides,
         )
     }
 }
@@ -180,6 +184,30 @@ fun ShaderActiveBadge(modifier: Modifier = Modifier) {
             imageVector = Icons.Filled.AutoFixHigh,
             contentDescription = stringResource(R.string.library_shader_active),
             tint = PluviaTheme.colors.accentPurple,
+            modifier = Modifier.size(12.dp),
+        )
+    }
+}
+
+/**
+ * E (spec 2026-08-16-E-profile-catalog-comunitario, §1.4 — badge "personalizado"):
+ * chip com ícone de gamepad sobre a capa dos jogos com override de perfil no
+ * gameStore (mesmo padrão visual do [ShaderActiveBadge], tint cyan para
+ * diferenciar do shader). Localized content description.
+ */
+@Composable
+fun ProfileOverrideBadge(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(20.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.5f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.SportsEsports,
+            contentDescription = stringResource(R.string.library_profile_override_active),
+            tint = PluviaTheme.colors.accentCyan,
             modifier = Modifier.size(12.dp),
         )
     }

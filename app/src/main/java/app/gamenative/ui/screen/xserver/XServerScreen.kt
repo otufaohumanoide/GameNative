@@ -98,6 +98,8 @@ import app.gamenative.data.LibraryItem
 import app.gamenative.data.ShooterModeConfig
 import app.gamenative.data.SteamApp
 import app.gamenative.events.AndroidEvent
+import app.gamenative.events.GamepadDeviceAddedEvent
+import app.gamenative.events.GamepadDeviceRemovedEvent
 import app.gamenative.events.SteamEvent
 import app.gamenative.ui.enums.Orientation
 import java.util.EnumSet
@@ -238,6 +240,9 @@ import kotlin.math.roundToInt
 import kotlin.text.lowercase
 import com.winlator.PrefManager as WinlatorPrefManager
 import app.gamenative.ui.component.DebugGamepadInputHarness
+import app.gamenative.ui.component.LatencyDebugOverlay
+import app.gamenative.ui.component.radial.RadialMenuHost
+import app.gamenative.ui.component.radial.RadialMenuStateHolder
 import app.gamenative.ui.component.GamepadFocusScope
 import app.gamenative.ui.component.GamepadKeyBridge
 import app.gamenative.ui.component.JoystickFocusNavigator
@@ -513,6 +518,11 @@ fun XServerScreen(
         onDispose {
             physicalControllerHandler?.cleanup()
             physicalControllerHandler = null
+            // U1: sem container, o CAMERA mode não tem alvo — limpa o sink (no-op).
+            PluviaApp.gamepadHub.gyroCameraSink = null
+            // P1-3: sem container, sensores voltam a suspender (idempotente — cobre
+            // os caminhos de saída que não passam por exit()).
+            PluviaApp.gamepadSensorSource.setSuspended(true)
             exitWatchJob?.cancel()
             exitWatchJob = null
             keyboardEscMenuHandler.cancel()
@@ -554,6 +564,9 @@ fun XServerScreen(
     var keyboardRequestedFromOverlay by remember { mutableStateOf(false) }
     var shouldForceResumeOnMenuClose by remember { mutableStateOf(false) }
     var showQuickMenu by remember { mutableStateOf(false) }
+    // F3.1 (spec 2026-08-15-input-core-avancado): Radial Menu — UM holder (registro
+    // dex no limite); toda a lógica vive no RadialMenuHost (arquivo próprio).
+    val radialState = remember { RadialMenuStateHolder() }
     var quickMenuToolsVisible by remember { mutableStateOf(false) }
     var quickMenuWineProcesses by remember { mutableStateOf<List<ProcessInfo>>(emptyList()) }
     var quickMenuWineProcessesLoading by remember { mutableStateOf(false) }
@@ -1187,6 +1200,17 @@ fun XServerScreen(
                 true
             }
 
+            QuickMenuAction.RADIAL_MENU -> {
+                val deviceId = PluviaApp.gamepadHub.activeDevice?.value?.deviceId ?: -1
+                if (deviceId >= 0) {
+                    radialState.deviceId = deviceId
+                    radialState.editorOpen = true
+                    true
+                } else {
+                    false
+                }
+            }
+
             QuickMenuAction.INPUT_CONTROLS -> {
                 if (areControlsVisible) {
                     if (PrefManager.usageAnalyticsEnabled) PostHog.capture(event = "onscreen_controller_disabled")
@@ -1461,36 +1485,33 @@ fun XServerScreen(
         showQuickMenu = true
     }
 
+    // Onda 2 (spec 2026-08-13-onda2 §1.3): o InputDeviceListener ÚNICO é o GamepadHub
+    // (app-scoped, registrado no PluviaApp.onCreate). Esta tela assina os eventos de
+    // hotplug do bus com o MESMO corpo do listener antigo — comportamento preservado,
+    // sem o registro duplicado (alivia o limite de método dex do XServerScreen).
     DisposableEffect(Unit) {
-        val inputManager = context.getSystemService(Context.INPUT_SERVICE) as InputManager
-
-        val deviceListener = object : InputManager.InputDeviceListener {
-            override fun onInputDeviceAdded(deviceId: Int) {
-                ControllerManager.getInstance().onDeviceConnected(deviceId)
-                scanForExternalDevices()
-                val device = InputDevice.getDevice(deviceId) ?: return
-                evaluateDevice(device)
-            }
-
-            override fun onInputDeviceRemoved(deviceId: Int) {
-                ControllerManager.getInstance().onDeviceDisconnected(deviceId)
-                scanForExternalDevices()
-            }
-
-            override fun onInputDeviceChanged(deviceId: Int) {
-                ControllerManager.getInstance().onDeviceConnected(deviceId)
-                scanForExternalDevices()
-                val device = InputDevice.getDevice(deviceId) ?: return
-                evaluateDevice(device)
-            }
+        fun handleAdded(event: GamepadDeviceAddedEvent) {
+            ControllerManager.getInstance().onDeviceConnected(event.device.deviceId)
+            scanForExternalDevices()
+            val device = InputDevice.getDevice(event.device.deviceId)
+            if (device != null) evaluateDevice(device)
         }
 
-        inputManager.registerInputDeviceListener(deviceListener, null)
+        fun handleRemoved(event: GamepadDeviceRemovedEvent) {
+            ControllerManager.getInstance().onDeviceDisconnected(event.deviceId)
+            scanForExternalDevices()
+        }
+
+        val addedHandler: (GamepadDeviceAddedEvent) -> Unit = ::handleAdded
+        val removedHandler: (GamepadDeviceRemovedEvent) -> Unit = ::handleRemoved
+        PluviaApp.events.on<GamepadDeviceAddedEvent, Unit>(addedHandler)
+        PluviaApp.events.on<GamepadDeviceRemovedEvent, Unit>(removedHandler)
         ControllerManager.getInstance().resetSessionActivity()
         scanForExternalDevices()
 
         onDispose {
-            inputManager.unregisterInputDeviceListener(deviceListener)
+            PluviaApp.events.off<GamepadDeviceAddedEvent, Unit>(addedHandler)
+            PluviaApp.events.off<GamepadDeviceRemovedEvent, Unit>(removedHandler)
         }
     }
 
@@ -1539,12 +1560,16 @@ fun XServerScreen(
     overlayInputState.context = if (
         showElementEditor || keepPausedForEditor || showQuickMenu || isEditMode ||
         showTouchGestureDialog || showShooterModeDialog || showPhysicalControllerDialog ||
-        showPlayingBlockedDialog
+        showPlayingBlockedDialog || radialState.open
     ) {
         OverlayInputContext.OVERLAY
     } else {
         OverlayInputContext.NONE
     }
+
+    // Onda 2 (spec 2026-08-13-onda2 §1.4): appId vivo para perfis por jogo — mesmo padrão
+    // do holder acima: escrito NA composição, lido pelos handlers do hub no call time.
+    PluviaApp.gamepadHub.setActiveAppId(container.id)
 
     // M2 (spec 2026-08-12): emit = MULTICAST — every bus listener runs, no early stop;
     // "consumption" is only the window decision (MainActivity returns true when ANY
@@ -2407,6 +2432,12 @@ fun XServerScreen(
             }
             PluviaApp.xServerView = xServerView
 
+            // P1-3 (spec 2026-08-14-gamepad-upgrades-pendencias): o XServerScreen é o
+            // dono da retomada dos sensores — container de pé ⇒ registra (o onResume
+            // do MainActivity só cobre o retorno ao foreground COM jogo já aberto).
+            // Idempotente; o exit()/onDispose devolvem a suspensão.
+            PluviaApp.gamepadSensorSource.setSuspended(false)
+
             val gameHost = FrameLayout(context).apply {
                 layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2474,6 +2505,14 @@ fun XServerScreen(
 
                     // Store profile for auto-show logic
                     loadedProfile = targetProfile
+                }
+
+                // P1-1 (spec 2026-08-14-gamepad-upgrades-pendencias): instala o sink do
+                // CAMERA mode — holder vivo (o handler é recriado por container; mesma
+                // lição C1 do hardening — nunca capturar o handler da composição).
+                // Sem handler (sem profile) o sink é no-op; onDispose/exit limpam.
+                PluviaApp.gamepadHub.gyroCameraSink = { yawRadS, pitchRadS, sensitivity ->
+                    physicalControllerHandler?.applyCameraGyro(yawRadS, pitchRadS, sensitivity)
                 }
 
                 // Set overlay opacity from preferences if needed
@@ -2861,6 +2900,21 @@ fun XServerScreen(
                     .padding(16.dp),
             )
         }
+
+        // F0 (spec 2026-08-15-input-core-avancado): HUD de latência (t0 ingestão → t1
+        // PhysicalControllerHandler) — arquivo próprio (limite dex; só UMA chamada aqui).
+        // Toggle: `setprop debug.gamenative.latency 1`; dump agregado via `latency:report`.
+        LatencyDebugOverlay()
+
+        // F3.1 (spec 2026-08-15-input-core-avancado): Radial Menu — host em arquivo
+        // próprio (limite dex); reusa pauseForOverlayIfAllowed (spec pede).
+        RadialMenuHost(
+            containerId = container.id,
+            state = radialState,
+            filesDir = context.filesDir,
+            pauseGame = { pauseForOverlayIfAllowed() },
+            resumeGame = { resumeIfAllowedAfterOverlay() },
+        )
 
         if (manualResumeMode && PluviaApp.isOverlayPaused && !showQuickMenu && !keepPausedForEditor) {
             Box(
@@ -4666,6 +4720,12 @@ private fun exit(
         Timber.i("Exit already in progress, ignoring duplicate request")
         return
     }
+
+    // P1-3 (spec 2026-08-14-gamepad-upgrades-pendencias): exit do container com o app
+    // em foreground devolvia NENHUM setSuspended(true) — listeners de sensor ficavam
+    // registrados até o próximo onPause (o vazamento de bateria que o V3 existe para
+    // impedir). Idempotente; o onDispose cobre os demais caminhos.
+    PluviaApp.gamepadSensorSource.setSuspended(true)
 
     PostHog.capture(
         event = "game_exited",

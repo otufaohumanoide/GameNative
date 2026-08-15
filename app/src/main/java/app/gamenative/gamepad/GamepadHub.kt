@@ -1,0 +1,888 @@
+package app.gamenative.gamepad
+
+import android.content.Context
+import android.hardware.BatteryState
+import android.hardware.Sensor
+import android.hardware.input.InputManager
+import android.os.Build
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
+import app.gamenative.PluviaApp
+import app.gamenative.PrefManager
+import app.gamenative.events.GamepadDeviceAddedEvent
+import app.gamenative.events.GamepadDeviceRemovedEvent
+import app.gamenative.events.GamepadInputEvent
+import app.gamenative.events.GamepadLayerEvent
+import app.gamenative.gamepad.layers.LayerChange
+import app.gamenative.gamepad.layers.LayerResolver
+import app.gamenative.gamepad.layers.LayerState
+import app.gamenative.gamepad.mapping.EventTranslator
+import app.gamenative.gamepad.mapping.GamepadMapping
+import app.gamenative.gamepad.mapping.MappingDatabase
+import app.gamenative.gamepad.mapping.RawAxisInput
+import app.gamenative.gamepad.mapping.SdlControllerDb
+import app.gamenative.gamepad.mapping.RawBinding
+import app.gamenative.gamepad.mapping.RawKeyInput
+import app.gamenative.gamepad.remap.GamepadBindingCodec
+import app.gamenative.gamepad.processing.DeadzoneConfig
+import app.gamenative.gamepad.processing.DeadzoneMode
+import app.gamenative.gamepad.processing.LatencyTracker
+import app.gamenative.gamepad.processing.FlickStickConfig
+import app.gamenative.gamepad.processing.FlickStickProcessor
+import app.gamenative.gamepad.processing.FlickStickState
+import app.gamenative.gamepad.processing.GyroFusion
+import app.gamenative.gamepad.processing.GyroFusionConfig
+import app.gamenative.gamepad.processing.GyroFusionState
+import app.gamenative.gamepad.processing.GyroConfig
+import app.gamenative.gamepad.processing.GyroState
+import app.gamenative.gamepad.processing.GyroProcessor
+import app.gamenative.gamepad.processing.GyroSample
+import app.gamenative.gamepad.processing.StickSample
+import app.gamenative.gamepad.profiles.GamepadProfile
+import app.gamenative.gamepad.profiles.GamepadProfileStore
+import app.gamenative.gamepad.profiles.ProfileResolver
+import app.gamenative.ui.component.DebugPropertyCache
+import app.gamenative.ui.component.GamepadHaptics
+import java.io.File
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import timber.log.Timber
+
+/**
+ * O ÚNICO dono da descoberta de devices (spec 2026-08-13, Parte I §8 — "por que o hub
+ * NÃO existir é o defeito-mãe"): consolida os dois InputDeviceListener duplicados
+ * (MainActivity.kt:144 e XServerScreen.kt:1464 — removidos na Onda 2).
+ *
+ * Regras:
+ * - Hot path síncrono: [onKey]/[onAxis] rodam na thread de dispatch do Android, sem
+ *   coroutine e sem alocação em rajada (overhead alvo < 1 ms).
+ * - UI reativa fora do hot path: [connectedDevices]/[activeDevice] (StateFlow) — a UI
+ *   observa conexão/perfil SEM interceptar eventos.
+ * - Gate: [PrefManager.gamepadUniversalEnabled] (default false) — eventos lógicos só
+ *   são emitidos quando a Onda 2 ligar o consumo. Até lá a tradução roda em paralelo
+ *   ao fluxo cru sem mudar NENHUM comportamento do caminho do jogo.
+ * - Estado entre amostras (transições de hat/meia-eixo) vive AQUI — o tradutor é puro.
+ */
+class GamepadHub(context: Context) {
+
+    companion object {
+        /** Deadzone angular default do gyro (rad/s — ~3°/s), U1. */
+        const val DEFAULT_GYRO_DEADZONE = 0.05f
+
+        /** MOUSE: rad de rotação → pixels de cursor (U1 — 300 px/rad ≈ 5.2 px/grau). */
+        const val GYRO_PIXELS_PER_RADIAN = 300f
+
+        /** F1.2: defaults do Flick Stick (spec — activationRadius 0.85, snap 15°). */
+        const val DEFAULT_FLICK_ACTIVATION_RADIUS = 0.85f
+        const val DEFAULT_FLICK_SNAP_ANGLE = 15f
+
+        /** F1.3: Kp default do Mahony (padrão do paper). */
+        const val DEFAULT_FUSION_KP = 0.5f
+
+        /** Propriedade do trace de amostras de sensor (default off — logcat legível). */
+        const val SENSOR_TRACE_PROPERTY = "debug.gamenative.sensortrace"
+    }
+
+    private val appContext = context.applicationContext
+    private val inputManager = appContext.getSystemService(Context.INPUT_SERVICE) as InputManager
+
+    private val _connectedDevices = MutableStateFlow<Map<Int, GamepadDevice>>(emptyMap())
+    val connectedDevices: StateFlow<Map<Int, GamepadDevice>> = _connectedDevices.asStateFlow()
+
+    private val _activeDevice = MutableStateFlow<GamepadDevice?>(null)
+    val activeDevice: StateFlow<GamepadDevice?> = _activeDevice.asStateFlow()
+
+    /**
+     * Spec 2026-08-16-C §1.2: preview do gyro para o card de diagnóstico
+     * ([DeviceDiagnosticsCard]) — última amostra processada pelo [GyroProcessor] de
+     * CADA device (o card filtra por deviceId). Hook de observação: ligado pelo card
+     * no DisposableEffect enquanto expandido; 1 write por amostra quando ON, ZERO
+     * quando OFF (caminho byte-identical com OFF). NÃO altera o pipeline — só observa.
+     */
+    @Volatile
+    var gyroPreviewEnabled: Boolean = false
+
+    private val _gyroPreview = MutableStateFlow<GyroPreview?>(null)
+    val gyroPreview: StateFlow<GyroPreview?> = _gyroPreview.asStateFlow()
+
+    private val deviceStore =
+        GamepadProfileStore(File(File(appContext.filesDir, "gamepad"), "device_profiles.json"))
+    private val gameStore =
+        GamepadProfileStore(File(File(appContext.filesDir, "gamepad"), "game_profiles.json"))
+
+    /**
+     * Cache do perfil EFETIVO por (deviceId, appId) (spec 2026-08-14-onda2-pos-implementacao,
+     * M1 — L1): o hot path (~120 Hz por stick + hats) não paga disco + JSON por evento.
+     * Acesso só na main thread (dispatch + hotplug + save — nenhuma coroutine), então
+     * mapa plano sem sincronização. Inválido por [invalidateProfiles] em hotplug
+     * (add/remove/refreshDevice) e após save de perfil — entradas são estáveis dentro
+     * da sessão de um container.
+     */
+    private val profileCache = mutableMapOf<String, GamepadProfile>()
+
+    /** DeadzoneConfig default (triggers) cacheado — não alocar por MotionEvent (L6). */
+    private val defaultDeadzones = DeadzoneConfig()
+
+    private var started = false
+
+    /**
+     * appId do container em execução (holder vivo — lição C1 do hardening, spec
+     * 2026-08-13-onda2 §1.4). O XServerScreen ESCREVE na composição
+     * (`hub.activeAppId = container.id`) e os handlers LEEM no momento do evento.
+     * Hot path síncrono: @Volatile, sem StateFlow (a UI não observa isso).
+     */
+    @Volatile
+    var activeAppId: String? = null
+        private set
+
+    /**
+     * F3.2 (spec 2026-08-15-input-core-avancado): troca de container em foreground —
+     * re-resolve o perfil pelo appId novo SEM reconectar. O re-resolver em si é o
+     * cache M1 (chave deviceId:appId); aqui, a RE-EMISSÃO de bindings: botões lógicos
+     * fisicamente segurados reemitem pelo perfil NOVO (sem isto o jogo novo só veria
+     * o remap novo no PRÓXIMO evento físico — um botão segurado na troca ficaria com
+     * o binding velho até ser solto e apertado de novo).
+     */
+    fun setActiveAppId(appId: String?) {
+        val previous = activeAppId
+        if (appId == previous) return
+        activeAppId = appId
+        invalidateProfiles()
+        if (!PrefManager.gamepadUniversalEnabled) return
+        for ((deviceId, held) in buttonStates.toMap()) {
+            if (held.isEmpty()) continue
+            val device = deviceFor(deviceId) ?: continue
+            val mapping = mappingFor(device)
+            val profile = profileFor(deviceId, appId)
+            val layerState = layerStates.getOrPut(deviceId) { LayerState() }
+            // O gyro re-arma pelo perfil novo (o emitLogical registra o activate).
+            gyroActivateHeld.remove(deviceId)
+            for (button in held.toList()) {
+                emitLogical(device, mapping, profile, layerState, InputEvent.ButtonDown(deviceId, button), deviceId)
+            }
+        }
+    }
+
+    /**
+     * F2.4 (spec 2026-08-15-input-core-avancado): foco da janela — escrito pelo
+     * MainActivity.onWindowFocusChanged. Com foco perdido, ativação de camada/tick é
+     * no-op (nunca input fantasma durante perda de foco — gap da auditoria).
+     */
+    @Volatile
+    var windowFocused: Boolean = true
+
+    /** Botões descritos por amostra (hat/meia-eixo) → transições (padrão SDL Android). */
+    private val buttonStates = mutableMapOf<Int, MutableSet<GamepadButton>>()
+
+    private val deviceListener = object : InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) = addDevice(deviceId)
+        override fun onInputDeviceRemoved(deviceId: Int) = removeDevice(deviceId)
+        override fun onInputDeviceChanged(deviceId: Int) = refreshDevice(deviceId)
+    }
+
+    /** Registra o ÚNICO InputDeviceListener + scan inicial. */
+    fun start() {
+        if (started) return
+        started = true
+        inputManager.registerInputDeviceListener(deviceListener, null)
+        for (deviceId in InputDevice.getDeviceIds()) {
+            addDevice(deviceId)
+        }
+        Timber.d("GamepadHub: started devices=%d", _connectedDevices.value.size)
+    }
+
+    /** Unregister; emite DeviceRemoved dos vivos. */
+    fun stop() {
+        if (!started) return
+        started = false
+        inputManager.unregisterInputDeviceListener(deviceListener)
+        sensorSource?.stop()
+        val alive = _connectedDevices.value.keys.toList()
+        _connectedDevices.value = emptyMap()
+        _activeDevice.value = null
+        buttonStates.clear()
+        for (deviceId in alive) {
+            PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)
+            PluviaApp.events.emit(GamepadDeviceRemovedEvent(deviceId))
+            Timber.d("GamepadHub: removed %d (stop)", deviceId)
+        }
+    }
+
+    /** Getter síncrono (hot path). */
+    fun deviceFor(deviceId: Int): GamepadDevice? = _connectedDevices.value[deviceId]
+
+    /**
+     * Keycode de CONFIRMAÇÃO do device (spec 2026-08-13-onda2 §1.6): FaceStyle do
+     * mapping + swap do perfil/global. null = sem binding de tecla.
+     */
+    fun confirmKeyCodeFor(deviceId: Int): Int? {
+        val device = deviceFor(deviceId) ?: return null
+        val profile = profileFor(deviceId, activeAppId)
+        val swap = profile.swapOkCancel ?: PrefManager.gamepadSwapOkCancel
+        return mappingFor(device).confirmKeyCode(swap)
+    }
+
+    /**
+     * Deadzone do MENU por device (spec 2026-08-13-onda2 §1.5): profile override OU a
+     * global `gamepadMenuStickDeadzone` (0.45 — o valor que o menu sempre usou). O
+     * threshold do menu é aplicado sobre o valor CRU (o AxisMotion lógico já vem
+     * rescalonado com a deadzone do JOGO, 0.15).
+     */
+    fun menuDeadzoneFor(deviceId: Int): Float {
+        val device = deviceFor(deviceId) ?: return PrefManager.gamepadMenuStickDeadzone
+        val profile = profileFor(deviceId, activeAppId)
+        return profile.leftStickDeadzone ?: PrefManager.gamepadMenuStickDeadzone
+    }
+
+    /**
+     * Conjunto de keycodes LÓGICOS da LibraryScreen (spec 2026-08-14, U6): confirm/
+     * cancel por FaceStyle + swap, atalhos traduzidos pelo mapping do device. null =
+     * device desconhecido (a superfície cai no fallback raw — byte-identical).
+     */
+    fun libraryKeySetFor(deviceId: Int): LibraryKeySet? {
+        val device = deviceFor(deviceId) ?: return null
+        return LibraryGamepadKeys.resolve(mappingFor(device), swapFor(deviceId))
+    }
+
+    /**
+     * Botão SEMÂNTICO de confirmação do device (U6 — ActionBar): FaceStyle + swap.
+     * null = device desconhecido (UI usa o default A).
+     */
+    fun confirmButtonFor(deviceId: Int): GamepadButton? {
+        val device = deviceFor(deviceId) ?: return null
+        return mappingFor(device).confirmButton(swapFor(deviceId))
+    }
+
+    /** Swap OK/Cancel efetivo do device: perfil ?: global. */
+    fun swapFor(deviceId: Int): Boolean {
+        val profile = profileFor(deviceId, activeAppId)
+        return profile.swapOkCancel ?: PrefManager.gamepadSwapOkCancel
+    }
+
+    /**
+     * Perfil efetivo (device + jogo + globais) resolvido no momento do evento, servido
+     * pelo cache (M1). Entrada estável dentro da sessão de um container; inválida em
+     * hotplug (deviceId efêmero reusado) e em save de perfil.
+     */
+    fun profileFor(deviceId: Int, appId: String?): GamepadProfile {
+        val device = deviceFor(deviceId) ?: return GamepadProfile()
+        return profileCache.getOrPut("$deviceId:$appId") {
+            ProfileResolver.resolve(device, appId, deviceStore, gameStore)
+        }
+    }
+
+    /** Invalida o cache de perfis (hotplug e pós-save). Barata — chamada fora do hot path. */
+    fun invalidateProfiles() {
+        profileCache.clear()
+    }
+
+    /**
+     * Persiste o perfil do device (chave = mappingKey) e invalida o cache (M3 — remap).
+     * Um perfil default REMOVE a entrada (padrão do store). Sem device = no-op.
+     */
+    fun saveDeviceProfile(deviceId: Int, profile: GamepadProfile) {
+        val device = deviceFor(deviceId) ?: return
+        deviceStore.save(device.mappingKey, profile)
+        invalidateProfiles()
+    }
+
+    /**
+     * Perfil BRUTO do escopo JOGO (chave = appId), SEM merge com o device
+     * (spec 2026-08-16-B-remap-visual-ppsspp, §1.4): o mapa visual do remap edita o
+     * override por-jogo em separado — o merge (JOGO > GLOBAL > AUTO) continua sendo do
+     * [GamepadProfileStore.merged] via [profileFor]. null = sem entrada para esse jogo.
+     */
+    fun gameProfileFor(appId: String?): GamepadProfile? = appId?.let { gameStore.load(it) }
+
+    /**
+     * Persiste o perfil do JOGO (chave = appId) e invalida o cache (spec B §1.4).
+     * Um perfil default REMOVE a entrada (padrão do store).
+     */
+    fun saveGameProfile(appId: String, profile: GamepadProfile) {
+        gameStore.save(appId, profile)
+        invalidateProfiles()
+    }
+
+    /**
+     * E (spec 2026-08-16-E-profile-catalog-comunitario, §1.4): appIds com override
+     * de perfil — badge "personalizado" na Library (um read por visita à tela; o
+     * cache do store responde sem disco a partir do segundo read). Main thread
+     * apenas (contrato M1 do store).
+     */
+    fun profileOverrideGameIds(): Set<String> = gameStore.overrideKeys()
+
+    // U3: estado de camadas por device (V6 — morto no removeDevice).
+    private val layerStates = mutableMapOf<Int, LayerState>()
+
+    /** Camada ativa do device (U3/U4); null = DEFAULT. */
+    fun activeLayerFor(deviceId: Int): String? = layerStates[deviceId]?.activeLayer
+
+    /**
+     * U4 (spec 2026-08-14-gamepad-u3-u4-layers-remap-jogo, §2.1): binding de camada
+     * EFETIVO (DEFAULT + ativa) para um botão lógico — o PhysicalControllerHandler
+     * consulta ANTES de injetar o ExternalControllerBinding (precedência: binding
+     * explícito universal vence; sem binding → caminho byte-identical). Cache M1.
+     */
+    fun layerBindingFor(deviceId: Int, button: GamepadButton): String? {
+        val device = deviceFor(deviceId) ?: return null
+        val profile = profileFor(deviceId, activeAppId)
+        return LayerResolver.effectiveBindings(profile.layers, layerStates[deviceId]?.activeLayer)[button.name]
+    }
+
+    /**
+     * U3 §1.3 (1): triggers resolvem no botão FÍSICO (antes do remap).
+     *
+     * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.3): retorna true quando o
+     * trigger é de camada SHIFT — o evento físico é CONSUMIDO (o chamador não chama
+     * emitLogical; o botão não chega ao jogo — camada comum é pass-through) e NÃO
+     * emite GamepadLayerEvent (não abre radial, não compete com triggers reais) nem
+     * tick háptico. A ativação em si é a MESMA (LayerResolver intacto — a mecânica
+     * U3 é preservada pelo branch).
+     */
+    private fun resolveLayerTriggers(
+        layerState: LayerState,
+        profile: GamepadProfile,
+        event: InputEvent,
+    ): Boolean {
+        // F2.4 (spec 2026-08-15-input-core-avancado): sem foco de janela, ativação de
+        // camada (e o tick dela) é no-op — nunca input fantasma durante perda de foco.
+        if (!windowFocused) return false
+        val (button, deviceId) = when (event) {
+            is InputEvent.ButtonDown -> event.button to event.deviceId
+            is InputEvent.ButtonUp -> event.button to event.deviceId
+            else -> return false
+        }
+        val trigger = profile.layerTriggers.entries.firstOrNull { (_, spec) ->
+            spec.button == button.name
+        } ?: return false
+        val now = android.os.SystemClock.uptimeMillis()
+        val change = when (event) {
+            is InputEvent.ButtonDown -> LayerResolver.onButtonDown(layerState, trigger.key, trigger.value, now)
+            is InputEvent.ButtonUp -> LayerResolver.onButtonUp(layerState, trigger.key, trigger.value, now)
+            else -> null
+        }
+        // F §1.3: camada de SHIFT suprime os eventos comuns (decisão PURA no
+        // LayerResolver — testada em JVM).
+        val shift = LayerResolver.suppressCommonEvents(trigger.value)
+        // F2.3: tick háptico na ATIVAÇÃO da camada (LayerChange.Activated) — mesmo
+        // gate global do rumble + toggle dedicado (GamepadHaptics.tickDevice).
+        // F3.1: o evento de camada no bus é o gatilho do Radial Menu.
+        when (change) {
+            is LayerChange.Activated -> {
+                if (!shift) {
+                    GamepadHaptics.tickDevice(deviceId)
+                    PluviaApp.events.emit(GamepadLayerEvent(deviceId, change.layer, true))
+                }
+            }
+            is LayerChange.Deactivated -> {
+                if (!shift) {
+                    PluviaApp.events.emit(GamepadLayerEvent(deviceId, change.layer, false))
+                }
+            }
+            else -> {}
+        }
+        return shift
+    }
+
+    /**
+     * U3 §1.3 (2): emite o evento lógico com o remap da camada ativa aplicado
+     * (DEFAULT + camada ativa); sem binding na camada → evento original. O gyro
+     * activate (U1) rastreia o botão PÓS-remap (consistência com o remap físico).
+     */
+    private fun emitLogical(
+        device: GamepadDevice,
+        mapping: GamepadMapping,
+        profile: GamepadProfile,
+        layerState: LayerState,
+        event: InputEvent,
+        deviceId: Int,
+    ): Boolean {
+        val emitted = remapEvent(device, mapping, profile, event, layerState)
+        val activateButton = profile.gyroActivateButton
+        for (e in emitted) {
+            if (activateButton != null && e is InputEvent.ButtonDown && e.button.name == activateButton) {
+                gyroActivateHeld[deviceId] = activateButton
+            } else if (activateButton != null && e is InputEvent.ButtonUp && e.button.name == activateButton) {
+                gyroActivateHeld.remove(deviceId)
+            }
+            logLogical(device, e)
+            PluviaApp.events.emit(GamepadInputEvent(e))
+        }
+        return emitted.isNotEmpty()
+    }
+
+    /**
+     * Aplica o remap da camada ativa a um evento de botão (U3). P3-6 (spec
+     * 2026-08-14-gamepad-upgrades-pendencias): recebe o [profile] já resolvido pelo
+     * chamador — antes re-resolvia `profileFor` por evento (chamada por
+     * botão×evento; o cache M1 tornava barato, mas o parâmetro já estava em mão).
+     */
+    private fun remapEvent(
+        device: GamepadDevice,
+        mapping: GamepadMapping,
+        profile: GamepadProfile,
+        event: InputEvent,
+        layerState: LayerState,
+    ): List<InputEvent> {
+        val bindings = LayerResolver.effectiveBindings(
+            profile.layers,
+            layerState.activeLayer,
+        )
+        if (bindings.isEmpty()) return listOf(event)
+        val button = when (event) {
+            is InputEvent.ButtonDown -> event.button
+            is InputEvent.ButtonUp -> event.button
+            else -> return listOf(event)
+        }
+        val token = bindings[button.name] ?: return listOf(event)
+        // F §1.4: o flag turbo vive no token, mas o remap LÓGICO não pulsa — o
+        // turbo é aplicado na injeção física (PhysicalControllerHandler, caminho U4).
+        val binding = GamepadBindingCodec.decode(token)?.raw ?: return listOf(event)
+        val down = event is InputEvent.ButtonDown
+        return when (binding) {
+            is RawBinding.Key -> {
+                val target = mapping.buttons.entries
+                    .firstOrNull { (_, b) -> b is RawBinding.Key && b.keyCode == binding.keyCode }
+                    ?.key
+                if (target == null) emptyList() else {
+                    listOf(
+                        if (down) InputEvent.ButtonDown(device.deviceId, target)
+                        else InputEvent.ButtonUp(device.deviceId, target),
+                    )
+                }
+            }
+            is RawBinding.Axis -> {
+                val target = mapping.axes.entries
+                    .firstOrNull { (_, b) -> b is RawBinding.Axis && b.axis == binding.axis }
+                    ?.key
+                if (target == null) emptyList() else {
+                    val value = if (down) binding.direction.toFloat() else 0f
+                    listOf(InputEvent.AxisMotion(device.deviceId, target, value))
+                }
+            }
+            // Hat não é alvo de remap de botão no caminho lógico (decisão registrada —
+            // o remap de dpad no jogo passa pelo canal de tecla).
+            is RawBinding.Hat -> emptyList()
+        }
+    }
+
+    /**
+     * U1/V12 (spec 2026-08-14-gamepad-u1-gyro): amostra de sensor (giroscópio) de um
+     * device — chamada pelo GamepadSensorSource (entrega na MAIN thread — P2-7, o
+     * registerListener usa o Looper de quem registrou) e pelo harness (`gyro:x:y:z`).
+     * Gate-aware como onKey/onAxis.
+     *
+     * Pipeline: perfil (cache M1) → GyroProcessor (puro, estado por device V6) →
+     * evento lógico emitido (vocabulário V4) → injeção:
+     * - MOUSE → sink de mouse compartilhado (XServer injectPointerMoveDelta);
+     * - CAMERA → `gyroCameraSink` (setado pelo XServerScreen — P1-1) com a
+     *   VELOCIDADE angular (rad/s, P1-2 — padrão DS4Windows: deflexão = f(velocidade),
+     *   não integral; o PhysicalControllerHandler mapeia no right stick do virtual
+     *   gamepad e zera quando a rotação para).
+     */
+    fun onSensorSample(
+        deviceId: Int,
+        gyroX: Float,
+        gyroY: Float,
+        gyroZ: Float,
+        accelX: Float,
+        accelY: Float,
+        accelZ: Float,
+        nowMs: Long,
+    ) {
+        // F0 (spec 2026-08-15-input-core-avancado): t0 da medição de latência do
+        // caminho de sensor — onSensorSample → PhysicalControllerHandler.applyCameraGyro.
+        LatencyTracker.begin(LatencyTracker.Source.SENSOR, System.nanoTime())
+        if (!PrefManager.gamepadUniversalEnabled) return
+        val device = deviceFor(deviceId) ?: return
+        if (device.deviceClass != DeviceClass.CONTROLLER && device.deviceClass != DeviceClass.TOUCHPAD) return
+        if (!device.hasGyro) return
+        val profile = profileFor(deviceId, activeAppId)
+        val gyroState = gyroStates.getOrPut(deviceId) { GyroState() }
+        val output = GyroProcessor.process(
+            sample = GyroSample(gyroX, gyroY, gyroZ, nowMs, accelX, accelY, accelZ),
+            state = gyroState,
+            config = GyroConfig(deadzone = profile.gyroDeadzone ?: DEFAULT_GYRO_DEADZONE),
+            activate = gyroActivateHeld(deviceId, profile),
+        )
+        // Evento lógico sempre emitido para device com gyro (consumidores futuros).
+        val event = InputEvent.SensorUpdate(
+            deviceId = deviceId,
+            gyroX = gyroX,
+            gyroY = gyroY,
+            gyroZ = gyroZ,
+            // P2-3: accel real do device (a fonte registra os DOIS — padrão SDL).
+            accelX = accelX,
+            accelY = accelY,
+            accelZ = accelZ,
+        )
+        // O sensor entrega ~40 Hz — logar TODA amostra inunda o logcat e gira o
+        // buffer em segundos (sessão on-device 2026-08-14: navegação de menu ficou
+        // ilegível). Só loga com `debug.gamenative.sensortrace 1`.
+        if (DebugPropertyCache.read(SENSOR_TRACE_PROPERTY) == "1") {
+            logLogical(device, event)
+        }
+        PluviaApp.events.emit(GamepadInputEvent(event))
+        if (!output.active) return
+
+        val sensitivity = profile.gyroSensitivity ?: 1f
+        when (profile.gyroMode ?: GyroMode.OFF) {
+            GyroMode.MOUSE -> {
+                val dx = (output.deltaXRad * GYRO_PIXELS_PER_RADIAN * sensitivity).toInt()
+                val dy = (output.deltaYRad * GYRO_PIXELS_PER_RADIAN * sensitivity).toInt()
+                if (dx != 0 || dy != 0) {
+                    PluviaApp.xServerMouseSink.move(dx, dy)
+                }
+            }
+            GyroMode.CAMERA -> {
+                if (output.active) {
+                    // P1-2: velocidade angular (rad/s) morta pela deadzone — o sink
+                    // mapeia em deflexão (controle de taxa, padrão DS4Windows).
+                    // F1.3 (spec 2026-08-15-input-core-avancado): com a fusão Mahony
+                    // opt-in, o PITCH vem da fusão (corrigido pela gravidade — o accel
+                    // do device já é coletado, P2-3); o YAW permanece o do
+                    // GyroProcessor (recenter + calibração contínua — honestidade
+                    // técnica: sem magnetômetro não há referência de yaw). Desligado,
+                    // o caminho é byte-identical (a fusão nem é chamada).
+                    val pitch = if (profile.gyroFusionEnabled == true) {
+                        val fusionState = fusionStates.getOrPut(deviceId) { GyroFusionState() }
+                        val fusion = GyroFusion.update(
+                            gyroX = gyroX,
+                            gyroY = gyroY,
+                            gyroZ = gyroZ,
+                            accelX = accelX,
+                            accelY = accelY,
+                            accelZ = accelZ,
+                            nowMs = nowMs,
+                            state = fusionState,
+                            config = GyroFusionConfig(
+                                kp = profile.gyroFusionKp ?: DEFAULT_FUSION_KP,
+                                ki = profile.gyroFusionKi ?: 0f,
+                            ),
+                        )
+                        fusion.pitchRadS
+                    } else {
+                        output.pitchRadS
+                    }
+                    gyroCameraSink?.invoke(output.yawRadS, pitch, sensitivity)
+                } else {
+                    // Inativo (botão de ativação solto): garante o repouso do stick —
+                    // sem isto a deflexão congelava no último valor (o defeito do
+                    // modelo integral que o P1-2 elimina).
+                    gyroCameraSink?.invoke(0f, 0f, sensitivity)
+                }
+            }
+            GyroMode.OFF -> {}
+        }
+
+        // Spec 2026-08-16-C §1.2: preview do card de diagnóstico — escrito NO FIM de
+        // onSensorSample, APÓS o processamento existente (SEM alterá-lo): 1 write por
+        // amostra quando ON, ZERO quando OFF (byte-identical). As velocidades vêm do
+        // GyroProcessor (morta pela deadzone) — recenterar zera o readout.
+        if (gyroPreviewEnabled) {
+            _gyroPreview.value = GyroPreview(deviceId, output.yawRadS, output.pitchRadS, nowMs)
+        }
+    }
+
+    /**
+     * Spec 2026-08-16-C §1.2 ("Recentrar gyro"): reaplica a âncora de offset do
+     * [GyroState] do device — a MESMA operação da borda de ativação, extraída em
+     * [GyroProcessor.recenter]. Usa `state.lastSample` (a última amostra processada);
+     * sem lastSample (gyro nunca ativado/inativo) = no-op. Não muda o pipeline: só
+     * recalibra o offset observado pelo readout do card.
+     */
+    fun recenterGyro(deviceId: Int) {
+        val state = gyroStates[deviceId] ?: return
+        val sample = state.lastSample ?: return
+        GyroProcessor.recenter(state, sample)
+    }
+
+    /**
+     * Sink do CAMERA mode — setado pelo XServerScreen quando o container roda (P1-1;
+     * holder vivo, limpo no exit/onDispose). Contrato P1-2: (yawRadS, pitchRadS,
+     * sensitivity) — VELOCIDADE angular, não delta integral.
+     */
+    @Volatile
+    var gyroCameraSink: ((yawRadS: Float, pitchRadS: Float, sensitivity: Float) -> Unit)? = null
+
+    /** Fonte de sensores (U1) — injetada pelo PluviaApp; hotplug avisa o source. */
+    var sensorSource: GamepadSensorSource? = null
+
+    private val gyroStates = mutableMapOf<Int, GyroState>()
+    private val gyroActivateHeld = mutableMapOf<Int, String>()
+
+    // F1.2 (spec 2026-08-15-input-core-avancado): estado do Flick Stick por device
+    // (V6 — morto no removeDevice; deviceId efêmero).
+    private val flickStickStates = mutableMapOf<Int, FlickStickState>()
+
+    // F1.3: estado da fusão Mahony por device (idem V6). Só existe com opt-in.
+    private val fusionStates = mutableMapOf<Int, GyroFusionState>()
+
+    /** F1.2: amostra do stick DIREITO com Flick Stick ativo → yaw rad/s (unidade U1). */
+    fun flickStickProcess(deviceId: Int, x: Float, y: Float, nowMs: Long): Float {
+        val profile = profileFor(deviceId, activeAppId)
+        if (profile.flickStickEnabled != true) return 0f
+        val state = flickStickStates.getOrPut(deviceId) { FlickStickState() }
+        val config = FlickStickConfig(
+            activationRadius = profile.flickStickActivationRadius ?: DEFAULT_FLICK_ACTIVATION_RADIUS,
+            snapAngleDeg = profile.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP_ANGLE,
+        )
+        return FlickStickProcessor.process(StickSample(x, y), nowMs, state, config).yawRadS
+    }
+
+    private fun gyroActivateHeld(deviceId: Int, profile: GamepadProfile): Boolean {
+        val buttonName = profile.gyroActivateButton ?: return true // sempre ativo
+        return gyroActivateHeld[deviceId] == buttonName
+    }
+
+    /** Traduz um KeyEvent cru e emite GamepadInputEvent no bus (gate-aware). */
+    fun onKey(raw: RawKeyInput): Boolean {
+        if (!PrefManager.gamepadUniversalEnabled) return false
+        val device = deviceFor(raw.deviceId) ?: return false
+        // Só CONTROLLER emite lógico: TOUCHPAD continua sendo gate do MainActivity
+        // (spec 2026-08-13-onda2 §1.2 — correção 3 da validação).
+        if (device.deviceClass != DeviceClass.CONTROLLER) return false
+        val mapping = mappingFor(device)
+        val events = EventTranslator.translateKey(raw, mapping)
+        if (events.isEmpty()) return false
+        val profile = profileFor(raw.deviceId, activeAppId)
+        val activateButton = profile.gyroActivateButton
+        val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
+        for (event in events) {
+            // F §1.3: trigger SHIFT consome o evento físico (não emite lógico — o
+            // botão não chega ao jogo); camada comum segue pass-through.
+            if (!resolveLayerTriggers(layerState, profile, event)) {
+                emitLogical(device, mapping, profile, layerState, event, raw.deviceId)
+            }
+        }
+        return true
+    }
+
+    /** Traduz um MotionEvent cru e emite GamepadInputEvent no bus (gate-aware). */
+    fun onAxis(raw: RawAxisInput): Boolean {
+        if (!PrefManager.gamepadUniversalEnabled) return false
+        val device = deviceFor(raw.deviceId) ?: return false
+        if (device.deviceClass != DeviceClass.CONTROLLER) return false
+        val mapping = mappingFor(device)
+        val profile = profileFor(raw.deviceId, activeAppId)
+        // Trigger não tem key global no PrefManager (spec Passo 1: só stick) — usa o
+        // default do DeadzoneConfig cacheado no hub quando o perfil não override (L6:
+        // sem alocação do default por MotionEvent).
+        val deadzones = DeadzoneConfig(
+            leftStick = profile.leftStickDeadzone ?: PrefManager.gamepadStickDeadzone,
+            rightStick = profile.rightStickDeadzone ?: PrefManager.gamepadStickDeadzone,
+            leftTrigger = profile.leftTriggerDeadzone ?: defaultDeadzones.leftTrigger,
+            rightTrigger = profile.rightTriggerDeadzone ?: defaultDeadzones.rightTrigger,
+            // F1.1 (spec 2026-08-15-input-core-avancado): o modo (radial/axial) do
+            // perfil vale para o caminho LÓGICO também (navegação de menu usa o stick
+            // esquerdo — o modo do LEFT é o que conta). null = RADIAL (atual).
+            mode = profile.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL,
+        )
+        val events = EventTranslator.translateAxis(raw, mapping, deadzones)
+        if (events.isEmpty()) return false
+
+        // O tradutor descreve o ESTADO da amostra (hat/meia-eixo); o hub vira transição.
+        val state = buttonStates.getOrPut(raw.deviceId) { mutableSetOf() }
+        val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
+        var emitted = false
+        for (event in events) {
+            val forward = when (event) {
+                is InputEvent.ButtonDown -> state.add(event.button)
+                is InputEvent.ButtonUp -> state.remove(event.button)
+                is InputEvent.AxisMotion -> true
+                else -> false
+            }
+            if (forward) {
+                // U3: triggers de camada (botão FÍSICO) + remap pela camada ativa.
+                // F §1.3: trigger SHIFT consome o evento físico.
+                if (!resolveLayerTriggers(layerState, profile, event)) {
+                    emitted = emitLogical(device, mapping, profile, layerState, event, raw.deviceId) || emitted
+                }
+            }
+        }
+        return emitted
+    }
+
+    /** Instrumentação Onda 2 (spec §1.9): par do GamepadTrace cru. */
+    private fun logLogical(device: GamepadDevice, event: InputEvent) {
+        Timber.d(
+            "GamepadLogical: dev=%s (%04x%04x) %s",
+            device.name, device.vendorId, device.productId, event,
+        )
+    }
+
+    private fun mappingFor(device: GamepadDevice) =
+        MappingDatabase.mappingFor(device.vendorId, device.productId)
+            // F1.4 (spec 2026-08-15-input-core-avancado): fallback do DB pinado do
+            // SDL_GameControllerDB (entradas Android) antes do default. Load do asset
+            // UMA vez, preguiçoso — só quando um modelo desconhecido aparece.
+            ?: sdlDb()[device.mappingKey]
+            ?: MappingDatabase.defaultAndroidMapping(device.faceStyle)
+
+    /** Mapa `"vvvvpppp" → GamepadMapping` do asset pinado (lazy; cacheado). */
+    @Volatile
+    private var sdlDbCache: Map<String, GamepadMapping>? = null
+
+    private fun sdlDb(): Map<String, GamepadMapping> {
+        sdlDbCache?.let { return it }
+        val parsed = runCatching {
+            appContext.assets.open("gamecontrollerdb.txt").use { input ->
+                SdlControllerDb.parse(input.readBytes().toString(Charsets.UTF_8))
+            }
+        }.getOrElse { emptyMap() }
+        sdlDbCache = parsed
+        return parsed
+    }
+
+    /**
+     * P3-4 (spec 2026-08-14-gamepad-upgrades-pendencias): refresh PULL da bateria de
+     * um device — chamado ao ABRIR a seção Gamepad dos settings (fora do hot path,
+     * sem polling; mesmo padrão da coleta no hotplug). O nível coletado no addDevice
+     * ficava stale durante uma partida longa.
+     */
+    fun refreshBattery(deviceId: Int) {
+        val device = _connectedDevices.value[deviceId] ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val fresh = runCatching {
+            val inputDevice = InputDevice.getDevice(deviceId) ?: return@runCatching null
+            val state = inputDevice.batteryState
+            if (state.isPresent && state.capacity >= 0f) {
+                when (state.status) {
+                    BatteryState.STATUS_CHARGING, BatteryState.STATUS_FULL -> 100
+                    else -> (state.capacity * 100f).toInt()
+                }
+            } else {
+                null
+            }
+        }.getOrNull() ?: return
+        if (fresh == device.batteryPercent) return
+        _connectedDevices.value = _connectedDevices.value + (deviceId to device.copy(batteryPercent = fresh))
+    }
+
+    private fun addDevice(deviceId: Int) {
+        val inputDevice = InputDevice.getDevice(deviceId) ?: return
+        val deviceClass = DeviceClassifier.classify(deviceFeatures(inputDevice))
+        if (deviceClass == DeviceClass.UNKNOWN || deviceClass == DeviceClass.SENSOR) return
+        val faceStyle = MappingDatabase.mappingFor(inputDevice.vendorId, inputDevice.productId)
+            ?.faceStyle ?: FaceStyle.GENERIC
+        // U1/U7 (V11): capacidades coletadas no hotplug (fora do hot path — pull).
+        // Gyro: API 31+ via getSensorManager do device; API < 31 → false (degradação
+        // silenciosa — a UI esconde, nunca mostra erro). Touchpad: CLASS_POINTER.
+        val hasGyro = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            runCatching {
+                inputDevice.getSensorManager()?.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null
+            }.getOrDefault(false)
+        val hasTouchpad = (inputDevice.sources and InputDevice.SOURCE_CLASS_POINTER) != 0
+        val batteryPercent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                val state = inputDevice.batteryState
+                if (state.isPresent && state.capacity >= 0f) {
+                    when (state.status) {
+                        BatteryState.STATUS_CHARGING, BatteryState.STATUS_FULL -> 100
+                        else -> (state.capacity * 100f).toInt()
+                    }
+                } else {
+                    null
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
+        val device = GamepadDevice(
+            deviceId = deviceId,
+            descriptor = inputDevice.descriptor,
+            vendorId = inputDevice.vendorId,
+            productId = inputDevice.productId,
+            name = inputDevice.name,
+            deviceClass = deviceClass,
+            faceStyle = faceStyle,
+            hasGyro = hasGyro,
+            hasTouchpad = hasTouchpad,
+            batteryPercent = batteryPercent,
+        )
+        _connectedDevices.value = _connectedDevices.value + (deviceId to device)
+        refreshActive()
+        invalidateProfiles()
+        sensorSource?.onDeviceAdded(deviceId)
+        PluviaApp.events.emit(GamepadDeviceAddedEvent(device))
+        Timber.d(
+            "GamepadHub: added id=%d name=%s vendor=%04x product=%04x class=%s battery=%s gyro=%b touchpad=%b",
+            deviceId, device.name, device.vendorId, device.productId, deviceClass,
+            device.batteryPercent?.toString() ?: "-", device.hasGyro, device.hasTouchpad,
+        )
+    }
+
+    private fun removeDevice(deviceId: Int) {
+        buttonStates.remove(deviceId)
+        // U2 (V6): estado do touchpad→mouse morre junto com o device (mesmo padrão
+        // buttonStates — o deviceId efêmero pode ser reusado por outro hardware).
+        PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)
+        // U1 (V6): estado do gyro morre junto; listener de sensor desregistrado (V3).
+        gyroStates.remove(deviceId)
+        gyroActivateHeld.remove(deviceId)
+        // F1.2/F1.3 (V6): estados do Flick Stick e da fusão morrem junto.
+        flickStickStates.remove(deviceId)
+        fusionStates.remove(deviceId)
+        // U3 (V6): camadas ativas morrem junto (deviceId efêmero).
+        layerStates.remove(deviceId)
+        sensorSource?.onDeviceRemoved(deviceId)
+        val current = _connectedDevices.value
+        if (deviceId !in current) return
+        _connectedDevices.value = current - deviceId
+        refreshActive()
+        // Hotplug: deviceId é efêmero e pode ser reusado por outro hardware — o cache
+        // de perfil (chaveado por deviceId) precisa morrer junto (M1).
+        invalidateProfiles()
+        PluviaApp.events.emit(GamepadDeviceRemovedEvent(deviceId))
+        Timber.d("GamepadHub: removed %d", deviceId)
+    }
+
+    private fun refreshDevice(deviceId: Int) {
+        if (_connectedDevices.value.containsKey(deviceId)) {
+            removeDevice(deviceId)
+            addDevice(deviceId)
+        }
+    }
+
+    /** Mesma heurística do harness (DebugGamepadInput.gamepadDeviceId): CONTROLLER > TOUCHPAD. */
+    private fun refreshActive() {
+        _activeDevice.value = _connectedDevices.value.values.maxByOrNull { score(it) }
+    }
+
+    private fun score(device: GamepadDevice): Int =
+        if (device.deviceClass == DeviceClass.CONTROLLER) 2 else 1
+
+    /** Adapter fino InputDevice → dados puros do classificador. */
+    private fun deviceFeatures(device: InputDevice): DeviceClassifier.DeviceFeatures {
+        val faceKeys = device.hasKeys(
+            KeyEvent.KEYCODE_BUTTON_A,
+            KeyEvent.KEYCODE_BUTTON_B,
+            KeyEvent.KEYCODE_BUTTON_X,
+            KeyEvent.KEYCODE_BUTTON_Y,
+        )
+        return DeviceClassifier.DeviceFeatures(
+            isVirtual = device.isVirtual,
+            sources = device.sources,
+            hasAnyFaceButton = faceKeys.any { it },
+            hasAxisX = device.getMotionRange(MotionEvent.AXIS_X) != null,
+            hasAxisY = device.getMotionRange(MotionEvent.AXIS_Y) != null,
+        )
+    }
+}
+
+/**
+ * Spec 2026-08-16-C §1.2: amostra do preview de gyro para o card de diagnóstico
+ * (DeviceDiagnosticsCard) — última amostra processada pelo [GyroProcessor] do device.
+ * O card filtra por [deviceId] (o StateFlow do hub guarda só a última amostra global).
+ */
+data class GyroPreview(
+    val deviceId: Int,
+    /** Velocidade angular de yaw morta pela deadzone, rad/s. */
+    val yawRadS: Float,
+    /** Velocidade angular de pitch morta pela deadzone, rad/s. */
+    val pitchRadS: Float,
+    /** Timestamp da amostra (ms — relógio do evento de sensor, P2-1). */
+    val timestampMs: Long,
+)

@@ -3,10 +3,32 @@ package app.gamenative.ui.screen.xserver
 import timber.log.Timber
 
 import android.graphics.PointF
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import app.gamenative.PluviaApp
+import app.gamenative.PrefManager
+import app.gamenative.events.GamepadDeviceRemovedEvent
+import app.gamenative.gamepad.DeviceClass
+import app.gamenative.gamepad.GamepadButton
+import app.gamenative.gamepad.GyroMode
+import app.gamenative.gamepad.mapping.MappingDatabase
+import app.gamenative.gamepad.mapping.RawBinding
+import app.gamenative.gamepad.processing.DeadzoneConfig
+import app.gamenative.gamepad.processing.DeadzoneMode
+import app.gamenative.gamepad.processing.DeadzoneProcessor
+import app.gamenative.gamepad.processing.LatencyTracker
+import app.gamenative.gamepad.processing.ResponseCurve
+import app.gamenative.gamepad.processing.StickTransform
+import app.gamenative.gamepad.processing.StickTransformConfig
+import app.gamenative.gamepad.processing.GyroStickMapping
+import app.gamenative.gamepad.processing.StickSample
+import app.gamenative.gamepad.processing.TurboScheduler
+import app.gamenative.gamepad.remap.GamepadBindingCodec
 import com.winlator.inputcontrols.Binding
 import com.winlator.inputcontrols.ControlElement
 import com.winlator.inputcontrols.ControlsProfile
@@ -32,6 +54,39 @@ class PhysicalControllerHandler(
     }
 
     private val TAG = "gncontrol"
+
+    /**
+     * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.4): estado de turbo por
+     * device — fonte = GamepadButton.name LÓGICO (a MESMA chave no caminho de tecla
+     * e no caminho de eixo — triggers digitais+analógicos não criam ciclo duplo) →
+     * fase + alvo + agendamento. V6: morto no removeDevice (listener abaixo);
+     * deviceId efêmero nunca vaza estado.
+     */
+    private class TurboToggleState(
+        /** 0 = solto (próximo toggle é DOWN); 1 = segurado (próximo toggle é UP). */
+        var phase: Int,
+        /** Alvo da injeção — o release limpo no cancel usa a MESMA disciplina U4. */
+        val target: Binding,
+        /** Agendamento pendente (cancelável no UP físico/cleanup/removeDevice). */
+        var pending: Runnable?,
+    )
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val turboStates = mutableMapOf<Int, MutableMap<String, TurboToggleState>>()
+
+    // F §1.4 (V6): estados de turbo morrem junto do device — o hub emite
+    // GamepadDeviceRemovedEvent no removeDevice; registrado UMA vez por handler
+    // (identity-registry do bus) e desregistrado no cleanup().
+    private val deviceRemovedListener: (GamepadDeviceRemovedEvent) -> Unit = { event ->
+        turboStates.remove(event.deviceId)?.values?.forEach { entry ->
+            entry.pending?.let { mainHandler.removeCallbacks(it) }
+        }
+    }
+
+    init {
+        PluviaApp.events.on<GamepadDeviceRemovedEvent, Unit>(deviceRemovedListener)
+    }
+
     private val mouseMoveOffset = PointF(0f, 0f)
     private var mouseMoveTimer: Timer? = null
     private var scrollRepeatTimer: Timer? = null
@@ -73,6 +128,21 @@ class PhysicalControllerHandler(
      */
     fun cleanup() {
         releaseActiveAxes()
+        // U4: solta bindings de eixos remapeados segurados (state limpo).
+        for (binding in remappedAxisBindings.values) {
+            handleInputEvent(binding, false, 0f)
+        }
+        remappedAxisBindings.clear()
+        // F §1.4: cancela ciclos de turbo pendentes + release lógico limpo (mesma
+        // disciplina do remappedAxisBindings — nunca botão preso no teardown).
+        for (sources in turboStates.values) {
+            for (entry in sources.values) {
+                entry.pending?.let { mainHandler.removeCallbacks(it) }
+                injectBinding(entry.target, false, 0f)
+            }
+        }
+        turboStates.clear()
+        PluviaApp.events.off<GamepadDeviceRemovedEvent, Unit>(deviceRemovedListener)
         mouseMoveTimer?.cancel()
         mouseMoveTimer = null
         mouseMoveOffset.set(0f, 0f)
@@ -81,11 +151,38 @@ class PhysicalControllerHandler(
     }
 
     /**
+     * P5 (spec 2026-08-14-gamepad-upgrades-pendencias, Parte V): device de touchpad
+     * PURO (o hub classifica TOUCHPAD — sub-device "Wireless Controller Touchpad" de
+     * kernels que separam os devices do DS4) não tem sticks nem face buttons — eventos
+     * dele nunca dirigem o jogo. Defesa em profundidade do gate do MainActivity para
+     * rotas que não passam pelo dispatch principal (external display etc.). Com o
+     * redesign do classifier (P5), o DS4 FUNDIDO do MIUI é CONTROLLER → passa; devices
+     * fora do hub (teclado, touchscreen, virtual) → null → permitidos (byte-identical).
+     */
+    private fun isControllerTouchpadDevice(deviceId: Int): Boolean =
+        PluviaApp.gamepadHub.deviceFor(deviceId)?.deviceClass == DeviceClass.TOUCHPAD
+
+    /**
      * Handle physical controller button events.
      * Extracted from InputControlsView.onKeyEvent()
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
+        // F0 (spec 2026-08-15-input-core-avancado): t1 da medição de latência —
+        // par do begin em MainActivity.dispatchKeyEvent (slot pendente; descartado
+        // quando a rota não passou pelo dispatch — ver LatencyTracker).
+        LatencyTracker.end(LatencyTracker.Source.KEY, System.nanoTime())
         if (profile != null && event.repeatCount == 0) {
+            // P5 (spec 2026-08-14-gamepad-upgrades-pendencias, Parte V): defesa em
+            // profundidade do gate do MainActivity — device de touchpad PURO (classe
+            // TOUCHPAD do hub, sub-device de kernels que separam os devices) nunca
+            // emite entrada de jogo. O DS4 fundido do MIUI é CONTROLLER (P5) e passa.
+            if (isControllerTouchpadDevice(event.deviceId)) return false
+            // U4 (spec 2026-08-14-gamepad-u3-u4-layers-remap-jogo, §2.1): remap da
+            // camada universal (gate ON) — binding EXPLÍCITO vence; sem binding o
+            // fluxo cai no ExternalControllerBinding (byte-identical, V10).
+            if (PrefManager.gamepadUniversalEnabled && applyUniversalKeyRemap(event)) {
+                return true
+            }
             val controller = profile?.getController(event.deviceId)
             if (controller != null) {
                 val controllerBinding = controller.getControllerBinding(event.keyCode)
@@ -117,6 +214,56 @@ class PhysicalControllerHandler(
         return false
     }
 
+    /**
+     * U4: aplica o binding da camada universal (DEFAULT + camada ativa) para uma tecla
+     * crua. Retorna true quando o remap CONSUMIU o evento (injeção feita OU alvo sem
+     * binding — o remap explícito substitui o botão original).
+     */
+    private fun applyUniversalKeyRemap(event: KeyEvent): Boolean {
+        val hub = PluviaApp.gamepadHub
+        val device = hub.deviceFor(event.deviceId) ?: return false
+        val mapping = MappingDatabase.mappingFor(device.vendorId, device.productId)
+            ?: MappingDatabase.defaultAndroidMapping(device.faceStyle)
+        val logical = mapping.buttons.entries
+            .firstOrNull { (_, b) -> b is RawBinding.Key && b.keyCode == event.keyCode }
+            ?.key ?: return false
+        val token = hub.layerBindingFor(event.deviceId, logical) ?: return false
+        val decoded = GamepadBindingCodec.decode(token) ?: return false
+        val controller = profile?.getController(event.deviceId) ?: return false
+        val isDown = event.action == KeyEvent.ACTION_DOWN
+
+        val targetKeyCode = when (val binding = decoded.raw) {
+            is RawBinding.Key -> binding.keyCode
+            is RawBinding.Axis -> ExternalControllerBinding.getKeyCodeForAxis(
+                binding.axis,
+                binding.direction.toByte(),
+            )
+            // Hat não é traduzido no caminho do jogo (decisão U4 v1 — dpad via tecla).
+            is RawBinding.Hat -> return true
+        }
+        val targetBinding = controller.getControllerBinding(targetKeyCode)
+        // F §1.4: turbo — a FONTE lógica (mesma chave do caminho de eixo — triggers
+        // digitais+analógicos não criam ciclo duplo) é a chave do ciclo. DOWN físico
+        // inicia (DOWN imediato + toggles agendados); UP físico cancela + release.
+        if (decoded.turbo) {
+            if (targetBinding != null) {
+                if (isDown) {
+                    startTurbo(event.deviceId, logical.name, targetBinding.binding)
+                } else {
+                    stopTurbo(event.deviceId, logical.name)
+                }
+            }
+            return true
+        }
+        if (targetBinding != null) {
+            val offset = if (isDown &&
+                (targetBinding.binding == Binding.GAMEPAD_BUTTON_L2 || targetBinding.binding == Binding.GAMEPAD_BUTTON_R2)
+            ) 1f else 0f
+            injectBinding(targetBinding.binding, isDown, offset)
+        }
+        return true
+    }
+
     private fun deviceHasTriggerAxis(device: InputDevice?, keyCode: Int): Boolean {
         return when (keyCode) {
             KeyEvent.KEYCODE_BUTTON_L2 ->
@@ -139,26 +286,62 @@ class PhysicalControllerHandler(
      * Extracted from InputControlsView.onGenericMotionEvent()
      */
     fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        // F0 (spec 2026-08-15-input-core-avancado): t1 — par do begin em
+        // MainActivity.dispatchGenericMotionEvent.
+        LatencyTracker.end(LatencyTracker.Source.MOTION, System.nanoTime())
         if (profile != null) {
+            // P5 (spec 2026-08-14-gamepad-upgrades-pendencias, Parte V): mesma defesa
+            // do onKeyEvent — device de touchpad PURO nunca dirige o jogo; o DS4
+            // fundido (CONTROLLER com hasTouchpad) passa e o POINTER-class dele é
+            // tratado pelo gate do MainActivity por EVENTO.
+            if (isControllerTouchpadDevice(event.deviceId)) return false
             val controller = profile?.getController(event.deviceId)
             if (controller != null && controller.updateStateFromMotionEvent(event)) {
-                // Process trigger buttons (L2/R2)
-                var controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_L2)
-                if (controllerBinding != null) {
-                    handleInputEvent(
-                        controllerBinding.binding,
-                        controller.state.triggerL > 0f,
-                        controller.state.triggerL
-                    )
+                // E2 (spec 2026-08-13-onda2 §1.7): deadzone por device via perfil da
+                // camada universal — APENAS quando o perfil override explicitamente
+                // (gate ON). Sem override o caminho fica byte-identical (V10): o
+                // ExternalController usa a `flat` do próprio device; o fallback
+                // STICK_DEAD_ZONE 0.15f não é aplicado aqui de propósito.
+                if (PrefManager.gamepadUniversalEnabled) {
+                    applyProfileDeadzone(controller)
+                }
+                // Process trigger buttons (L2/R2) — U4: com remap universal explícito
+                // de LEFT_TRIGGER/RIGHT_TRIGGER, o binding da camada vence.
+                val hub = PluviaApp.gamepadHub
+                val l2Remap = if (PrefManager.gamepadUniversalEnabled) {
+                    hub.layerBindingFor(event.deviceId, GamepadButton.LEFT_TRIGGER)
+                } else {
+                    null
+                }
+                val r2Remap = if (PrefManager.gamepadUniversalEnabled) {
+                    hub.layerBindingFor(event.deviceId, GamepadButton.RIGHT_TRIGGER)
+                } else {
+                    null
+                }
+                if (l2Remap == null) {
+                    val controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_L2)
+                    if (controllerBinding != null) {
+                        handleInputEvent(
+                            controllerBinding.binding,
+                            controller.state.triggerL > 0f,
+                            controller.state.triggerL
+                        )
+                    }
+                } else {
+                    handleRemappedAxis(controller, GamepadButton.LEFT_TRIGGER.name, KeyEvent.KEYCODE_BUTTON_L2, controller.state.triggerL, l2Remap)
                 }
 
-                controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_R2)
-                if (controllerBinding != null) {
-                    handleInputEvent(
-                        controllerBinding.binding,
-                        controller.state.triggerR > 0f,
-                        controller.state.triggerR
-                    )
+                if (r2Remap == null) {
+                    val controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_R2)
+                    if (controllerBinding != null) {
+                        handleInputEvent(
+                            controllerBinding.binding,
+                            controller.state.triggerR > 0f,
+                            controller.state.triggerR
+                        )
+                    }
+                } else {
+                    handleRemappedAxis(controller, GamepadButton.RIGHT_TRIGGER.name, KeyEvent.KEYCODE_BUTTON_R2, controller.state.triggerR, r2Remap)
                 }
 
                 // Process analog stick input
@@ -174,6 +357,104 @@ class PhysicalControllerHandler(
             }
         }
         return false
+    }
+
+    /**
+     * E2 (spec 2026-08-13-onda2 §1.7): aplica a deadzone do PERFIL UNIVERSAL no estado
+     * do ExternalController — sticks em par radial (DeadzoneProcessor.process), triggers
+     * axiais. Só roda quando o perfil override EXPLICITAMENTE o valor; sem override o
+     * caminho fica byte-identical (regressão V10 preservada — o ExternalController já
+     * aplica a `flat` do próprio device via getCenteredAxis).
+     */
+    private fun applyProfileDeadzone(controller: ExternalController) {
+        val deviceId = controller.deviceId
+        if (deviceId == -1) return
+        val profile = PluviaApp.gamepadHub.profileFor(deviceId, PluviaApp.gamepadHub.activeAppId)
+        // F1.2: com Flick Stick ativo o stick DIREITO é do FlickStickProcessor — nenhum
+        // pré-processamento aqui (o activationRadius 0.85 É a dead band do modo).
+        val flickOwnsRight = profile.flickStickEnabled == true
+        // F1.1 (spec 2026-08-15-input-core-avancado): modo/curva/LUT custom assumem o
+        // pipeline do stick (StickTransform completo: deadzone + curva). Só deadzone
+        // override = caminho antigo (byte-identical, regressão V10).
+        val leftCustom = profile.leftStickDeadzoneMode != null ||
+            profile.leftStickCurve != null || profile.leftStickLut != null
+        if (leftCustom) {
+            val result = StickTransform.apply(
+                StickSample(controller.state.thumbLX, controller.state.thumbLY),
+                StickTransformConfig(
+                    deadzone = profile.leftStickDeadzone ?: PrefManager.gamepadStickDeadzone,
+                    mode = profile.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL,
+                    curve = profile.leftStickCurve ?: ResponseCurve.LINEAR,
+                    lut = profile.leftStickLut ?: emptyList(),
+                ),
+            )
+            controller.state.thumbLX = result.x
+            controller.state.thumbLY = result.y
+        } else {
+            profile.leftStickDeadzone?.let { dead ->
+                val result = DeadzoneProcessor.process(
+                    StickSample(controller.state.thumbLX, controller.state.thumbLY),
+                    DeadzoneConfig(leftStick = dead, rightStick = dead),
+                )
+                controller.state.thumbLX = result.x
+                controller.state.thumbLY = result.y
+            }
+        }
+        if (!flickOwnsRight) {
+            val rightCustom = profile.rightStickDeadzoneMode != null ||
+                profile.rightStickCurve != null || profile.rightStickLut != null
+            if (rightCustom) {
+                val result = StickTransform.apply(
+                    StickSample(controller.state.thumbRX, controller.state.thumbRY),
+                    StickTransformConfig(
+                        deadzone = profile.rightStickDeadzone ?: PrefManager.gamepadStickDeadzone,
+                        mode = profile.rightStickDeadzoneMode ?: DeadzoneMode.RADIAL,
+                        curve = profile.rightStickCurve ?: ResponseCurve.LINEAR,
+                        lut = profile.rightStickLut ?: emptyList(),
+                    ),
+                )
+                controller.state.thumbRX = result.x
+                controller.state.thumbRY = result.y
+            } else {
+                profile.rightStickDeadzone?.let { dead ->
+                    val result = DeadzoneProcessor.process(
+                        StickSample(controller.state.thumbRX, controller.state.thumbRY),
+                        DeadzoneConfig(leftStick = dead, rightStick = dead),
+                    )
+                    controller.state.thumbRX = result.x
+                    controller.state.thumbRY = result.y
+                }
+            }
+        }
+        profile.leftTriggerDeadzone?.let { dead ->
+            controller.state.triggerL = DeadzoneProcessor.processAxis(controller.state.triggerL, dead)
+        }
+        profile.rightTriggerDeadzone?.let { dead ->
+            controller.state.triggerR = DeadzoneProcessor.processAxis(controller.state.triggerR, dead)
+        }
+    }
+
+    /**
+     * U1/P1-2 (spec 2026-08-14-gamepad-upgrades-pendencias): CAMERA mode — mapeia a
+     * VELOCIDADE angular do gyro (rad/s) em deflexão do RIGHT STICK do virtual
+     * gamepad (mouse-look) e envia o estado. Controle de TAXA (padrão DS4Windows
+     * MouseJoystick/JoyShockLibrary): parar de girar ⇒ deflexão volta a 0 — o modelo
+     * antigo integrava deltas e o stick permanecia no último valor. Escrito por cima
+     * do stick físico (único escritor do campo: processJoystickInput pula os eixos do
+     * right stick com CAMERA ativo). Chamado pela main thread (sink do hub — P2-7).
+     */
+    fun applyCameraGyro(yawRadS: Float, pitchRadS: Float, sensitivity: Float) {
+        // F0 (spec 2026-08-15-input-core-avancado): t1 do caminho de sensor — par do
+        // begin em GamepadHub.onSensorSample (invocado sincronamente pelo sink).
+        LatencyTracker.end(LatencyTracker.Source.SENSOR, System.nanoTime())
+        val state = profile?.gamepadState ?: return
+        state.thumbRX = GyroStickMapping.deflection(yawRadS, sensitivity)
+        state.thumbRY = GyroStickMapping.deflection(pitchRadS, sensitivity)
+        val winHandler = xServer?.winHandler
+        if (winHandler != null) {
+            winHandler.sendGamepadState()
+            winHandler.sendVirtualGamepadState(state)
+        }
     }
 
     /**
@@ -262,6 +543,33 @@ class PhysicalControllerHandler(
         // Reset mouse movement offset at the start - contributions will be added during processing
         mouseMoveOffset.set(0f, 0f)
 
+        // P1-2 (spec 2026-08-14-gamepad-upgrades-pendencias): CAMERA mode ativo ⇒ o
+        // gyro controla o right stick POR CIMA do físico (padrão DS4Windows — é um
+        // modo do perfil, não uma soma). Sem isto, o MotionEvent do stick físico e o
+        // sink do sensor escreviam o MESMO campo (thumbRX/RY) — flicker de câmera.
+        val cameraOwnsRightStick = PrefManager.gamepadUniversalEnabled &&
+            PluviaApp.gamepadHub.profileFor(controller.deviceId, PluviaApp.gamepadHub.activeAppId)
+                .gyroMode == GyroMode.CAMERA
+
+        // F1.2 (spec 2026-08-15-input-core-avancado): Flick Stick ativo ⇒ o stick
+        // direito físico vira gesto de flick (yaw rad/s → deflexão, mesma unidade do
+        // CAMERA mode). CAMERA mode vence quando os dois estão ligados (o gyro já é o
+        // dono exclusivo do right stick — P1-2).
+        val flickOwnsRightStick = PrefManager.gamepadUniversalEnabled &&
+            !cameraOwnsRightStick &&
+            PluviaApp.gamepadHub.profileFor(controller.deviceId, PluviaApp.gamepadHub.activeAppId)
+                .flickStickEnabled == true
+        if (flickOwnsRightStick) {
+            val yaw = PluviaApp.gamepadHub.flickStickProcess(
+                controller.deviceId,
+                controller.state.thumbRX,
+                controller.state.thumbRY,
+                SystemClock.uptimeMillis(),
+            )
+            controller.state.thumbRX = GyroStickMapping.deflection(yaw, 1f)
+            controller.state.thumbRY = 0f
+        }
+
         val axes = intArrayOf(
             MotionEvent.AXIS_X,
             MotionEvent.AXIS_Y,
@@ -280,6 +588,31 @@ class PhysicalControllerHandler(
         )
 
         for (i in axes.indices) {
+            // P1-2: CAMERA mode ⇒ right stick físico ignorado (gyro é o único
+            // escritor de thumbRX/RY do virtual gamepad enquanto o modo está ativo).
+            // F1.2: idem com Flick Stick (o processador escreveu a deflexão acima).
+            if ((cameraOwnsRightStick || flickOwnsRightStick) &&
+                (axes[i] == MotionEvent.AXIS_Z || axes[i] == MotionEvent.AXIS_RZ)
+            ) {
+                continue
+            }
+            // U4: sticks com binding explícito na camada universal são injetados pelo
+            // binding ALVO (o eixo original não passa pelo activeAxisBindings — o
+            // controle de release é próprio). Hats (i >= 4) não são remapeados no
+            // caminho do jogo (decisão U4 v1 — dpad via canal de tecla).
+            val logicalButton = when (axes[i]) {
+                MotionEvent.AXIS_X, MotionEvent.AXIS_Y -> GamepadButton.LEFT_STICK
+                MotionEvent.AXIS_Z, MotionEvent.AXIS_RZ -> GamepadButton.RIGHT_STICK
+                else -> null
+            }
+            if (logicalButton != null && PrefManager.gamepadUniversalEnabled) {
+                val token = PluviaApp.gamepadHub.layerBindingFor(controller.deviceId, logicalButton)
+                if (token != null) {
+                    handleRemappedAxis(controller, logicalButton.name, axes[i], values[i], token)
+                    continue
+                }
+            }
+
             val posKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axes[i], 1.toByte())
             val negKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axes[i], (-1).toByte())
 
@@ -312,6 +645,131 @@ class PhysicalControllerHandler(
                 }
             }
         }
+    }
+
+    /** Bindings-alvo atualmente segurados de eixos remapeados (U4) — por eixo cru. */
+    private val remappedAxisBindings = mutableMapOf<Int, Binding>()
+
+    /**
+     * U4: injeta o binding ALVO de um eixo remapeado pela camada universal (tecla ou
+     * eixo), com o valor do eixo de origem. Libera quando o valor cai abaixo da
+     * deadzone (release controlado por [remappedAxisBindings] — o eixo original não
+     * passa pelo fluxo normal).
+     *
+     * F §1.4: com turbo no token, o ciclo é DONO da fonte enquanto ativo — o valor
+     * analógico contínuo só liga/desliga o ciclo (onda quadrada digital, período
+     * fixo 80 ms); pressed → [startTurbo] (DOWN imediato + toggles), released →
+     * [stopTurbo] (cancel + release limpo). [sourceKey] é o GamepadButton.name
+     * lógico — a MESMA chave do caminho de tecla (sem ciclo duplo nos triggers).
+     */
+    private fun handleRemappedAxis(
+        controller: ExternalController,
+        sourceKey: String,
+        sourceAxis: Int,
+        value: Float,
+        token: String,
+    ) {
+        val decoded = GamepadBindingCodec.decode(token) ?: return
+        val targetKeyCode = when (val binding = decoded.raw) {
+            is RawBinding.Key -> binding.keyCode
+            is RawBinding.Axis -> ExternalControllerBinding.getKeyCodeForAxis(
+                binding.axis,
+                binding.direction.toByte(),
+            )
+            is RawBinding.Hat -> return
+        }
+        val target = controller.getControllerBinding(targetKeyCode) ?: return
+        if (decoded.turbo) {
+            val pressed = kotlin.math.abs(value) > ControlElement.STICK_DEAD_ZONE
+            val active = turboStates[controller.deviceId]?.get(sourceKey) != null
+            if (pressed && !active) {
+                startTurbo(controller.deviceId, sourceKey, target.binding)
+            } else if (!pressed && active) {
+                stopTurbo(controller.deviceId, sourceKey)
+            }
+            return
+        }
+        val pressed = kotlin.math.abs(value) > ControlElement.STICK_DEAD_ZONE
+        val wasPressed = remappedAxisBindings[sourceAxis] != null
+        if (pressed) {
+            if (!wasPressed || target.binding.isGamepad) {
+                handleInputEvent(target.binding, true, value)
+            }
+            remappedAxisBindings[sourceAxis] = target.binding
+        } else if (wasPressed) {
+            handleInputEvent(target.binding, false, 0f)
+            remappedAxisBindings.remove(sourceAxis)
+        }
+    }
+
+    /**
+     * F §1.4: injeção compartilhada — binding no estado do virtual gamepad +
+     * envio imediato ao WinHandler. O ciclo de turbo reusa EXATAMENTE este caminho
+     * (o mesmo do U4 — nada de rota nova de injeção).
+     */
+    private fun injectBinding(binding: Binding, isDown: Boolean, offset: Float) {
+        handleInputEvent(binding, isDown, offset)
+        val winHandler = xServer?.winHandler
+        val state = profile?.gamepadState
+        if (winHandler != null) {
+            winHandler.sendGamepadState()
+            winHandler.sendVirtualGamepadState(state)
+        }
+    }
+
+    /**
+     * F §1.4: inicia o ciclo de turbo de uma fonte física — DOWN lógico imediato
+     * (fase 1) + agendamento do próximo toggle no Handler MAIN (mesmo relógio e
+     * mesmo caminho da injeção U4). Chamado no DOWN físico; o UP físico chama
+     * [stopTurbo]. Reiniciar com ciclo ativo substitui o agendamento (idempotente).
+     */
+    private fun startTurbo(deviceId: Int, sourceKey: String, targetBinding: Binding) {
+        val sources = turboStates.getOrPut(deviceId) { mutableMapOf() }
+        sources.remove(sourceKey)?.pending?.let { mainHandler.removeCallbacks(it) }
+        injectBinding(targetBinding, true, 1f)
+        sources[sourceKey] = TurboToggleState(
+            phase = 1,
+            target = targetBinding,
+            pending = scheduleTurboToggle(deviceId, sourceKey, targetBinding),
+        )
+    }
+
+    /**
+     * Agendamento recursivo do toggle: cada disparo alterna a fase (0→DOWN, 1→UP) e
+     * re-agenda meio período adiante (TurboScheduler — onda quadrada 50%, período
+     * fixo 80 ms). O Runnable se auto-remove do mapa quando o ciclo morre (UP
+     * físico/removeDevice/cleanup) — `entry == null` = no-op.
+     */
+    private fun scheduleTurboToggle(deviceId: Int, sourceKey: String, targetBinding: Binding): Runnable {
+        val runnable = object : Runnable {
+            override fun run() {
+                val entry = turboStates[deviceId]?.get(sourceKey) ?: return
+                val down = entry.phase == 0
+                injectBinding(targetBinding, down, if (down) 1f else 0f)
+                entry.phase = if (down) 1 else 0
+                entry.pending = this
+                val now = SystemClock.uptimeMillis()
+                val delay = (TurboScheduler.nextToggleAt(now, TurboScheduler.PERIOD_DEFAULT_MS) - now)
+                    .coerceAtLeast(0L)
+                mainHandler.postDelayed(this, delay)
+            }
+        }
+        val now = SystemClock.uptimeMillis()
+        val delay = (TurboScheduler.nextToggleAt(now, TurboScheduler.PERIOD_DEFAULT_MS) - now)
+            .coerceAtLeast(0L)
+        mainHandler.postDelayed(runnable, delay)
+        return runnable
+    }
+
+    /**
+     * F §1.4: UP físico / fim do ciclo — cancela o agendamento pendente e garante o
+     * release lógico limpo (mesma disciplina do remappedAxisBindings — nunca botão
+     * preso). Sem ciclo ativo = no-op.
+     */
+    private fun stopTurbo(deviceId: Int, sourceKey: String) {
+        val entry = turboStates[deviceId]?.remove(sourceKey) ?: return
+        entry.pending?.let { mainHandler.removeCallbacks(it) }
+        injectBinding(entry.target, false, 0f)
     }
 
     /**

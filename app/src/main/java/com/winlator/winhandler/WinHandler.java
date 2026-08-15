@@ -4,8 +4,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.SystemClock;
-import android.os.VibrationEffect;
-import android.os.Vibrator;
 import android.util.Log;
 import android.view.InputDevice;
 import android.view.KeyEvent;
@@ -26,6 +24,7 @@ import com.winlator.xenvironment.ImageFs;
 import com.winlator.xserver.Pointer;
 import com.winlator.xserver.XKeycode;
 import com.winlator.xserver.XServer;
+import app.gamenative.ui.component.GamepadHaptics;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -85,7 +84,6 @@ public class WinHandler {
     private final short[] lastHighFreq = new short[MAX_PLAYERS];
     private final boolean[] isRumbling = new boolean[MAX_PLAYERS];
     private final int[] rumbleDeviceIds = new int[MAX_PLAYERS];
-    private long lastStandalonePhoneRumbleMs = 0;
     private boolean isShowingAssignDialog = false;
     private Context activity;
     private final java.util.Set<Integer> ignoredDeviceIds = new java.util.HashSet<>();
@@ -114,9 +112,6 @@ public class WinHandler {
     private static final int OFF_RUMBLE_HIGH = 34;
     private static final int OFF_CONNECTED = 40;
     private static final int CONTROLLER_RUMBLE_DURATION_MS = 1000;
-    private static final int PHONE_RUMBLE_FALLBACK_DURATION_MS = 40;
-    private static final int STANDALONE_PHONE_RUMBLE_DURATION_MS = 70;
-    private static final int STANDALONE_PHONE_RUMBLE_THROTTLE_MS = 120;
 
     // Add method to set InputControlsView
     public void setInputControlsView(InputControlsView view) {
@@ -840,65 +835,26 @@ public class WinHandler {
         return ExternalController.isGameController(device) ? device : null;
     }
 
-    private int getPhoneRumbleAmplitude(int amplitude) {
-        float normalizedAmplitude = (float) amplitude / 255.0f;
-        float curvedAmplitude = (float) Math.pow(normalizedAmplitude, 0.6f);
-        int phoneAmplitude = (int) (curvedAmplitude * 255);
-        if (phoneAmplitude > 255) phoneAmplitude = 255;
-        if (phoneAmplitude <= 1) phoneAmplitude = 0;
-        return phoneAmplitude;
+    /**
+     * F2.1 (spec 2026-08-15-input-core-avancado): rumble do jogo consolidado no
+     * contrato P2-5 — GamepadHaptics.rumbleDevice (dual-motor API 31, mix de 1 motor,
+     * cancel e o gate global gamepadRumbleEnabled). O max(low,high) custom do
+     * WinHandler foi REMOVIDO: low/high seguem separados (padrão SDL rumble()).
+     * O fallback de vibrar o TELEFONE também foi removido (consolidação — o rumble é
+     * por device, spec U5; sem vibrator no controle = no-op silencioso, V11).
+     */
+    private boolean startDeviceVibration(int deviceId, short lowFreq, short highFreq) {
+        float low = (lowFreq & 0xFFFF) / 65535.0f;
+        float high = (highFreq & 0xFFFF) / 65535.0f;
+        // Limpeza 1.3-4 (doc pendentes-e-validacao-gamepad-universal): o retorno é o
+        // resultado REAL do rumbleDevice — isRumbling só liga quando a vibração de
+        // fato disparou (gate OFF/sem vibrator ⇒ false ⇒ o poller não "rumbleia").
+        return GamepadHaptics.INSTANCE.rumbleDevice(deviceId, low, high, CONTROLLER_RUMBLE_DURATION_MS);
     }
 
-    private boolean startDeviceVibration(int deviceId, short lowFreq, short highFreq) {
-        // --- Step 1: Calculate the base amplitude once at the top ---
-        int unsignedLowFreq = lowFreq & 0xFFFF;
-        int unsignedHighFreq = highFreq & 0xFFFF;
-        int dominantRumble = Math.max(unsignedLowFreq, unsignedHighFreq);
-        // This is the raw amplitude for a physical X-Input device
-        int amplitude = Math.round((float) dominantRumble / 65535.0f * 254.0f) + 1;
-        if (amplitude > 255) amplitude = 255;
-        // If amplitude is negligible, just stop and exit.
-        if (amplitude <= 1) {
-            return false;
-        }
-        boolean controllerVibrated = false;
-        boolean phoneVibrated = false;
-        // --- Step 2: Attempt to vibrate the physical controller first ---
-        InputDevice device = InputDevice.getDevice(deviceId);
-        if (device != null) {
-            Vibrator controllerVibrator = device.getVibrator();
-            if (controllerVibrator != null && controllerVibrator.hasVibrator()) {
-                controllerVibrator.vibrate(VibrationEffect.createOneShot(CONTROLLER_RUMBLE_DURATION_MS, amplitude));
-                controllerVibrated = true;
-            }
-        }
-
-        // --- Step 3: Fallback to phone vibration only for a real controller without rumble.
-        if (!controllerVibrated && device != null) {
-            Log.w("WinHandler", "No physical controller vibrator found, falling back to device vibration.");
-            Vibrator phoneVibrator = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
-            if (phoneVibrator != null && phoneVibrator.hasVibrator()) {
-                int finalPhoneAmplitude = getPhoneRumbleAmplitude(amplitude);
-                if (finalPhoneAmplitude > 0) {
-                    phoneVibrator.vibrate(VibrationEffect.createOneShot(PHONE_RUMBLE_FALLBACK_DURATION_MS, finalPhoneAmplitude));
-                    phoneVibrated = true;
-                }
-            }
-        } else if (device == null) {
-            long now = SystemClock.uptimeMillis();
-            if (now - lastStandalonePhoneRumbleMs >= STANDALONE_PHONE_RUMBLE_THROTTLE_MS) {
-                Vibrator phoneVibrator = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
-                if (phoneVibrator != null && phoneVibrator.hasVibrator()) {
-                    int finalPhoneAmplitude = getPhoneRumbleAmplitude(amplitude);
-                    if (finalPhoneAmplitude > 0) {
-                        phoneVibrator.vibrate(VibrationEffect.createOneShot(STANDALONE_PHONE_RUMBLE_DURATION_MS, finalPhoneAmplitude));
-                        lastStandalonePhoneRumbleMs = now;
-                        phoneVibrated = true;
-                    }
-                }
-            }
-        }
-        return controllerVibrated || phoneVibrated;
+    /** F2.1: cancel é parte do contrato P2-5 (low == high == 0 ⇒ vibrator.cancel()). */
+    private void stopDeviceVibration(int deviceId) {
+        GamepadHaptics.INSTANCE.rumbleDevice(deviceId, 0f, 0f, 0L);
     }
 
     private void stopVibration(int slot) {
@@ -908,22 +864,6 @@ public class WinHandler {
         if (!isRumbling[slot]) return;
         stopDeviceVibration(rumbleDeviceIds[slot]);
         isRumbling[slot] = false;
-    }
-
-    private void stopDeviceVibration(int deviceId) {
-        // Attempt to stop the physical controller's vibration if it exists
-        InputDevice device = InputDevice.getDevice(deviceId);
-        if (device != null) {
-            Vibrator vibrator = device.getVibrator();
-            if (vibrator != null && vibrator.hasVibrator()) {
-                vibrator.cancel();
-            }
-        }
-        // Always attempt to stop the phone's vibration
-        Vibrator phoneVibrator = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
-        if (phoneVibrator != null) {
-            phoneVibrator.cancel();
-        }
     }
 
     public void sendGamepadState() {

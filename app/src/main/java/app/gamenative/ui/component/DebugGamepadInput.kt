@@ -15,6 +15,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import app.gamenative.BuildConfig
+import app.gamenative.PluviaApp
+import app.gamenative.PrefManager
 import kotlinx.coroutines.delay
 
 /**
@@ -30,6 +32,16 @@ import kotlinx.coroutines.delay
  *   stick:<x>:<y>            hold the left stick at x/y (e.g. stick:0:0.8 = down); repeated
  *                            ACTION_MOVE until `stick:0:0`
  *   hat:<x>:<y>              same for the D-pad hat
+ *
+ * V12 (spec 2026-08-14-gamepad-intuito-validacao-upgrades, V12 — verbos novos):
+ *   touch:x:y                finger no touchpad em (x,y) normalizado [0..1] — ACTION_MOVE
+ *                            com SOURCE_CLASS_POINTER (exercita o gate do ghost input
+ *                            ANTES do consume: o forwarder do U2 lê no mesmo ponto)
+ *   touchdown:x:y            finger-down (ACTION_DOWN)
+ *   touchup:x:y              finger-up (ACTION_UP)
+ *   touchtap                 touchdown + touchup (tap → clique esquerdo no jogo)
+ *   gyro:x:y:z               amostra de giroscópio sintética (rad/s) — injetada DIRETO
+ *                            no hub.onSensorSample (U1; sem sensor real no harness)
  *
  * NOTE (2026-08-12, spec pipeline-hardening): the PS/Home button is KEYCODE_BUTTON_MODE =
  * 110 — NOT 188 (KEYCODE_BUTTON_1, a generic pad button that neither the XServerScreen
@@ -73,12 +85,10 @@ fun DebugGamepadInputHarness(enabled: Boolean) {
     }
 }
 
-private fun readInputProperty(): String = try {
-    val process = Runtime.getRuntime().exec(arrayOf("getprop", "debug.gamenative.input"))
-    process.inputStream.bufferedReader().use { it.readText().trim() }
-} catch (_: Throwable) {
-    ""
-}
+private fun readInputProperty(): String =
+    DebugPropertyCache.read(INPUT_PROPERTY)
+
+private const val INPUT_PROPERTY = "debug.gamenative.input"
 
 private fun gamepadDeviceId(): Int? {
     val ids = InputDevice.getDeviceIds()
@@ -116,6 +126,58 @@ private fun gamepadDeviceId(): Int? {
 private fun handleCommand(command: String, activity: Activity) {
     val parts = command.split(":")
     when (parts[0]) {
+        // Doc pendentes-e-validacao-gamepad-universal (§1.1 ativar + §2 "sem o
+        // controle físico"): MIUI bloqueia `adb input` — o toggle da Settings não é
+        // alcançável por toque remoto. Verbo `pref:` com WHITELIST (nunca pref
+        // arbitrário): pref:universal:1|0, pref:touchpadmouse:1|0, pref:rumble:1|0,
+        // pref:layertick:1|0.
+        "pref" -> {
+            val name = parts.getOrNull(1)
+            val value = parts.getOrNull(2) == "1"
+            when (name) {
+                "universal" -> {
+                    PrefManager.gamepadUniversalEnabled = value
+                    Log.d("DebugGamepad", "pref universal=$value")
+                }
+                "touchpadmouse" -> {
+                    PrefManager.gamepadTouchpadMouseEnabled = value
+                    Log.d("DebugGamepad", "pref touchpadmouse=$value")
+                }
+                "rumble" -> {
+                    PrefManager.gamepadRumbleEnabled = value
+                    Log.d("DebugGamepad", "pref rumble=$value")
+                }
+                "layertick" -> {
+                    PrefManager.gamepadLayerTickEnabled = value
+                    Log.d("DebugGamepad", "pref layertick=$value")
+                }
+                else -> Log.d("DebugGamepad", "pref unknown: $name")
+            }
+        }
+        // F0 (spec 2026-08-15-input-core-avancado, V12+): dump agregado da medição de
+        // latência (p50/p95 por fonte) no logcat — não depende do HUD estar visível,
+        // só da coleta ligada via `debug.gamenative.latency 1`.
+        // R7 (doc pendentes-e-validacao-gamepad-universal, §1.4): diagnóstico de
+        // rumble por device — rumble:low:high:duration (0..1, ms). Chama o MESMO
+        // contrato P2-5 do jogo/menu (GamepadHaptics.rumbleDevice).
+        "rumble" -> {
+            val low = parts.getOrNull(1)?.toFloatOrNull() ?: 0.5f
+            val high = parts.getOrNull(2)?.toFloatOrNull() ?: 0.5f
+            val duration = parts.getOrNull(3)?.toLongOrNull() ?: 200L
+            val deviceId = gamepadDeviceId() ?: return
+            val vibrated = GamepadHaptics.rumbleDevice(deviceId, low, high, duration)
+            Log.d("DebugGamepad", "rumble dev=$deviceId low=$low high=$high dur=$duration -> $vibrated")
+        }
+        "latency" -> {
+            when (parts.getOrNull(1)) {
+                "report" -> Log.d("LatencyTracker", app.gamenative.gamepad.processing.LatencyTracker.report())
+                "reset" -> {
+                    app.gamenative.gamepad.processing.LatencyTracker.reset()
+                    Log.d("LatencyTracker", "reset")
+                }
+                else -> Log.d("LatencyTracker", "usage: latency:report | latency:reset")
+            }
+        }
         "back" -> {
             // Debug-only menu toggle: drives the OnBackPressedDispatcher directly (the
             // BackHandler XServerScreen registers calls gameBack), so the QuickMenu can be
@@ -151,6 +213,62 @@ private fun handleCommand(command: String, activity: Activity) {
                 }
             }
             Log.d("DebugGamepad", "key $keyCode $hold")
+        }
+        "touch", "touchdown", "touchup" -> {
+            val x = parts.getOrNull(1)?.toFloatOrNull() ?: 0.5f
+            val y = parts.getOrNull(2)?.toFloatOrNull() ?: 0.5f
+            val deviceId = gamepadDeviceId() ?: 0
+            val now = SystemClock.uptimeMillis()
+            val pointerProps = MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
+            val pointerCoords = MotionEvent.PointerCoords().apply {
+                this.x = x * 1000f
+                this.y = y * 1000f
+                setAxisValue(MotionEvent.AXIS_X, x)
+                setAxisValue(MotionEvent.AXIS_Y, y)
+            }
+            val action = when (parts[0]) {
+                "touchdown" -> MotionEvent.ACTION_DOWN
+                "touchup" -> MotionEvent.ACTION_UP
+                else -> MotionEvent.ACTION_MOVE
+            }
+            val ev = MotionEvent.obtain(
+                now, now, action, 1,
+                arrayOf(pointerProps), arrayOf(pointerCoords),
+                0, 0, 1f, 1f, deviceId, 0,
+                // P5 (spec 2026-08-14-gamepad-upgrades-pendencias): fantasma = fonte
+                // POINTER-class SEM classe JOYSTICK (dedo puro no touchpad). Fonte
+                // só-POINTER = exatamente o que o gate consome E o forwarder do
+                // touchpad→mouse (U2/V7) lê no mesmo ponto — caminho de ponta a ponta.
+                InputDevice.SOURCE_CLASS_POINTER, 0,
+            )
+            activity.dispatchGenericMotionEvent(ev)
+            Log.d("DebugGamepad", "motion ${parts[0]} $x $y")
+        }
+        "touchtap" -> {
+            handleCommand("touchdown:0.5:0.5", activity)
+            handleCommand("touchup:0.5:0.5", activity)
+        }
+        "gyro" -> {
+            val x = parts.getOrNull(1)?.toFloatOrNull() ?: 0f
+            val y = parts.getOrNull(2)?.toFloatOrNull() ?: 0f
+            val z = parts.getOrNull(3)?.toFloatOrNull() ?: 0f
+            val deviceId = gamepadDeviceId() ?: 0
+            Log.d("DebugGamepad", "gyro $x $y $z devId=$deviceId")
+            // V12 (U1): sem sensor real no harness — injeta direto no mesmo método que
+            // o callback do sensor chama (GamepadHub.onSensorSample).
+            PluviaApp.gamepadHub.onSensorSample(
+                deviceId = deviceId,
+                gyroX = x,
+                gyroY = y,
+                gyroZ = z,
+                accelX = 0f,
+                accelY = 0f,
+                accelZ = 0f,
+                nowMs = SystemClock.uptimeMillis(),
+            )
         }
         "stick", "hat" -> {
             val x = parts.getOrNull(1)?.toFloatOrNull() ?: return

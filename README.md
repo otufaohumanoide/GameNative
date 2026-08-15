@@ -34,6 +34,14 @@ Real captures from the fork's shader pipeline on an Adreno 650 device (Xiaomi Mi
 |---|---|
 | ![Gravity Circuit without shader](prints/gravity-circuit/gravity_circuit_no_shader.webp) | ![Gravity Circuit with shader](prints/gravity-circuit/gravity_circuit_1.webp) |
 
+### Shader menu (in-game QuickMenu)
+
+Live from the in-game effects panel: toggle RetroArch shaders on/off, pick any preset from the 2,541-preset catalog, or filter by the ReShade folder presets.
+
+| Toggle | Presets | ReShade presets |
+|---|---|---|
+| ![Toggle RetroArch shaders](prints/shader-menu/shader-toggle.webp) | ![Preset list](prints/shader-menu/shader-presets.webp) | ![ReShade presets](prints/shader-menu/shader-reshade-presets.webp) |
+
 ---
 
 ## What this fork adds: RetroArch shader support (librashader)

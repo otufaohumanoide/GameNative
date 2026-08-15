@@ -44,7 +44,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
@@ -417,14 +416,11 @@ fun ShaderBrowserOverlay(
                 .gamepadFocusIndex(index) { focusIndices[screenKey] = it }
                 .clip(RoundedCornerShape(14.dp))
                 .background(
+                    // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus): estático.
                     if (isFocused) {
-                        Brush.horizontalGradient(
-                            colors = listOf(accent.copy(alpha = 0.16f), accent.copy(alpha = 0.08f)),
-                        )
+                        accent.copy(alpha = 0.12f)
                     } else {
-                        Brush.horizontalGradient(
-                            colors = listOf(Color.Transparent, Color.Transparent),
-                        )
+                        Color.Transparent
                     },
                 )
                 .then(
@@ -715,17 +711,11 @@ fun ShaderBrowserOverlay(
                         .gamepadFocusIndex(backIndex) { focusIndices[screenKey] = it }
                         .clip(RoundedCornerShape(10.dp))
                         .background(
+                            // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus): estático.
                             if (backFocused) {
-                                Brush.horizontalGradient(
-                                    colors = listOf(
-                                        PluviaTheme.colors.accentPurple.copy(alpha = 0.14f),
-                                        PluviaTheme.colors.accentPurple.copy(alpha = 0.07f),
-                                    ),
-                                )
+                                PluviaTheme.colors.accentPurple.copy(alpha = 0.12f)
                             } else {
-                                Brush.horizontalGradient(
-                                    colors = listOf(Color.Transparent, Color.Transparent),
-                                )
+                                Color.Transparent
                             },
                         )
                         .gamepadSelectable(

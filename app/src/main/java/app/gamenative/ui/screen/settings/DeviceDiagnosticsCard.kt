@@ -1,0 +1,348 @@
+package app.gamenative.ui.screen.settings
+
+import android.os.SystemClock
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import app.gamenative.PluviaApp
+import app.gamenative.R
+import app.gamenative.events.GamepadInputEvent
+import app.gamenative.gamepad.GamepadDevice
+import app.gamenative.gamepad.GyroPreview
+import app.gamenative.gamepad.TouchpadPreview
+import app.gamenative.gamepad.mapping.ControllerVisualLayout
+import app.gamenative.gamepad.processing.RumblePhoneCurve
+import app.gamenative.ui.component.GamepadHaptics
+import app.gamenative.ui.component.gamepadSelectable
+import app.gamenative.ui.component.remap.ControllerVisualView
+import app.gamenative.ui.component.remap.VisualControlState
+import java.util.Locale
+import kotlinx.coroutines.delay
+
+/** Duração do flash do viewer (mesmo PPSSPP ~600 ms da fase B). */
+private const val FLASH_DURATION_MS = 600L
+
+/**
+ * Cartão de diagnóstico por device (spec 2026-08-16-C-device-card-input-viewer, §1.1):
+ * substitui o ConnectedDeviceRow na composição do [SettingsGroupGamepad] — header
+ * IDÊNTICO ao row antigo quando recolhido (nome/bateria/badges GYRO/TOUCHPAD,
+ * byte-identical). Expande (só com device ATIVO) em:
+ * - Input viewer: [ControllerVisualView] com o faceStyle do device (reuso integral da
+ *   fase B) e flash ao vivo por [GamepadInputEvent] filtrado por deviceId;
+ * - Readouts mono ~10 Hz: gyro yaw/pitch rad/s (só com [GamepadDevice.hasGyro]) via
+ *   `GamepadHub.gyroPreview`; touchpad x/y normalizados (só com
+ *   [GamepadDevice.hasTouchpad]) via `GamepadTouchpadForwarder.touchpadPreview`;
+ * - Botões de teste: "Testar vibração" (fase A — `GamepadHaptics.rumbleDevice` +
+ *   `rumbleTargetFor`), "Recentrar giroscópio" (só com gyro — `GamepadHub.recenterGyro`)
+ *   e "Todos os botões" (só instruções + o viewer acescendo — sem lógica extra).
+ *
+ * Os hooks de preview ligam/desligam no [DisposableEffect] enquanto o card está
+ * expandido/visível (limpeza garantida no dispose) — OFF ⇒ caminho byte-identical.
+ */
+@Composable
+fun DeviceDiagnosticsCard(
+    device: GamepadDevice,
+    isActive: Boolean,
+) {
+    var expanded by rememberSaveable(device.deviceId) { mutableStateOf(false) }
+    // Spec §1.1: card expandido SÓ com device ativo — perdeu a ativação, recolhe.
+    LaunchedEffect(isActive) {
+        if (!isActive) expanded = false
+    }
+
+    // Spec §1.2/§1.3: hooks de preview ligados junto com o card expandido; o dispose
+    // SEMPRE desliga (limpeza mesmo em collapse/dispose inesperado).
+    DisposableEffect(expanded) {
+        if (expanded) {
+            if (device.hasGyro) PluviaApp.gamepadHub.gyroPreviewEnabled = true
+            if (device.hasTouchpad) PluviaApp.gamepadTouchpad.previewEnabled = true
+        }
+        onDispose {
+            if (device.hasGyro) PluviaApp.gamepadHub.gyroPreviewEnabled = false
+            if (device.hasTouchpad) PluviaApp.gamepadTouchpad.previewEnabled = false
+        }
+    }
+
+    // Spec 2026-08-16-A §1.4 (reuso): resultado do teste de vibração deste device;
+    // auto-limpa após ~3 s (LaunchedEffect keyed no resultado — cliques reiniciam a
+    // janela, mesmo comportamento do row antigo do SettingsGroupGamepad).
+    var rumbleResult by rememberSaveable(device.deviceId) {
+        mutableStateOf<RumblePhoneCurve.RumbleTarget?>(null)
+    }
+    if (rumbleResult != null) {
+        LaunchedEffect(rumbleResult) {
+            delay(3000)
+            rumbleResult = null
+        }
+    }
+
+    val headerInteraction = remember { MutableInteractionSource() }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // ── Header (toggle de colapso) — conteúdo byte-identical ao ConnectedDeviceRow.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .gamepadSelectable(
+                    selected = false,
+                    onClick = { if (isActive) expanded = !expanded },
+                    shape = RoundedCornerShape(12.dp),
+                    interactionSource = headerInteraction,
+                )
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = device.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                color = if (isActive) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                modifier = Modifier.weight(1f),
+            )
+            device.batteryPercent?.let { battery ->
+                Text(
+                    text = stringResource(R.string.gamepad_battery_format, battery),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (device.hasGyro) {
+                DiagCapabilityBadge(stringResource(R.string.gamepad_cap_gyro))
+            }
+            if (device.hasTouchpad) {
+                DiagCapabilityBadge(stringResource(R.string.gamepad_cap_touchpad))
+            }
+        }
+
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+            ) {
+                // ── Input viewer (fase B, reuso integral) com flash ao vivo filtrado
+                // por deviceId — handler registrado UMA vez lê o deviceId no momento
+                // do evento (rememberUpdatedState, lição C1); retorna false = observador.
+                val hotspots = remember(device.deviceId) {
+                    ControllerVisualLayout.layoutFor(device.faceStyle)
+                }
+                val flashTimes = remember(device.deviceId) { mutableStateOf<Map<String, Long>>(emptyMap()) }
+                val flashSet = remember(device.deviceId) { mutableStateOf<Set<String>>(emptySet()) }
+                val currentDeviceId by rememberUpdatedState(device.deviceId)
+                DisposableEffect(Unit) {
+                    fun handle(event: GamepadInputEvent): Boolean {
+                        val control = ControllerVisualLayout.flashControlFor(event.input, currentDeviceId)
+                            ?: return false
+                        flashTimes.value = flashTimes.value + (control to SystemClock.uptimeMillis())
+                        flashSet.value = flashSet.value + control
+                        return false
+                    }
+                    val handler: (GamepadInputEvent) -> Boolean = ::handle
+                    PluviaApp.events.on<GamepadInputEvent, Boolean>(handler)
+                    onDispose { PluviaApp.events.off<GamepadInputEvent, Boolean>(handler) }
+                }
+                // Expiração do flash (~600 ms) — remove dos holders; o decaimento
+                // visual (alpha) é do ControllerVisualView (deriva os timestamps).
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        if (flashTimes.value.isNotEmpty()) {
+                            val now = SystemClock.uptimeMillis()
+                            val pruned = flashTimes.value.filterValues { now - it < FLASH_DURATION_MS }
+                            if (pruned.size != flashTimes.value.size) {
+                                flashTimes.value = pruned
+                                flashSet.value = pruned.keys
+                            }
+                        }
+                        delay(50)
+                    }
+                }
+                ControllerVisualView(
+                    faceStyle = device.faceStyle,
+                    hotspots = hotspots,
+                    // Diagnóstico, não remap: todo controle AUTO (o viewer desenha os
+                    // badges neutros) e hotspots sem ação de toque.
+                    stateOf = { VisualControlState.AUTO },
+                    flash = flashSet,
+                    onHotspotTap = {},
+                    capturingControl = null,
+                    onCancelCapture = {},
+                    onRestoreControl = {},
+                )
+
+                // ── Readouts ao vivo (mono ~10 Hz — último valor do device coletado
+                // num laço de 100 ms; o StateFlow guarda a última amostra GLOBAL e o
+                // card mantém o último valor DESTE device). Nada é capturado de
+                // composição antiga: o laço lê o StateFlow no momento da amostragem.
+                var gyroPreview by remember(device.deviceId) { mutableStateOf<GyroPreview?>(null) }
+                var touchpadPreview by remember(device.deviceId) { mutableStateOf<TouchpadPreview?>(null) }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        PluviaApp.gamepadHub.gyroPreview.value?.let { preview ->
+                            if (preview.deviceId == device.deviceId) gyroPreview = preview
+                        }
+                        PluviaApp.gamepadTouchpad.touchpadPreview.value?.let { preview ->
+                            if (preview.deviceId == device.deviceId) touchpadPreview = preview
+                        }
+                        delay(100)
+                    }
+                }
+                if (device.hasGyro) {
+                    Text(
+                        text = stringResource(
+                            R.string.gamepad_diag_gyro_readout,
+                            gyroPreview?.let { String.format(Locale.US, "%.2f", it.yawRadS) } ?: "—",
+                            gyroPreview?.let { String.format(Locale.US, "%.2f", it.pitchRadS) } ?: "—",
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                if (device.hasTouchpad) {
+                    val base = stringResource(
+                        R.string.gamepad_diag_touchpad_readout,
+                        touchpadPreview?.let { String.format(Locale.US, "%.2f", it.x) } ?: "—",
+                        touchpadPreview?.let { String.format(Locale.US, "%.2f", it.y) } ?: "—",
+                    )
+                    Text(
+                        text = if (touchpadPreview?.down == true) {
+                            // Separador no código: aapt corta espaços nas pontas da
+                            // string resource (o sufixo vai colado sem o " · ").
+                            base + " · " + stringResource(R.string.gamepad_diag_touchpad_touching)
+                        } else {
+                            base
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+
+                // ── Botões de teste ──
+                DiagButtonRow(
+                    title = stringResource(R.string.gamepad_rumble_test_title),
+                    subtitle = when (rumbleResult) {
+                        RumblePhoneCurve.RumbleTarget.CONTROLLER ->
+                            stringResource(R.string.gamepad_rumble_test_result_controller)
+                        RumblePhoneCurve.RumbleTarget.PHONE ->
+                            stringResource(R.string.gamepad_rumble_test_result_phone)
+                        RumblePhoneCurve.RumbleTarget.NONE ->
+                            stringResource(R.string.gamepad_rumble_test_result_none)
+                        null -> stringResource(R.string.gamepad_rumble_test_hint)
+                    },
+                    onClick = {
+                        val vibrated = GamepadHaptics.rumbleDevice(device.deviceId, 0.6f, 0.6f, 300L)
+                        val target = GamepadHaptics.rumbleTargetFor(device.deviceId)
+                        // Sem vibração de fato (master OFF, sem vibrator, sem fallback)
+                        // ⇒ "nada" — o resultado é o que ACONTECEU, não o alvo teórico.
+                        rumbleResult = if (vibrated) target else RumblePhoneCurve.RumbleTarget.NONE
+                    },
+                )
+                if (device.hasGyro) {
+                    DiagButtonRow(
+                        title = stringResource(R.string.gamepad_diag_recenter_gyro_title),
+                        subtitle = stringResource(R.string.gamepad_diag_recenter_gyro_hint),
+                        onClick = { PluviaApp.gamepadHub.recenterGyro(device.deviceId) },
+                    )
+                }
+                // "Todos os botões" — só instruções + o viewer acescendo (sem lógica).
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    Text(
+                        text = stringResource(R.string.gamepad_diag_all_buttons_title),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = stringResource(R.string.gamepad_diag_all_buttons_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Badge de capacidade (mesmo visual do CapabilityBadge antigo do SettingsGroupGamepad). */
+@Composable
+private fun DiagCapabilityBadge(label: String) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .background(
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                RoundedCornerShape(6.dp),
+            )
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
+/**
+ * Linha de ação do card — mesmo padrão de navegação do GamepadSettingsButtonRow
+ * (`gamepadSelectable`, A/DPAD_CENTER ativa quando focada).
+ */
+@Composable
+private fun DiagButtonRow(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .gamepadSelectable(
+                selected = false,
+                onClick = onClick,
+                shape = RoundedCornerShape(12.dp),
+                interactionSource = interactionSource,
+            )
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}

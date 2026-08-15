@@ -31,13 +31,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
 import app.gamenative.R
+import app.gamenative.gamepad.FaceStyle
+import app.gamenative.gamepad.glyphs.GamepadGlyph
 import app.gamenative.ui.icons.InputIcons
 import app.gamenative.ui.theme.PluviaTheme
 import app.gamenative.ui.util.shouldShowGamepadUI
@@ -94,16 +98,37 @@ private fun GamepadButtonHint(
         action.button.iconRes
     }
 
+    // Onda 2 (spec 2026-08-13-onda2 §1.6): o hint segue o FaceStyle do device ATIVO —
+    // para estilos não-Xbox (PlayStation/Nintendo), o glyph universal (label por posição,
+    // ex.: ✕/◯) substitui o ícone Xbox. swapFaceButtons continua valendo (swap posicional).
+    // Guard de preview (revisão 2026-08-14): o hub é lateinit no PluviaApp — fora de
+    // preview o lookup é seguro; em preview (Android Studio/Paparazzi) cai no XBOX.
+    val activeFaceStyle: FaceStyle = if (LocalInspectionMode.current) {
+        FaceStyle.XBOX
+    } else {
+        PluviaApp.gamepadHub.activeDevice.value?.faceStyle ?: FaceStyle.XBOX
+    }
+    val universalButton = action.button.toUniversal()
+    val effectiveUniversal = if (swapFaceButtons) swapUniversal(universalButton) else universalButton
+
     Row(
         modifier = clickableModifier.padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Image(
-            painter = painterResource(iconRes),
-            contentDescription = label,
-            modifier = Modifier.size(28.dp),
-        )
+        if (activeFaceStyle != FaceStyle.XBOX && effectiveUniversal != null) {
+            GamepadGlyph(
+                button = effectiveUniversal,
+                faceStyle = activeFaceStyle,
+                size = 28.dp,
+            )
+        } else {
+            Image(
+                painter = painterResource(iconRes),
+                contentDescription = label,
+                modifier = Modifier.size(28.dp),
+            )
+        }
 
         Text(
             text = label,
@@ -113,6 +138,36 @@ private fun GamepadButtonHint(
         )
     }
 }
+
+/** Enum local (ícones Xbox) → botão universal (posição). null = sem equivalente. */
+private fun GamepadButton.toUniversal(): app.gamenative.gamepad.GamepadButton? = when (this) {
+    GamepadButton.A -> app.gamenative.gamepad.GamepadButton.FACE_BOTTOM
+    GamepadButton.B -> app.gamenative.gamepad.GamepadButton.FACE_RIGHT
+    GamepadButton.X -> app.gamenative.gamepad.GamepadButton.FACE_LEFT
+    GamepadButton.Y -> app.gamenative.gamepad.GamepadButton.FACE_TOP
+    GamepadButton.LB -> app.gamenative.gamepad.GamepadButton.LEFT_BUMPER
+    GamepadButton.RB -> app.gamenative.gamepad.GamepadButton.RIGHT_BUMPER
+    GamepadButton.LT -> app.gamenative.gamepad.GamepadButton.LEFT_TRIGGER
+    GamepadButton.RT -> app.gamenative.gamepad.GamepadButton.RIGHT_TRIGGER
+    GamepadButton.START -> app.gamenative.gamepad.GamepadButton.START
+    GamepadButton.SELECT -> app.gamenative.gamepad.GamepadButton.SELECT
+    GamepadButton.GUIDE -> app.gamenative.gamepad.GamepadButton.GUIDE
+    GamepadButton.DPAD_UP -> app.gamenative.gamepad.GamepadButton.DPAD_UP
+    GamepadButton.DPAD_DOWN -> app.gamenative.gamepad.GamepadButton.DPAD_DOWN
+    GamepadButton.DPAD_LEFT -> app.gamenative.gamepad.GamepadButton.DPAD_LEFT
+    GamepadButton.DPAD_RIGHT -> app.gamenative.gamepad.GamepadButton.DPAD_RIGHT
+    else -> null
+}
+
+/** swapFaceButtons como swap POSICIONAL (FACE_BOTTOM↔FACE_RIGHT, FACE_LEFT↔FACE_TOP). */
+private fun swapUniversal(button: app.gamenative.gamepad.GamepadButton?): app.gamenative.gamepad.GamepadButton? =
+    when (button) {
+        app.gamenative.gamepad.GamepadButton.FACE_BOTTOM -> app.gamenative.gamepad.GamepadButton.FACE_RIGHT
+        app.gamenative.gamepad.GamepadButton.FACE_RIGHT -> app.gamenative.gamepad.GamepadButton.FACE_BOTTOM
+        app.gamenative.gamepad.GamepadButton.FACE_LEFT -> app.gamenative.gamepad.GamepadButton.FACE_TOP
+        app.gamenative.gamepad.GamepadButton.FACE_TOP -> app.gamenative.gamepad.GamepadButton.FACE_LEFT
+        else -> button
+    }
 
 @Composable
 fun GamepadActionBar(

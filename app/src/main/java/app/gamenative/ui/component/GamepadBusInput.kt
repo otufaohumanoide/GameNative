@@ -30,11 +30,15 @@ import timber.log.Timber
  * for dialog windows, where events never reach this bus). Spec 2026-08-10, §3.1 (RC1):
  * re-arming below the dead zone (not a separate release zone) fixes the dead-navigation
  * bug caused by stick drift resting at 0.30–0.44.
+ *
+ * M4 (spec 2026-08-14-onda2-pos-implementacao, L4): a deadzone do MENU não é parâmetro —
+ * o hub é a fonte única (`menuDeadzoneFor`, perfil override ?: global 0.45), lida no
+ * momento do evento (holder vivo). Um call site que passasse deadZone custom perderia o
+ * efeito silenciosamente (parâmetro sombreado) — removido para a API não enganar.
  */
 @Composable
 fun BusJoystickFocusNavigator(
     enabled: Boolean,
-    deadZone: Float = 0.45f,
     cooldownMs: Long = 180L,
 ) {
     val focusManager = LocalFocusManager.current
@@ -48,17 +52,24 @@ fun BusJoystickFocusNavigator(
             if (!isGamepad) return false
             // Consumed: the overlay owns the stick, even when not moving focus.
             if (ev.actionMasked != MotionEvent.ACTION_MOVE) return true
-            // The DS4 touchpad reports a MIXED source (JOYSTICK|GAMEPAD|TOUCH_NAVIGATION|
-            // CLASS_POINTER): its absolute finger position arrives on AXIS_X/AXIS_Y and reads
-            // as a full-deflection stick (mag 1.0). Driving focus from it poisoned the menu
-            // (evidence, logcat 2026-08-13): it raced every focus bootstrap so focus never
-            // landed, and kept stamping GamepadNavigationClock, so the focus guardian
-            // skipped its restores forever ("user navigating, skipping cycle") — a dead
-            // menu that only a fresh surface (shader browser) could heal. Touchpad motion
-            // is still consumed here (the overlay owns the device), but never translated
-            // into focus moves. CLASS_POINTER is unset on real sticks (SOURCE_JOYSTICK/
-            // SOURCE_DPAD), so this only filters touch-class sources.
-            if ((ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0) return true
+            // Onda 2 (spec 2026-08-13-onda2 §1.5): deadzone do MENU por device (holder
+            // vivo do hub — perfil override ?: gamepadMenuStickDeadzone 0.45). Device
+            // removido (ghost) é consumido e descartado — nunca move foco (hotplug).
+            val hub = PluviaApp.gamepadHub
+            if (hub.deviceFor(ev.deviceId) == null) return true
+            val deadZone = hub.menuDeadzoneFor(ev.deviceId)
+            // P5-6 (sessão on-device 2026-08-14, "QuickMenu morto com o DS4 fundido do
+            // MIUI"): o DS4 fundido emite as MESMAS entradas em DUAS fontes — o hat/stick
+            // REAL chega também com fonte mista JOYSTICK|POINTER (0x5002513, trace
+            // 12:56–12:57). O filtro antigo descartava TODO POINTER-class — inclusive o
+            // hat real do fundido (D-pad morto no menu). Regra refinada: descarta só o
+            // dedo PURO (POINTER SEM classe JOYSTICK — 0x2002/0x1002): o dedo do
+            // touchpad nunca carrega classe JOYSTICK; a fonte mista é entrada de jogo
+            // real e o hat/stick dela dirige o foco. O dedo fantasma do touchpad gasto
+            // continua descartado (POINTER puro), consumido pela overlay.
+            val isPurePointer = (ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0 &&
+                (ev.source and InputDevice.SOURCE_CLASS_JOYSTICK) == 0
+            if (isPurePointer) return true
             val stickX = ev.getAxisValue(MotionEvent.AXIS_X)
             val stickY = ev.getAxisValue(MotionEvent.AXIS_Y)
             val hatX = ev.getAxisValue(MotionEvent.AXIS_HAT_X)
@@ -146,9 +157,20 @@ enum class ModeKeyBehavior {
  * keys Compose understands directly to the ComposeView (bypassing window focus routing) and
  * consumes them so the game never sees them while the overlay is open.
  *
- * - BUTTON_A -> synthetic DPAD_CENTER (with haptics), same translation as [GamepadKeyBridge].
- * - BUTTON_B / L1 / R1 / L2 / R2 / DPAD_* / ENTER -> re-dispatched raw into the ComposeView
- *   (the surface handlers consume them: hierarchical back, tab switching, page scroll).
+ * - CONFIRM button -> synthetic DPAD_CENTER (with haptics). The confirm button is
+ *   resolved per device by FaceStyle + swap (spec 2026-08-13-onda2 §1.6): FACE_BOTTOM
+ *   for Xbox/PlayStation/Generic, FACE_RIGHT for Nintendo, inverted by
+ *   PrefManager.gamepadSwapOkCancel / perfil swapOkCancel. Fallback BUTTON_A.
+ * - BUTTON_B / X / Y / L1 / R1 / L2 / R2 / DPAD_* / ENTER -> re-dispatched raw into the
+ *   ComposeView (the surface handlers consume them: hierarchical back, tab switching,
+ *   page scroll).
+ *
+ *   M4 (spec 2026-08-14-onda2-pos-implementacao, L7): X/Y são CONSUMIDOS por invariante
+ *   (com overlay aberto o jogo nunca vê input — consumo incondicional abaixo) e
+ *   re-dispatchados crus para a árvore Compose; hoje NENHUMA superfície consome o
+ *   re-dispatch de X/Y, mas ele fica como canal pronto para superfícies futuras
+ *   (ex.: atalho de favorito no browser de shaders). Decisão explícita, não acidente —
+ *   não "consertar" para não-consumo sem um consumidor real.
  * - KEYCODE_BUTTON_MODE (Home/PS) -> always consumed; with [ModeKeyBehavior.CloseOverlay]
  *   the first ACTION_DOWN invokes [onCloseOverlay] (spec 2026-08-10, §3.5 — G6: PS toggles
  *   the QuickMenu open/closed).
@@ -176,7 +198,10 @@ fun BusGamepadKeyBridge(
     DisposableEffect(enabled, view, modeKeyBehavior) {
         if (!enabled) return@DisposableEffect onDispose {}
         val handledKeys = intArrayOf(
+            KeyEvent.KEYCODE_BUTTON_A,
             KeyEvent.KEYCODE_BUTTON_B,
+            KeyEvent.KEYCODE_BUTTON_X,
+            KeyEvent.KEYCODE_BUTTON_Y,
             KeyEvent.KEYCODE_BUTTON_L1,
             KeyEvent.KEYCODE_BUTTON_R1,
             KeyEvent.KEYCODE_BUTTON_L2,
@@ -222,9 +247,15 @@ fun BusGamepadKeyBridge(
                 // P1: consumed so the game never reacts behind the open overlay.
                 return true
             }
-            if (event.keyCode == KeyEvent.KEYCODE_BUTTON_A) {
+            // Fase 6 / Onda 2 (spec 2026-08-13-onda2 §1.6): o botão de CONFIRMAÇÃO é
+            // resolvido por FaceStyle + swap (hub — holder vivo, lido no call time).
+            // Fallback BUTTON_A (Xbox default) quando o mapping não tem binding de tecla.
+            val confirmKey = PluviaApp.gamepadHub.confirmKeyCodeFor(event.deviceId)
+                ?: KeyEvent.KEYCODE_BUTTON_A
+            if (event.keyCode == confirmKey) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    GamepadHaptics.vibrate(view.context)
+                    // U5: vibra o DEVICE (perfil rumbleOnActivate ?: global).
+                    GamepadHaptics.vibrateDevice(view.context, event.deviceId, GamepadHaptics.HapticEffect.ACTIVATE)
                     view.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER))
                     view.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER))
                 }

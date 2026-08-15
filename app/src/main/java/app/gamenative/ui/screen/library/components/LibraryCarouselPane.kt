@@ -232,6 +232,7 @@ internal fun LibraryCarouselPane(
     focusTargetListIndex: Int? = null,
     onFocusedIndexChanged: (Int) -> Unit = {},
     shaderEnabledIds: Set<String> = emptySet(),
+    profileOverrideIds: Set<String> = emptySet(),
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val pullToRefreshState = rememberPullToRefreshState()
@@ -533,6 +534,7 @@ internal fun LibraryCarouselPane(
                                             gameStats = state.statsFor(item),
                                             showFocusGlow = false,
                                             hasShader = item.appId in shaderEnabledIds,
+                                            hasProfileOverrides = item.appId in profileOverrideIds,
                                             enableFocusScale = false,
                                             animateStats = item.appId == settledBackdropItem?.appId,
                                         )

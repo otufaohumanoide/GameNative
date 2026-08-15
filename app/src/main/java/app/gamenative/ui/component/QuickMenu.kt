@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.QueryStats
@@ -83,7 +84,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.KeyEventType
@@ -97,6 +97,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import app.gamenative.BuildConfig
 import app.gamenative.PrefManager
 import app.gamenative.R
 import app.gamenative.powercontrol.PowerManager
@@ -127,6 +128,8 @@ object QuickMenuAction {
     const val TOUCHSCREEN_MODE = 7
     const val DISABLE_MOUSE = 8
     const val SHOOTER_MODE = 9
+    // F3.1 (spec 2026-08-15-input-core-avancado): editor do Radial Menu.
+    const val RADIAL_MENU = 10
 }
 
 private object QuickMenuTab {
@@ -333,6 +336,15 @@ fun QuickMenu(
                     id = QuickMenuAction.EDIT_PHYSICAL_CONTROLLER,
                     icon = Icons.Default.Gamepad,
                     labelResId = R.string.edit_physical_controller,
+                    accentColor = PluviaTheme.colors.accentPurple,
+                )
+            )
+            // F3.1: editor do Radial Menu (setores/macros; gatilho = camada U3).
+            add(
+                QuickMenuItem(
+                    id = QuickMenuAction.RADIAL_MENU,
+                    icon = Icons.Default.Menu,
+                    labelResId = R.string.radial_menu_title,
                     accentColor = PluviaTheme.colors.accentPurple,
                 )
             )
@@ -558,7 +570,14 @@ fun QuickMenu(
             repeat(remembered) { focusManager.moveFocus(FocusDirection.Down) }
             return
         }
-        // Tab with no focusable content — fall back to its rail button.
+        // Tab with no focusable content — fall back to its rail button. D3 audit
+        // (spec 2026-08-15 focus-feedback-v2, §1.3): the rail buttons are always-VISIBLE
+        // focus targets that draw the same gamepadFocus ring when focused
+        // (QuickMenuTabButton -> gamepadSelectable), so this fallback never lands on an
+        // invisible container. Tabs whose list can be empty render an explicit focusable
+        // empty state instead (QuickMenuEmptyStateRow — TOOLS); this path remains the
+        // last resort for transient loading states (e.g. EFFECTS before the renderer
+        // reports in).
         val railRequester = when (tab) {
             QuickMenuTab.HUD -> hudTabFocusRequester
             QuickMenuTab.LSFG -> lsfgTabFocusRequester
@@ -1443,11 +1462,14 @@ private fun ToolsQuickMenuTab(
         )
 
         if (!isLoadingProcesses && processes.isEmpty()) {
-            Text(
+            // D3 (spec 2026-08-15 focus-feedback-v2, §1.3): the empty state is itself a
+            // focus target, so gamepad focus lands on a VISIBLE content node with a ring
+            // instead of silently falling back to the tab rail.
+            QuickMenuEmptyStateRow(
                 text = stringResource(R.string.tools_wine_processes_empty),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                accentColor = accentColor,
+                focusRequester = firstItemFocusRequester,
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         } else {
             val clampedToolsIndex = if (processes.isEmpty()) {
@@ -1493,6 +1515,9 @@ private fun PerformanceHudQuickMenuTab(
     modifier: Modifier = Modifier,
 ) {
     val accentColor = PluviaTheme.colors.accentPurple
+    // spec 2026-08-16-debug-hud-ui: estado local do toggle de latência (só a HUD
+    // tab observa; o overlay lê o pref via poll — sem estado novo no XServerScreen).
+    var isLatencyHudEnabled by remember { mutableStateOf(PrefManager.debugLatencyHudEnabled) }
 
     Column(
         modifier = modifier
@@ -1552,6 +1577,25 @@ private fun PerformanceHudQuickMenuTab(
             onToggle = onTogglePerformanceHud,
             accentColor = accentColor,
         )
+
+        // spec 2026-08-16-debug-hud-ui: HUD de latência de input — toggle de
+        // USUÁRIO para o LatencyDebugOverlay (mesma ergonomia do Performance HUD;
+        // só em builds de debug, onde o overlay existe). Sem QuickMenuAction: o
+        // overlay polla o pref (≤500 ms) e não há efeito colateral no XServerScreen.
+        if (BuildConfig.DEBUG) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            QuickMenuToggleRow(
+                title = stringResource(R.string.quick_menu_latency_hud),
+                subtitle = stringResource(R.string.quick_menu_latency_hud_description),
+                enabled = isLatencyHudEnabled,
+                onToggle = {
+                    isLatencyHudEnabled = !isLatencyHudEnabled
+                    PrefManager.debugLatencyHudEnabled = isLatencyHudEnabled
+                },
+                accentColor = accentColor,
+            )
+        }
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -2056,6 +2100,64 @@ private fun QuickMenuSectionHeader(
     }
 }
 
+/**
+ * Explicit "nothing navigable" state for tabs whose list can be empty (D3 audit,
+ * spec 2026-08-15 focus-feedback-v2, §1.3): the message itself is a focus target, so
+ * gamepad focus lands on a VISIBLE content node with the standard focus ring instead of
+ * silently falling back to the tab rail. Not clickable — A/DPAD_CENTER simply propagate.
+ */
+@Composable
+private fun QuickMenuEmptyStateRow(
+    text: String,
+    accentColor: Color,
+    focusRequester: FocusRequester? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(14.dp)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(shape)
+            .background(
+                if (isFocused) {
+                    accentColor.copy(alpha = 0.08f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f)
+                },
+            )
+            .then(
+                if (focusRequester != null) {
+                    Modifier.focusRequester(focusRequester)
+                } else {
+                    Modifier
+                }
+            )
+            .then(
+                if (onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(0, onFocusIndexChanged)
+                } else {
+                    Modifier
+                }
+            )
+            .gamepadFocusable(
+                state = if (isFocused) GamepadFocusState.Focused else null,
+                shape = shape,
+                interactionSource = interactionSource,
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (isFocused) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 @Composable
 private fun QuickMenuCloseButton(
     onClick: () -> Unit,
@@ -2286,20 +2388,14 @@ internal fun QuickMenuAdjustmentRow(
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(shape)
             .background(
+                // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus): gradientes
+                // são da TELA PRINCIPAL (Library) e scrims de artwork; menus internos
+                // usam cores ESTÁTICAS da escada do tema (padrão SettingsScreen row —
+                // focused = accent estático com alpha fixo, nunca gradiente).
                 if (isFocused) {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.16f),
-                            accentColor.copy(alpha = 0.08f),
-                        ),
-                    )
+                    accentColor.copy(alpha = 0.12f)
                 } else {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f),
-                        ),
-                    )
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
                 },
             )
             .then(
@@ -2500,20 +2596,11 @@ internal fun QuickMenuToggleRow(
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
+                // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus): estático.
                 if (isFocused) {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.16f),
-                            accentColor.copy(alpha = 0.08f),
-                        ),
-                    )
+                    accentColor.copy(alpha = 0.12f)
                 } else {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f),
-                        ),
-                    )
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
                 },
             )
             .then(
@@ -2611,20 +2698,11 @@ private fun QuickMenuDetailRow(
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(shape)
             .background(
+                // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus): estático.
                 if (isFocused) {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.14f),
-                            accentColor.copy(alpha = 0.06f),
-                        ),
-                    )
+                    accentColor.copy(alpha = 0.12f)
                 } else {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f),
-                        ),
-                    )
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
                 },
             )
             .then(
@@ -2719,12 +2797,9 @@ private fun QuickMenuItemRow(
             .then(
                 if (isFocused && isEnabled) {
                     Modifier.background(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                accentColor.copy(alpha = 0.15f),
-                                accentColor.copy(alpha = 0.05f),
-                            ),
-                        ),
+                        // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus):
+                        // estático — gradiente é só da tela principal.
+                        color = accentColor.copy(alpha = 0.12f),
                     )
                 } else {
                     Modifier

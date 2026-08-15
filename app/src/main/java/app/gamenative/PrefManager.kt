@@ -548,6 +548,16 @@ object PrefManager {
         set(value) {
             setPref(SHOW_CONTROLLER_DEBUG_MENU, value)
         }
+
+    // HUD de latência de input (spec 2026-08-16-debug-hud-ui): interruptor de USUÁRIO
+    // (default OFF); a propriedade debug.gamenative.latency continua valendo para
+    // automação/harness — o overlay mostra com prop=="1" OU este pref ligado.
+    private val DEBUG_LATENCY_HUD_ENABLED = booleanPreferencesKey("debugLatencyHudEnabled")
+    var debugLatencyHudEnabled: Boolean
+        get() = getPref(DEBUG_LATENCY_HUD_ENABLED, false)
+        set(value) {
+            setPref(DEBUG_LATENCY_HUD_ENABLED, value)
+        }
     private val LAUNCH_BIONIC_STEAM = booleanPreferencesKey("launch_bionic_steam")
     var launchBionicSteam: Boolean
         get() = getPref(LAUNCH_BIONIC_STEAM, false)
@@ -1451,5 +1461,62 @@ object PrefManager {
                 setPref(NEXUS_LAST_PLACEMENT_JSON, value)
             }
         }
+
+    /* Gamepad universal (spec 2026-08-13 — gamepad-universal-correcao, Passo 1) */
+    private val GAMEPAD_UNIVERSAL_ENABLED = booleanPreferencesKey("gamepadUniversalEnabled")
+    var gamepadUniversalEnabled: Boolean
+        get() = getPref(GAMEPAD_UNIVERSAL_ENABLED, false)
+        set(value) { setPref(GAMEPAD_UNIVERSAL_ENABLED, value) }
+
+    private val GAMEPAD_STICK_DEADZONE = floatPreferencesKey("gamepadStickDeadzone")
+    var gamepadStickDeadzone: Float
+        get() = getPref(GAMEPAD_STICK_DEADZONE, 0.15f)
+        set(value) { setPref(GAMEPAD_STICK_DEADZONE, value) }
+
+    private val GAMEPAD_MENU_STICK_DEADZONE = floatPreferencesKey("gamepadMenuStickDeadzone")
+    var gamepadMenuStickDeadzone: Float
+        get() = getPref(GAMEPAD_MENU_STICK_DEADZONE, 0.45f)
+        set(value) { setPref(GAMEPAD_MENU_STICK_DEADZONE, value) }
+
+    private val GAMEPAD_SWAP_OK_CANCEL = booleanPreferencesKey("gamepadSwapOkCancel")
+    var gamepadSwapOkCancel: Boolean
+        get() = getPref(GAMEPAD_SWAP_OK_CANCEL, false)
+        set(value) { setPref(GAMEPAD_SWAP_OK_CANCEL, value) }
+
+    /* U2 (spec 2026-08-14-gamepad-u2-touchpad-mouse): touchpad do controle → mouse.
+       Default OFF — opt-in; com OFF o caminho é byte-identical (V10). */
+    private val GAMEPAD_TOUCHPAD_MOUSE_ENABLED = booleanPreferencesKey("gamepadTouchpadMouseEnabled")
+    var gamepadTouchpadMouseEnabled: Boolean
+        get() = getPref(GAMEPAD_TOUCHPAD_MOUSE_ENABLED, false)
+        set(value) { setPref(GAMEPAD_TOUCHPAD_MOUSE_ENABLED, value) }
+
+    /* U5 (spec 2026-08-14-gamepad-u5-rumble): rumble do MENU por device. Default ON
+       (comportamento histórico — vibração de confirmação); perfil pode silenciar. */
+    private val GAMEPAD_RUMBLE_ENABLED = booleanPreferencesKey("gamepadRumbleEnabled")
+    var gamepadRumbleEnabled: Boolean
+        get() = getPref(GAMEPAD_RUMBLE_ENABLED, true)
+        set(value) { setPref(GAMEPAD_RUMBLE_ENABLED, value) }
+
+    /* F2.3 (spec 2026-08-15-input-core-avancado): tick háptico na ativação de camada
+       (U3) e no setor do radial menu. Default ON; `gamepadRumbleEnabled` guarda TUDO
+       (rumble desligado ⇒ tick silencioso também). */
+    private val GAMEPAD_LAYER_TICK_ENABLED = booleanPreferencesKey("gamepadLayerTickEnabled")
+    var gamepadLayerTickEnabled: Boolean
+        get() = getPref(GAMEPAD_LAYER_TICK_ENABLED, true)
+        set(value) { setPref(GAMEPAD_LAYER_TICK_ENABLED, value) }
+
+    /* Spec 2026-08-16-A §1.5: fallback de rumble no TELEFONE quando o controle não
+       expõe vibrator (curva pow 0.6 do GameNative original). Default ON (comportamento
+       do original); `gamepadRumbleEnabled` continua master — OFF desliga TUDO,
+       inclusive o fallback (o gate vive no GamepadHaptics.rumbleDevice). */
+    private val GAMEPAD_PHONE_RUMBLE_FALLBACK = booleanPreferencesKey("gamepadPhoneRumbleFallback")
+    var gamepadPhoneRumbleFallback: Boolean
+        get() = getPref(GAMEPAD_PHONE_RUMBLE_FALLBACK, true)
+        set(value) { setPref(GAMEPAD_PHONE_RUMBLE_FALLBACK, value) }
+
+    private val GAMEPAD_TOUCHPAD_SENSITIVITY = floatPreferencesKey("gamepadTouchpadSensitivity")
+    var gamepadTouchpadSensitivity: Float
+        get() = getPref(GAMEPAD_TOUCHPAD_SENSITIVITY, 1.0f)
+        set(value) { setPref(GAMEPAD_TOUCHPAD_SENSITIVITY, value) }
 
 }

@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
+import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
 
 /**
@@ -18,19 +19,23 @@ import app.gamenative.PrefManager
  * the left stick and the D-pad hat as *axis motion* in onGenericMotionEvent, which Compose
  * ignores — so joystick users cannot move focus in menus. This composable installs an
  * [View.OnGenericMotionListener] on the host view while [enabled] and moves focus once per
- * [cooldownMs] once an axis crosses [deadZone] (holding the stick scrolls steadily, never
- * free-runs). The event is consumed only when a movement is actually issued.
+ * [cooldownMs] once an axis crosses the menu deadzone (holding the stick scrolls steadily,
+ * never free-runs). The event is consumed only when a movement is actually issued.
  *
  * The dead-zone/hysteresis/cooldown decision lives in the pure [GamepadStickLogic]
  * (spec 2026-08-10, §3.1 — RC1): re-arming below the dead zone replaces the old 0.30
  * release zone, so a drifting stick resting at 0.30–0.44 can no longer kill navigation.
+ *
+ * M4 (spec 2026-08-14-onda2-pos-implementacao, L4): a deadzone do MENU não é parâmetro —
+ * o hub é a fonte única (`menuDeadzoneFor`, perfil override ?: global 0.45), lida no
+ * momento do evento (holder vivo). Um call site que passasse deadZone custom perderia o
+ * efeito silenciosamente (parâmetro sombreado) — removido para a API não enganar.
  *
  * Spec: docs/superpowers/specs/2026-08-08-dpad-shader-navigation-design.md
  */
 @Composable
 fun JoystickFocusNavigator(
     enabled: Boolean,
-    deadZone: Float = 0.45f,
     cooldownMs: Long = 180L,
 ) {
     val focusManager = LocalFocusManager.current
@@ -51,6 +56,11 @@ fun JoystickFocusNavigator(
             val isGamepad = (ev.source and InputDevice.SOURCE_JOYSTICK) != 0 ||
                 (ev.source and InputDevice.SOURCE_DPAD) != 0
             if (!isGamepad) return@OnGenericMotionListener false
+            // Onda 2 (spec 2026-08-13-onda2 §1.5): deadzone do MENU por device (hub —
+            // holder vivo). Device removido (ghost): consome e descarta (hotplug).
+            val hub = PluviaApp.gamepadHub
+            if (hub.deviceFor(ev.deviceId) == null) return@OnGenericMotionListener true
+            val deadZone = hub.menuDeadzoneFor(ev.deviceId)
             val stickX = ev.getAxisValue(MotionEvent.AXIS_X)
             val stickY = ev.getAxisValue(MotionEvent.AXIS_Y)
             val hatX = ev.getAxisValue(MotionEvent.AXIS_HAT_X)

@@ -1,0 +1,138 @@
+{
+  "generatedFrom": "local-seed-v1",
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "id": "ds4-swipes-radial",
+      "game": null,
+      "faceStyle": "PLAYSTATION",
+      "controller": "DualShock 4",
+      "name": "Touchpad swipes — radial + macros",
+      "author": "gamenative-seed",
+      "description": "Swipe right on the touchpad opens the radial menu; swipe up fires a two-key macro; swipe down taps the mode button.",
+      "downloads": 640,
+      "profile": {
+        "touchpadSwipes": {
+          "RIGHT": [
+            {
+              "keyCode": -1000,
+              "holdMs": 60,
+              "gapMs": 40
+            }
+          ],
+          "UP": [
+            {
+              "keyCode": 96
+            },
+            {
+              "keyCode": 99,
+              "holdMs": 80,
+              "gapMs": 60
+            }
+          ],
+          "DOWN": [
+            {
+              "keyCode": 110,
+              "holdMs": 120,
+              "gapMs": 40
+            }
+          ]
+        },
+        "schemaVersion": 1
+      }
+    },
+    {
+      "id": "menu-shift-haptics",
+      "game": null,
+      "faceStyle": "GENERIC",
+      "controller": "any controller",
+      "name": "Shift layer + menu haptics off",
+      "author": "gamenative-seed",
+      "description": "FACE_LEFT held = shift layer (consumed — remaps R1/L1 without opening the radial). Menu haptics disabled for quiet navigation.",
+      "downloads": 98,
+      "profile": {
+        "layerTriggers": {
+          "FACE_LEFT": {
+            "button": "FACE_LEFT",
+            "mode": "HOLD",
+            "isShift": true
+          }
+        },
+        "rumbleOnActivate": false,
+        "rumbleOnBack": false,
+        "schemaVersion": 1
+      }
+    },
+    {
+      "id": "racing-flick-stick",
+      "game": "dirt-rally",
+      "faceStyle": "XBOX",
+      "controller": "Xbox Series / DualShock 4",
+      "name": "Flick stick + response curve — rally",
+      "author": "gamenative-seed",
+      "description": "Flick stick on the right stick for hairpins, exponential curve on the left stick, custom 5-point LUT on the right stick (sanitized by the sync).",
+      "downloads": 205,
+      "profile": {
+        "leftStickDeadzone": 0.08,
+        "rightStickDeadzoneMode": "AXIAL",
+        "rightStickDeadzone": 0.1,
+        "leftStickCurve": "EXPONENTIAL",
+        "flickStickEnabled": true,
+        "flickStickActivationRadius": 0.85,
+        "flickStickSnapAngle": 0.0,
+        "rightStickLut": [
+          0.0,
+          0.3,
+          0.55,
+          0.8,
+          1.0
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "id": "silk-hollow-gyro",
+      "game": "silksong",
+      "faceStyle": "PLAYSTATION",
+      "controller": "DualShock 4 / DualSense",
+      "name": "Gyro aim — Silksong",
+      "author": "gamenative-seed",
+      "description": "Gyro as mouse for aiming sections, with Mahony fusion for drift-free pitch. Touchpad double-tap = right click for menus.",
+      "downloads": 412,
+      "profile": {
+        "faceStyle": "PLAYSTATION",
+        "gyroMode": "MOUSE",
+        "gyroSensitivity": 1.4,
+        "gyroDeadzone": 0.06,
+        "gyroActivateButton": "LEFT_TRIGGER",
+        "gyroFusionEnabled": true,
+        "gyroFusionKp": 12.0,
+        "gyroFusionKi": 0.02,
+        "touchpadDoubleTapRightClick": true,
+        "schemaVersion": 1
+      }
+    },
+    {
+      "id": "silk-souls-layout",
+      "game": "silksong",
+      "faceStyle": "PLAYSTATION",
+      "controller": "DualShock 4 / DualSense",
+      "name": "Souls layout — attack on bumpers",
+      "author": "gamenative-seed",
+      "description": "Attack/dash on R1/L1 with face buttons for items — classic Souls layout. Turbo on FACE_BOTTOM for fast menu skipping.",
+      "downloads": 1830,
+      "profile": {
+        "faceStyle": "PLAYSTATION",
+        "swapOkCancel": true,
+        "layers": {
+          "DEFAULT": {
+            "RIGHT_BUMPER": "key:96",
+            "LEFT_BUMPER": "key:99",
+            "FACE_BOTTOM": "key:100:turbo"
+          }
+        },
+        "schemaVersion": 1
+      }
+    }
+  ]
+}

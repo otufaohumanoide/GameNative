@@ -51,6 +51,10 @@ import app.gamenative.ui.util.SnackbarHostController
 import app.gamenative.utils.AnimatedPngDecoder
 import app.gamenative.data.GameSource
 import app.gamenative.powercontrol.PowerManager
+import app.gamenative.gamepad.mapping.AndroidInputAdapter
+import app.gamenative.gamepad.processing.LatencyTracker
+import app.gamenative.gamepad.radial.RadialMenuExecutor
+import app.gamenative.gamepad.GamepadTouchpadForwarder
 import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.IconDecoder
 import app.gamenative.utils.IntentLaunchManager
@@ -140,21 +144,6 @@ class MainActivity : ComponentActivity() {
         finishAndRemoveTask()
     }
 
-    private var controllerInputManager: InputManager? = null
-    private val controllerDeviceListener = object : InputManager.InputDeviceListener {
-        override fun onInputDeviceAdded(deviceId: Int) {
-            ControllerManager.getInstance().onDeviceConnected(deviceId)
-        }
-
-        override fun onInputDeviceRemoved(deviceId: Int) {
-            ControllerManager.getInstance().onDeviceDisconnected(deviceId)
-        }
-
-        override fun onInputDeviceChanged(deviceId: Int) {
-            ControllerManager.getInstance().onDeviceConnected(deviceId)
-        }
-    }
-
     private var index = totalIndex++
 
     // Add a property to keep a reference to the orientation sensor listener
@@ -212,8 +201,18 @@ class MainActivity : ComponentActivity() {
 
         // Initialize the controller management system
         ControllerManager.getInstance().init(applicationContext)
-        controllerInputManager = getSystemService(Context.INPUT_SERVICE) as InputManager
-        controllerInputManager?.registerInputDeviceListener(controllerDeviceListener, null)
+        // O InputDeviceListener ÚNICO é o GamepadHub (spec 2026-08-13-onda2 §1.1) —
+        // registrado no PluviaApp.onCreate; o listener por-Activity foi removido.
+
+        // D (spec 2026-08-16-D-touchpad-swipes-macros): o forwarder do touchpad NÃO
+        // tem Activity (é app-scoped) — este MainActivity (que alimenta o gate de
+        // ghost input) injeta o executor de macros de swipe via RadialMenuExecutor
+        // (padrão de injeção do TouchpadMouseSink). Múltiplas janelas: a última
+        // criada vence — mesma política do forwarder compartilhado.
+        PluviaApp.gamepadTouchpad.swipeExecutorSink =
+            GamepadTouchpadForwarder.SwipeExecutorSink { keys, deviceId ->
+                RadialMenuExecutor.execute(keys, deviceId, this@MainActivity)
+            }
 
         ContainerUtils.setContainerDefaults(applicationContext)
 
@@ -382,9 +381,6 @@ class MainActivity : ComponentActivity() {
 
         super.onDestroy()
 
-        controllerInputManager?.unregisterInputDeviceListener(controllerDeviceListener)
-        controllerInputManager = null
-
         PluviaApp.events.off<AndroidEvent.SetSystemUIVisibility, Unit>(onSetSystemUi)
         PluviaApp.events.off<AndroidEvent.StartOrientator, Unit>(onStartOrientator)
         PluviaApp.events.off<AndroidEvent.SetAllowedOrientation, Unit>(onSetAllowedOrientation)
@@ -432,6 +428,11 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         PowerManager.resume()
         PluviaApp.isActivityInForeground = true
+        // U1 (V3): retoma o gyro só com container de pé (xServerView != null) — sem
+        // jogo a fonte permanece suspensa (bateria).
+        if (PluviaApp.xServerView != null) {
+            PluviaApp.gamepadSensorSource.setSuspended(false)
+        }
 
         lifecycleScope.launch { app.gamenative.launch.LaunchReadiness.refresh() }
         // Re-apply immersive mode to ensure fullscreen persists
@@ -481,6 +482,9 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         PowerManager.pause()
         PluviaApp.isActivityInForeground = false
+        // U1 (V3 — vazamento = bateria): screen-off/background suspende os listeners
+        // de sensor; o XServerScreen/onResume retomam quando o container volta.
+        PluviaApp.gamepadSensorSource.setSuspended(true)
         if (hasReadyGameLifecycleState("pause")) {
             when {
                 PluviaApp.isNeverSuspendMode() -> {
@@ -582,6 +586,11 @@ class MainActivity : ComponentActivity() {
         // M8 (spec 2026-08-12): GamepadTrace — every gamepad key entering the bus, with the
         // device/source identity the routing decision uses. Debug-only (Timber.d).
         if (ExternalController.isGameController(event.device)) {
+            // F0 (spec 2026-08-15-input-core-avancado): t0 da medição de latência —
+            // dispatchKeyEvent → PhysicalControllerHandler.onKeyEvent. Barato quando
+            // desligado (load + branch); a correlação é por slot pendente (dispatch
+            // síncrono na main thread — ver LatencyTracker).
+            LatencyTracker.begin(LatencyTracker.Source.KEY, System.nanoTime())
             Timber.d(
                 "GamepadTrace: key dev=%s src=0x%x action=%d code=%d repeat=%d",
                 event.device?.name, event.device?.sources ?: 0, event.action, event.keyCode, event.repeatCount,
@@ -598,7 +607,7 @@ class MainActivity : ComponentActivity() {
         // re-exposed; a future touchpad→mouse feature plugs into this exact point.
         if (PrefManager.ignoreControllerTouchpad &&
             ExternalController.isGameController(event.device) &&
-            (event.source and InputDevice.SOURCE_CLASS_POINTER) != 0
+            isGhostPointerSource(event.source)
         ) {
             return true
         }
@@ -606,6 +615,11 @@ class MainActivity : ComponentActivity() {
         var eventDispatched = PluviaApp.events.emit(AndroidEvent.KeyEvent(event)) { keyEvent ->
             keyEvent.any { it }
         } == true
+
+        // Onda 2 (spec 2026-08-13-onda2 §1.2): o hub traduz o cru para eventos lógicos
+        // e emite no bus (multicast, gate-aware). NUNCA altera o retorno do dispatch —
+        // a decisão de janela continua sendo dos listeners crus.
+        PluviaApp.gamepadHub.onKey(AndroidInputAdapter.toRawKey(event))
 
         // TODO: Temp'd removed this.
         //  Idealy, compose handles back presses automaticially in which we can override it in certain composables.
@@ -633,6 +647,9 @@ class MainActivity : ComponentActivity() {
     override fun dispatchGenericMotionEvent(ev: MotionEvent?): Boolean {
         // M8 (spec 2026-08-12): GamepadTrace — every gamepad motion entering the bus.
         if (ev != null && ExternalController.isGameController(ev.device)) {
+            // F0 (spec 2026-08-15-input-core-avancado): t0 da medição de latência —
+            // dispatchGenericMotionEvent → PhysicalControllerHandler.onGenericMotionEvent.
+            LatencyTracker.begin(LatencyTracker.Source.MOTION, System.nanoTime())
             Timber.d(
                 "GamepadTrace: motion dev=%s src=0x%x action=%d axes=[x=%.2f y=%.2f hatX=%.2f hatY=%.2f]",
                 ev.device?.name, ev.device?.sources ?: 0, ev.actionMasked,
@@ -647,8 +664,20 @@ class MainActivity : ComponentActivity() {
         // game as phantom stick motion (mag 1.0) while the user isn't touching anything.
         if (PrefManager.ignoreControllerTouchpad && ev != null &&
             ExternalController.isGameController(ev.device) &&
-            (ev.source and InputDevice.SOURCE_CLASS_POINTER) != 0
+            isGhostPointerSource(ev.source)
         ) {
+            // U2 (spec 2026-08-14-gamepad-u2-touchpad-mouse, §1.4 — V7): o gate vira
+            // ROTEADOR — o consumidor do touchpad→mouse lê o MESMO ponto ANTES do
+            // consume (única exceção do V7). O consume continua valendo para
+            // navegação/jogo: fantasmas nunca chegam ao foco nem ao jogo.
+            // Spec 2026-08-16-C §1.3: além do consumidor do mouse (toggle ON), o
+            // forwarder é alimentado quando o PREVIEW do card de diagnóstico está ON
+            // (o readout funciona mesmo com o mouse-toggle OFF). Preview OFF ⇒
+            // condição idêntica à anterior (byte-identical); o forwarder decide tudo
+            // nos próprios gates — nenhuma decisão muda aqui.
+            if (PrefManager.gamepadTouchpadMouseEnabled || PluviaApp.gamepadTouchpad.previewEnabled) {
+                AndroidInputAdapter.toRawTouch(ev)?.let { PluviaApp.gamepadTouchpad.onRawTouch(it) }
+            }
             return true
         }
 
@@ -656,8 +685,31 @@ class MainActivity : ComponentActivity() {
             event.any { it }
         } == true
 
+        // Onda 2: hub traduz motion cru → eventos lógicos (gate-aware; retorno não altera
+        // a decisão de janela — multicast).
+        if (ev != null) {
+            PluviaApp.gamepadHub.onAxis(AndroidInputAdapter.toRawAxis(ev))
+        }
+
         return if (!eventDispatched) super.dispatchGenericMotionEvent(ev) else true
     }
+
+    /**
+     * Gate de ghost input — regra de FONTE do evento (P5-6, sessão on-device
+     * 2026-08-14, "QuickMenu morto com o DS4 fundido do MIUI"): o DS4 fundido emite as
+     * MESMAS teclas/eixos em DUAS fontes — `0x5100519` (JOYSTICK, sem pointer) e
+     * `0x5002513` (JOYSTICK|POINTER — GamepadTrace 12:56–12:57). Consumir todo
+     * POINTER-class (regra original do spec 2026-08-13) engolia o hat/stick REAL que
+     * chega na fonte mista — D-pad morto no menu.
+     *
+     * Regra refinada: fantasma = evento POINTER-class SEM classe JOYSTICK (dedo puro
+     * no touchpad — fonte 0x2002/0x1002, sem eixos de jogo). A fonte mista carrega
+     * entrada REAL de jogo (hat/stick/teclas) e passa; o dedo fantasma do touchpad
+     * gasto continua consumido (nunca tem classe JOYSTICK).
+     */
+    private fun isGhostPointerSource(source: Int): Boolean =
+        (source and InputDevice.SOURCE_CLASS_POINTER) != 0 &&
+            (source and InputDevice.SOURCE_CLASS_JOYSTICK) == 0
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -732,6 +784,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        // F2.4 (spec 2026-08-15-input-core-avancado): o hub lê o foco no momento do
+        // evento — ativação de camada/tick vira no-op sem foco (nunca input fantasma).
+        PluviaApp.gamepadHub.windowFocused = hasFocus
         // Re-apply immersive mode when window gains focus to ensure bars stay hidden
         if (hasFocus && !desiredSystemUiVisible) {
             applyImmersiveMode()

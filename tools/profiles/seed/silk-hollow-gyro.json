@@ -1,0 +1,22 @@
+{
+  "id": "silk-hollow-gyro",
+  "game": "silksong",
+  "faceStyle": "PLAYSTATION",
+  "controller": "DualShock 4 / DualSense",
+  "name": "Gyro aim — Silksong",
+  "author": "gamenative-seed",
+  "description": "Gyro as mouse for aiming sections, with Mahony fusion for drift-free pitch. Touchpad double-tap = right click for menus.",
+  "downloads": 412,
+  "profile": {
+    "faceStyle": "PLAYSTATION",
+    "gyroMode": "MOUSE",
+    "gyroSensitivity": 1.4,
+    "gyroDeadzone": 0.06,
+    "gyroActivateButton": "LEFT_TRIGGER",
+    "gyroFusionEnabled": true,
+    "gyroFusionKp": 12.0,
+    "gyroFusionKi": 0.02,
+    "touchpadDoubleTapRightClick": true,
+    "schemaVersion": 1
+  }
+}
