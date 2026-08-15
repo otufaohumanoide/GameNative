@@ -92,6 +92,57 @@ def sanitize_lut(raw) -> list:
     return clean
 
 
+def binding_token_ok(token: str) -> bool:
+    """Espelho do GamepadBindingCodec.decode (spec 2026-08-16-H-binding-modifiers-
+    duckstation, §2.4): valida o FORMATO do token de binding — base `key:<int>` /
+    `axis:<int>:<-1|1>` / `hat:<int>:<int>0` + sufixo opcional `:turbo` + bloco final
+    `:m=<full,inv,s<%>,dz<%>>` (um ÚNICO campo `:`; vírgulas separam subcampos).
+    Leniente como o Kotlin: campos desconhecidos dentro do bloco são ignorados e a
+    base tolera partes extras depois dos parâmetros obrigatórios."""
+    if not isinstance(token, str):
+        return False
+    parts = token.split(":")
+    if parts and parts[-1].startswith("m="):
+        block = parts[-1][2:]
+        parts = parts[:-1]
+        # Campos do bloco: full/inv/s<digitos>/dz<digitos>; o resto é ignorado
+        # (política V1 — nunca quebrar perfil futuro). Vazio após isso = lixo que o
+        # Kotlin também ignora, então não rejeita sozinho.
+        for field in block.split(","):
+            if field == "" or field in ("full", "inv"):
+                continue
+            if (field.startswith("s") and field[1:].isdigit()) or \
+                    (field.startswith("dz") and field[2:].isdigit()):
+                continue
+            # campo desconhecido — ignorado (leniente, espelho do decode)
+    turbo = bool(parts) and parts[-1] == "turbo"
+    if turbo:
+        parts = parts[:-1]
+    if not parts:
+        return False
+    kind = parts[0]
+
+    def int_ok(s: str) -> bool:
+        try:
+            int(s)
+            return True
+        except ValueError:
+            return False
+
+    if kind == "key":
+        return len(parts) >= 2 and int_ok(parts[1])
+    if kind == "axis":
+        return len(parts) >= 3 and int_ok(parts[1]) and parts[2] in ("-1", "1")
+    if kind == "hat":
+        return (
+            len(parts) >= 3
+            and int_ok(parts[1])
+            and int_ok(parts[2])
+            and int(parts[2]) > 0
+        )
+    return False
+
+
 def validate_profile(raw: dict, where: str) -> tuple:
     """Valida o objeto GamepadProfile. Retorna (ok, sanitized) ou (False, [])."""
     errors = []
@@ -148,6 +199,17 @@ def validate_profile(raw: dict, where: str) -> tuple:
             for l, bindings in layers.items()
         ):
             errors.append("layers deve ser mapa camada → mapa botão → string")
+        else:
+            # H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.4): o FORMATO dos
+            # tokens é validado (espelho do GamepadBindingCodec) — o sufixo :m= é
+            # ACEITO pelo validador; token fora da gramática descarta a entry.
+            for layer_name, bindings in layers.items():
+                for button, token in bindings.items():
+                    if not binding_token_ok(token):
+                        errors.append(
+                            "layers[%s][%s] token de binding inválido: %r"
+                            % (layer_name, button, token)
+                        )
 
     triggers = raw.get("layerTriggers")
     if triggers is not None:

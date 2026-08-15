@@ -42,6 +42,25 @@
       }
     },
     {
+      "id": "hair-trigger-invert",
+      "game": null,
+      "faceStyle": "XBOX",
+      "controller": "any controller with analog triggers",
+      "name": "Hair triggers + full-axis conversion",
+      "author": "gamenative-seed",
+      "description": "LEFT_TRIGGER as a full centered axis (HID pads report -1..1) with 130% sensitivity and a 5% binding dead zone; RIGHT_TRIGGER inverted (binding modifiers — spec 2026-08-16-H).",
+      "downloads": 47,
+      "profile": {
+        "layers": {
+          "DEFAULT": {
+            "LEFT_TRIGGER": "axis:17:1:m=full,s130,dz5",
+            "RIGHT_TRIGGER": "axis:18:1:m=inv"
+          }
+        },
+        "schemaVersion": 1
+      }
+    },
+    {
       "id": "menu-shift-haptics",
       "game": null,
       "faceStyle": "GENERIC",

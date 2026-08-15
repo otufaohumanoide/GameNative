@@ -2316,6 +2316,12 @@
     <string name="gamepad_layer_shift_title">Camada de shift</string>
     <string name="gamepad_layer_shift_subtitle">Consome o botão: remapeia os outros botões enquanto segurado, sem abrir o menu radial nem tick háptico</string>
     <string name="gamepad_binding_turbo_title">Turbo</string>
+    <string name="gamepad_binding_modifier_more">⋯</string>
+    <string name="gamepad_binding_modifier_title">Modificadores do vínculo</string>
+    <string name="gamepad_binding_modifier_invert_title">Inverter eixo</string>
+    <string name="gamepad_binding_modifier_full_axis_title">Eixo completo (gatilho)</string>
+    <string name="gamepad_binding_modifier_scale_title">Sensibilidade</string>
+    <string name="gamepad_binding_modifier_deadzone_title">Zona morta</string>
 <string name="gamepad_layer_tick_title">Tick de ativação de camada</string>
     <string name="gamepad_layer_tick_subtitle">Clique háptico curto ao ativar uma camada (guardado pelo interruptor de vibração)</string>
 <string name="gamepad_rumble_title">Vibração do controle (menu)</string>

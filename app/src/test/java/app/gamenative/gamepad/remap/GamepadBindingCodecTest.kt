@@ -1,6 +1,7 @@
 package app.gamenative.gamepad.remap
 
 import app.gamenative.gamepad.mapping.RawBinding
+import app.gamenative.gamepad.processing.BindingModifier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -69,6 +70,100 @@ class GamepadBindingCodecTest {
         assertNull(GamepadBindingCodec.decode("axis:0:2"))
         assertNull(GamepadBindingCodec.decode("hat:0:0"))     // máscara 0 inválida
         assertNull(GamepadBindingCodec.decode("hat:x:4"))
+    }
+
+    // ── H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.2/§4): bloco :m= ──
+
+    @Test
+    fun `mods roundtrip cada modificador isolado`() {
+        assertEquals(
+            GamepadBindingCodec.LayerBinding(RawBinding.Key(96), mod = BindingModifier(invert = true)),
+            GamepadBindingCodec.decode("key:96:m=inv"),
+        )
+        assertEquals(
+            GamepadBindingCodec.LayerBinding(RawBinding.Axis(17, 1), mod = BindingModifier(fullAxis = true)),
+            GamepadBindingCodec.decode("axis:17:1:m=full"),
+        )
+        assertEquals(
+            GamepadBindingCodec.LayerBinding(RawBinding.Axis(17, -1), mod = BindingModifier(scale = 1.3f)),
+            GamepadBindingCodec.decode("axis:17:-1:m=s130"),
+        )
+        assertEquals(
+            GamepadBindingCodec.LayerBinding(RawBinding.Hat(0, 4), mod = BindingModifier(deadzone = 0.05f)),
+            GamepadBindingCodec.decode("hat:0:4:m=dz5"),
+        )
+    }
+
+    @Test
+    fun `mods combinados com turbo roundtrip`() {
+        val mod = BindingModifier(fullAxis = true, invert = true, scale = 1.3f, deadzone = 0.05f)
+        val token = GamepadBindingCodec.encode(RawBinding.Axis(17, 1), turbo = true, mod = mod)
+        assertEquals("axis:17:1:turbo:m=full,inv,s130,dz5", token)
+        assertEquals(
+            GamepadBindingCodec.LayerBinding(RawBinding.Axis(17, 1), turbo = true, mod = mod),
+            GamepadBindingCodec.decode(token),
+        )
+    }
+
+    @Test
+    fun `encode omite campos default e o token sem mod e byte-identical ao atual`() {
+        // Sem modificadores ⇒ token IDÊNTICO ao formato atual (§2.2).
+        assertEquals("key:96", GamepadBindingCodec.encode(RawBinding.Key(96)))
+        assertEquals("key:96", GamepadBindingCodec.encode(RawBinding.Key(96), mod = BindingModifier()))
+        assertEquals(
+            "key:96",
+            GamepadBindingCodec.encode(
+                RawBinding.Key(96),
+                mod = BindingModifier(invert = false, fullAxis = false, scale = 1f, deadzone = 0f),
+            ),
+        )
+        assertEquals("axis:17:1", GamepadBindingCodec.encode(RawBinding.Axis(17, 1), mod = BindingModifier(scale = 1f)))
+        assertEquals(
+            "axis:17:1:m=inv",
+            GamepadBindingCodec.encode(RawBinding.Axis(17, 1), mod = BindingModifier(invert = true)),
+        )
+        // Round-trip ESTÁVEL: decode → encode é byte-identical (percentuais inteiros).
+        for (token in listOf(
+            "axis:17:1:m=full,s130,dz5",
+            "key:96:turbo:m=inv",
+            "hat:0:4:m=dz10",
+            "axis:23:-1:m=full,inv,s50,dz50",
+        )) {
+            val decoded = GamepadBindingCodec.decode(token)!!
+            assertEquals(token, GamepadBindingCodec.encode(decoded.raw, decoded.turbo, decoded.mod))
+        }
+    }
+
+    @Test
+    fun `decode ignora campos desconhecidos no bloco m`() {
+        // `future` é ignorado; inv preserva; s0 clampa em 50 → scale 0.5.
+        val binding = GamepadBindingCodec.decode("axis:17:1:m=future,inv,s0")!!
+        assertEquals(BindingModifier(invert = true, scale = 0.5f), binding.mod)
+        assertEquals(RawBinding.Axis(17, 1), binding.raw)
+        // Tudo desconhecido/default → mod null (token canônico, V1 leniente).
+        assertNull(GamepadBindingCodec.decode("key:96:m=whatever")!!.mod)
+        assertNull(GamepadBindingCodec.decode("key:96:m=")!!.mod)
+        // Percentuais fora da faixa clampam (s999 → 2.0, dz999 → 0.5).
+        assertEquals(
+            BindingModifier(scale = 2f, deadzone = 0.5f),
+            GamepadBindingCodec.decode("axis:17:1:m=s999,dz999")!!.mod,
+        )
+    }
+
+    @Test
+    fun `base do token continua rigida com bloco m presente`() {
+        // Estrutura da base inválida ⇒ null (comportamento atual, mesmo com mod).
+        assertNull(GamepadBindingCodec.decode("key:abc:m=inv"))
+        assertNull(GamepadBindingCodec.decode("axis:0:0:m=inv"))
+        assertNull(GamepadBindingCodec.decode("hat:0:m=inv"))
+        // m= no MEIO do token não é reconhecido como bloco (o bloco é o ÚLTIMO campo):
+        // as partes extras continuam lenientes como hoje.
+        assertEquals(
+            GamepadBindingCodec.LayerBinding(RawBinding.Key(96), turbo = true),
+            GamepadBindingCodec.decode("key:96:m=inv:turbo"),
+        )
+        // Token só com bloco m (sem base) ⇒ null.
+        assertNull(GamepadBindingCodec.decode("m=inv"))
     }
 
     @Test

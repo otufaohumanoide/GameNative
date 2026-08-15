@@ -184,6 +184,24 @@ class ProfileCatalogTest {
     }
 
     @Test
+    fun `summaryOf conta modificadores por binding como STICK`() {
+        // H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.4): o sufixo :m=
+        // nos tokens das camadas conta como STICK — sem categoria nova.
+        val modsOnly = GamepadProfile(
+            layers = mapOf("DEFAULT" to mapOf("LEFT_TRIGGER" to "axis:17:1:m=full,s130,dz5")),
+        )
+        assertEquals(
+            listOf(ProfileSummaryCategory.BINDINGS, ProfileSummaryCategory.STICK),
+            ProfileCatalog.summaryOf(modsOnly),
+        )
+        // Token sem bloco m= → SÓ BINDINGS (comportamento anterior preservado).
+        val plainBindings = GamepadProfile(
+            layers = mapOf("DEFAULT" to mapOf("RIGHT_BUMPER" to "key:96")),
+        )
+        assertEquals(listOf(ProfileSummaryCategory.BINDINGS), ProfileCatalog.summaryOf(plainBindings))
+    }
+
+    @Test
     fun `summaryOf detecta categorias parciais`() {
         val swipesOnly = GamepadProfile(
             touchpadSwipes = mapOf("UP" to listOf(app.gamenative.gamepad.radial.RadialMacroKey(96))),

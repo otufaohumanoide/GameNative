@@ -2448,6 +2448,12 @@
     <string name="gamepad_layer_shift_title">Shift layer</string>
     <string name="gamepad_layer_shift_subtitle">Consumes the button: remaps the other buttons while held without opening the radial menu or haptic tick</string>
     <string name="gamepad_binding_turbo_title">Turbo</string>
+    <string name="gamepad_binding_modifier_more">⋯</string>
+    <string name="gamepad_binding_modifier_title">Binding modifiers</string>
+    <string name="gamepad_binding_modifier_invert_title">Invert axis</string>
+    <string name="gamepad_binding_modifier_full_axis_title">Full axis (trigger)</string>
+    <string name="gamepad_binding_modifier_scale_title">Sensitivity</string>
+    <string name="gamepad_binding_modifier_deadzone_title">Dead zone</string>
 <string name="gamepad_layer_tick_title">Layer activation tick</string>
     <string name="gamepad_layer_tick_subtitle">Short haptic click when a layer activates (guarded by the rumble switch)</string>
 <string name="gamepad_rumble_title">Controller rumble (menu)</string>

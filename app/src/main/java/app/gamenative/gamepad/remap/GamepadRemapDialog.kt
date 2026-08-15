@@ -70,6 +70,7 @@ import app.gamenative.gamepad.mapping.AndroidConstants
 import app.gamenative.gamepad.mapping.ControllerVisualLayout
 import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.RawBinding
+import app.gamenative.gamepad.processing.BindingModifier
 import app.gamenative.gamepad.processing.DeadzoneMode
 import app.gamenative.gamepad.processing.ResponseCurve
 import app.gamenative.gamepad.processing.StickTransform
@@ -90,6 +91,7 @@ import app.gamenative.ui.component.gamepadSelectable
 import app.gamenative.ui.component.remap.ControllerVisualView
 import app.gamenative.ui.component.remap.VisualControlState
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 /**
@@ -113,6 +115,9 @@ fun GamepadRemapDialog(
     val context = LocalContext.current
     var layers by remember { mutableStateOf(profile.layers) }
     var captureTarget by remember { mutableStateOf<GamepadButton?>(null) }
+    // H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.5): painel colapsável de
+    // modificadores por binding (botão "⋯" na linha) — um aberto por vez.
+    var modifierPanelFor by remember { mutableStateOf<GamepadButton?>(null) }
     // U1 (spec 2026-08-14-gamepad-u1-gyro): seção Gyro per-device (só com hasGyro).
     var gyroMode by remember { mutableStateOf(profile.gyroMode ?: GyroMode.OFF) }
     var gyroSensitivity by remember { mutableStateOf(profile.gyroSensitivity ?: 1f) }
@@ -359,6 +364,33 @@ fun GamepadRemapDialog(
         layers = layers + (
             selectedLayer to (layerMap(selectedLayer) + (button.name to GamepadBindingCodec.encode(decoded.raw, turbo)))
         )
+        status = null
+    }
+
+    /**
+     * H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.5): aplica o mod ao
+     * token do binding (sufixo `:m=`, turbo preservado). Sem token ainda (DEFAULT
+     * mostrando o binding do mapping), MATERIALIZA o token do binding do mapping;
+     * mod default sem token ⇒ nada a fazer (nenhum token fantasma — o estado
+     * original é exatamente "sem entrada na camada").
+     */
+    fun setModifier(button: GamepadButton, mod: BindingModifier?) {
+        val normalized = mod?.takeUnless { it.isDefault() }
+        val token = layerMap(selectedLayer)[button.name]
+        if (token != null) {
+            val decoded = GamepadBindingCodec.decode(token) ?: return
+            layers = layers + (
+                selectedLayer to (layerMap(selectedLayer) +
+                    (button.name to GamepadBindingCodec.encode(decoded.raw, decoded.turbo, normalized)))
+            )
+        } else if (selectedLayer == ActionLayer.DEFAULT.name) {
+            val base = mapping.buttons[button] ?: return
+            if (normalized == null) return
+            layers = layers + (
+                selectedLayer to (layerMap(selectedLayer) +
+                    (button.name to GamepadBindingCodec.encode(base, mod = normalized)))
+            )
+        }
         status = null
     }
 
@@ -939,6 +971,10 @@ fun GamepadRemapDialog(
 
                         GamepadButton.entries.forEach { button ->
                             val rowBinding = bindingFor(button)
+                            // H §2.5: o painel de modificadores só vale para binding de
+                            // EIXO — os mods operam em valores de eixo (Key/Hat não têm
+                            // ponto de aplicação no pipeline).
+                            val modifierEnabled = rowBinding?.raw is RawBinding.Axis
                             RemapRow(
                                 button = button,
                                 faceStyle = device.faceStyle,
@@ -948,13 +984,38 @@ fun GamepadRemapDialog(
                                     captureTarget = if (captureTarget == button) null else button
                                     visualCapture = null
                                     captureSwipe = null
+                                    modifierPanelFor = null
                                     status = null
                                 },
                                 onClear = { clearBinding(button) },
                                 // F §1.4: toggle Turbo no chip de binding da camada
                                 // (período fixo 80 ms v2; OFF = byte-identical).
                                 onToggleTurbo = { setTurbo(button, !(rowBinding?.turbo ?: false)) },
+                                // H §2.5: painel de modificadores por binding.
+                                onToggleModifiers = {
+                                    modifierPanelFor = if (modifierPanelFor == button) null else button
+                                    if (modifierPanelFor != null) {
+                                        captureTarget = null
+                                        visualCapture = null
+                                        captureSwipe = null
+                                    }
+                                    status = null
+                                },
+                                modifiersOpen = modifierPanelFor == button,
+                                modifierEnabled = modifierEnabled,
                             )
+                            if (modifierPanelFor == button && rowBinding != null && modifierEnabled) {
+                                BindingModifierPanel(
+                                    binding = rowBinding,
+                                    fullAxisAvailable = button == GamepadButton.LEFT_TRIGGER ||
+                                        button == GamepadButton.RIGHT_TRIGGER,
+                                    onApply = { mod ->
+                                        setModifier(button, mod)
+                                        modifierPanelFor = null
+                                    },
+                                    onCancel = { modifierPanelFor = null },
+                                )
+                            }
                         }
 
                         // ── D (spec 2026-08-16-D-touchpad-swipes-macros, §1.4):
@@ -1364,6 +1425,9 @@ private fun RemapRow(
     onClick: () -> Unit,
     onClear: () -> Unit,
     onToggleTurbo: () -> Unit,
+    onToggleModifiers: () -> Unit,
+    modifiersOpen: Boolean,
+    modifierEnabled: Boolean,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val context = LocalContext.current
@@ -1405,11 +1469,149 @@ private fun RemapRow(
                         },
                     )
                 }
+                // H §2.5: chip "⋯" do painel de modificadores (só binding de eixo;
+                // aceso = o token carrega um bloco :m=).
+                if (modifierEnabled) {
+                    TextButton(onClick = onToggleModifiers) {
+                        Text(
+                            text = stringResource(R.string.gamepad_binding_modifier_more),
+                            color = if (modifiersOpen || binding.mod != null) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                }
                 TextButton(onClick = onClear) {
                     Text(stringResource(R.string.gamepad_remap_clear))
                 }
             }
         }
+    }
+}
+
+/**
+ * H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.5): painel colapsável de
+ * modificadores do binding — espelho dos sliders POR BINDING do DuckStation
+ * (inputbindingdialog.cpp:42-57, `{Name}Scale`/`{Name}Deadzone` dentro do dialog de
+ * captura). Draft local; Salvar re-encoda o token com o sufixo `:m=...` via
+ * [onApply] (setModifier). Gamepad-navegável (gamepadSelectable +
+ * gamepadAdjustableRow — padrão do dialog).
+ */
+@Composable
+private fun BindingModifierPanel(
+    binding: GamepadBindingCodec.LayerBinding,
+    fullAxisAvailable: Boolean,
+    onApply: (BindingModifier?) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val initial = binding.mod ?: BindingModifier()
+    var invert by remember(binding) { mutableStateOf(initial.invert == true) }
+    var fullAxis by remember(binding) { mutableStateOf(initial.fullAxis == true) }
+    var scalePct by remember(binding) { mutableStateOf(((initial.scale ?: 1f) * 100f).roundToInt()) }
+    var deadzonePct by remember(binding) { mutableStateOf(((initial.deadzone ?: 0f) * 100f).roundToInt()) }
+
+    val invertInteraction = remember { MutableInteractionSource() }
+    val fullAxisInteraction = remember { MutableInteractionSource() }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 24.dp, end = 4.dp, top = 2.dp, bottom = 4.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+            Text(
+                text = stringResource(R.string.gamepad_binding_modifier_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+            BindingModifierSwitchRow(
+                title = stringResource(R.string.gamepad_binding_modifier_invert_title),
+                checked = invert,
+                onCheckedChange = { invert = it },
+                interactionSource = invertInteraction,
+            )
+            // H §2.5: "Eixo completo" SÓ para Axis alvo trigger — a conversão
+            // −1..1 → 0..1 só faz sentido no gatilho.
+            if (fullAxisAvailable) {
+                BindingModifierSwitchRow(
+                    title = stringResource(R.string.gamepad_binding_modifier_full_axis_title),
+                    checked = fullAxis,
+                    onCheckedChange = { fullAxis = it },
+                    interactionSource = fullAxisInteraction,
+                )
+            }
+            GyroSliderRow(
+                title = stringResource(R.string.gamepad_binding_modifier_scale_title),
+                value = scalePct.toFloat(),
+                range = 50f..200f,
+                onValueChange = { scalePct = it.roundToInt() },
+                format = { String.format(java.util.Locale.US, "%.0f%%", it) },
+            )
+            GyroSliderRow(
+                title = stringResource(R.string.gamepad_binding_modifier_deadzone_title),
+                value = deadzonePct.toFloat(),
+                range = 0f..50f,
+                onValueChange = { deadzonePct = it.roundToInt() },
+                format = { String.format(java.util.Locale.US, "%.0f%%", it) },
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onCancel) {
+                    Text(stringResource(R.string.gamepad_remap_cancel))
+                }
+                TextButton(onClick = {
+                    onApply(
+                        BindingModifier(
+                            invert = if (invert) true else null,
+                            fullAxis = if (fullAxis) true else null,
+                            scale = if (scalePct == 100) null else scalePct / 100f,
+                            deadzone = if (deadzonePct == 0) null else deadzonePct / 100f,
+                        ),
+                    )
+                }) {
+                    Text(stringResource(R.string.gamepad_remap_save))
+                }
+            }
+        }
+    }
+}
+
+/** H §2.5: linha de switch do painel (gamepadSelectable + Switch sem foco próprio). */
+@Composable
+private fun BindingModifierSwitchRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    interactionSource: MutableInteractionSource,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .gamepadSelectable(
+                selected = checked,
+                onClick = { onCheckedChange(!checked) },
+                shape = RoundedCornerShape(8.dp),
+                interactionSource = interactionSource,
+            )
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.focusProperties { canFocus = false },
+        )
     }
 }
 

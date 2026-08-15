@@ -2,6 +2,7 @@ package app.gamenative.gamepad.profiles
 
 import app.gamenative.gamepad.FaceStyle
 import app.gamenative.gamepad.GyroMode
+import app.gamenative.gamepad.remap.GamepadBindingCodec
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -146,13 +147,19 @@ object ProfileCatalog {
         if (!profile.touchpadSwipes.isNullOrEmpty()) {
             categories += ProfileSummaryCategory.SWIPES
         }
+        // H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.4): modificadores
+        // por binding (sufixo :m= nos tokens das camadas) contam como STICK — sintonia
+        // de eixo, SEM categoria nova.
+        val hasBindingModifiers = profile.layers.values.any { layer ->
+            layer.values.any { token -> GamepadBindingCodec.decode(token)?.mod != null }
+        }
         if (profile.leftStickDeadzone != null || profile.rightStickDeadzone != null ||
             profile.leftTriggerDeadzone != null || profile.rightTriggerDeadzone != null ||
             profile.leftStickDeadzoneMode != null || profile.rightStickDeadzoneMode != null ||
             profile.leftStickCurve != null || profile.rightStickCurve != null ||
             profile.leftStickLut != null || profile.rightStickLut != null ||
             profile.flickStickEnabled != null || profile.flickStickActivationRadius != null ||
-            profile.flickStickSnapAngle != null
+            profile.flickStickSnapAngle != null || hasBindingModifiers
         ) {
             categories += ProfileSummaryCategory.STICK
         }

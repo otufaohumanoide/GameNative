@@ -27,6 +27,8 @@ import app.gamenative.gamepad.mapping.RawKeyInput
 import app.gamenative.gamepad.remap.GamepadBindingCodec
 import app.gamenative.gamepad.processing.DeadzoneConfig
 import app.gamenative.gamepad.processing.DeadzoneMode
+import app.gamenative.gamepad.processing.BindingModifier
+import app.gamenative.gamepad.processing.BindingModifiers
 import app.gamenative.gamepad.processing.LatencyTracker
 import app.gamenative.gamepad.processing.FlickStickConfig
 import app.gamenative.gamepad.processing.FlickStickProcessor
@@ -87,6 +89,22 @@ class GamepadHub(context: Context) {
 
         /** Propriedade do trace de amostras de sensor (default off — logcat legível). */
         const val SENSOR_TRACE_PROPERTY = "debug.gamenative.sensortrace"
+
+        // H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.3): pares eixo
+        // semântico → botão lógico que carrega o mod no token da camada. Sticks usam
+        // o botão de CLIQUE (LEFT_STICK/RIGHT_STICK) como porta-token — o nome do
+        // eixo não existe como chave de layers; triggers usam o próprio botão trigger.
+        private val TRIGGER_PAIRS: List<Pair<GamepadAxis, GamepadButton>> = listOf(
+            GamepadAxis.LEFT_TRIGGER to GamepadButton.LEFT_TRIGGER,
+            GamepadAxis.RIGHT_TRIGGER to GamepadButton.RIGHT_TRIGGER,
+        )
+
+        private val AXIS_BUTTON_PAIRS: List<Pair<GamepadAxis, GamepadButton>> = TRIGGER_PAIRS + listOf(
+            GamepadAxis.LEFT_X to GamepadButton.LEFT_STICK,
+            GamepadAxis.LEFT_Y to GamepadButton.LEFT_STICK,
+            GamepadAxis.RIGHT_X to GamepadButton.RIGHT_STICK,
+            GamepadAxis.RIGHT_Y to GamepadButton.RIGHT_STICK,
+        )
     }
 
     private val appContext = context.applicationContext
@@ -803,6 +821,7 @@ class GamepadHub(context: Context) {
         if (device.deviceClass != DeviceClass.CONTROLLER) return false
         val mapping = mappingFor(device)
         val profile = profileFor(raw.deviceId, activeAppId)
+        val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
         // Trigger não tem key global no PrefManager (spec Passo 1: só stick) — usa o
         // default do DeadzoneConfig cacheado no hub quando o perfil não override (L6:
         // sem alocação do default por MotionEvent).
@@ -816,12 +835,34 @@ class GamepadHub(context: Context) {
             // esquerdo — o modo do LEFT é o que conta). null = RADIAL (atual).
             mode = profile.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL,
         )
-        val events = EventTranslator.translateAxis(raw, mapping, deadzones)
+        // H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.3): modificadores POR
+        // BINDING — o hub resolve o mod do token de camada do binding efetivo (mapping
+        // .axes + override via bindings efetivos) e aplica DEPOIS do processamento
+        // existente do eixo (o override por-binding VENCE o global por ser o último).
+        // FullAxis converte o domínio do valor CRU ANTES da tradução (a deadzone por
+        // binding vira o limiar da conversão eixo→botão). Sem layers/tokens → caminho
+        // byte-identical (nenhuma alocação extra).
+        val effectiveBindings = if (profile.layers.isEmpty()) {
+            emptyMap()
+        } else {
+            LayerResolver.effectiveBindings(profile.layers, layerState.activeLayer)
+        }
+        val bindingMods = bindingModsFor(effectiveBindings, mapping)
+        val preRaw = preApplyFullAxis(raw, mapping, effectiveBindings)
+        var events = EventTranslator.translateAxis(preRaw, mapping, deadzones)
+        if (effectiveBindings.isNotEmpty()) {
+            val buttonDeadzones = buttonDeadzonesFor(effectiveBindings, mapping)
+            if (buttonDeadzones.isNotEmpty()) {
+                events = events.map { applyButtonDeadzone(it, preRaw, mapping, buttonDeadzones) }
+            }
+            if (bindingMods.isNotEmpty()) {
+                events = events.mapNotNull { applyAxisMods(it, bindingMods) }
+            }
+        }
         if (events.isEmpty()) return false
 
         // O tradutor descreve o ESTADO da amostra (hat/meia-eixo); o hub vira transição.
         val state = buttonStates.getOrPut(raw.deviceId) { mutableSetOf() }
-        val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
         var emitted = false
         for (event in events) {
             val forward = when (event) {
@@ -839,6 +880,133 @@ class GamepadHub(context: Context) {
             }
         }
         return emitted
+    }
+
+    /**
+     * H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.3): modificador POR
+     * BINDING de cada eixo semântico — o binding efetivo é `mapping.axes[axis]`
+     * (eixo físico) + o override de camada (token do botão porta-token). O mod vale
+     * quando o binding do token referencia o MESMO eixo físico que produz o valor;
+     * sem token/mod → mapa vazio (caminho byte-identical).
+     */
+    private fun bindingModsFor(
+        bindings: Map<String, String>,
+        mapping: GamepadMapping,
+    ): Map<GamepadAxis, BindingModifier> {
+        var result: MutableMap<GamepadAxis, BindingModifier>? = null
+        for ((axis, button) in AXIS_BUTTON_PAIRS) {
+            val bound = (mapping.axes[axis] as? RawBinding.Axis)?.axis ?: continue
+            val token = bindings[button.name] ?: continue
+            val decoded = GamepadBindingCodec.decode(token) ?: continue
+            val mod = decoded.mod ?: continue
+            if (decoded.raw !is RawBinding.Axis || decoded.raw.axis != bound) continue
+            if (result == null) result = mutableMapOf()
+            result[axis] = mod
+        }
+        return result ?: emptyMap()
+    }
+
+    /**
+     * H §2.3: FullAxis ANTES do pipeline — o eixo CENTRADO −1..1 vira 0..1
+     * (`v * 0.5 + 0.5`) antes do resto da tradução, SOMENTE quando o binding Axis do
+     * token alimenta um trigger (eixo semântico L/R_TRIGGER ou a meia-eixo do botão
+     * trigger — SDL half-axis a4/a5). Sem mod → retorna [raw] intacto (zero alocação).
+     */
+    private fun preApplyFullAxis(
+        raw: RawAxisInput,
+        mapping: GamepadMapping,
+        bindings: Map<String, String>,
+    ): RawAxisInput {
+        var values: MutableMap<Int, Float>? = null
+        for ((axis, button) in TRIGGER_PAIRS) {
+            val token = bindings[button.name] ?: continue
+            val decoded = GamepadBindingCodec.decode(token) ?: continue
+            if (decoded.raw !is RawBinding.Axis) continue
+            val mod = decoded.mod ?: continue
+            if (mod.fullAxis != true) continue
+            val axisBound = (mapping.axes[axis] as? RawBinding.Axis)?.axis
+            val buttonBound = (mapping.buttons[button] as? RawBinding.Axis)?.axis
+            val target = listOfNotNull(axisBound, buttonBound)
+                .firstOrNull { it == decoded.raw.axis } ?: continue
+            val original = raw.axisValues[target] ?: continue
+            val converted = original * 0.5f + 0.5f
+            if (converted != original) {
+                if (values == null) values = raw.axisValues.toMutableMap()
+                values[target] = converted
+            }
+        }
+        return if (values == null) raw else raw.copy(axisValues = values)
+    }
+
+    /**
+     * H §2.3: deadzone POR BINDING de botões dirigidos por meia-eixo (trigger como
+     * botão) — o limiar de conversão eixo→botão do EventTranslator passa a ser o dz
+     * do binding quando presente (hair trigger; sem mod o limiar 0.5 atual permanece).
+     */
+    private fun buttonDeadzonesFor(
+        bindings: Map<String, String>,
+        mapping: GamepadMapping,
+    ): Map<GamepadButton, Float> {
+        var result: MutableMap<GamepadButton, Float>? = null
+        for ((button, rawBinding) in mapping.buttons) {
+            if (rawBinding !is RawBinding.Axis) continue
+            val token = bindings[button.name] ?: continue
+            val decoded = GamepadBindingCodec.decode(token) ?: continue
+            val mod = decoded.mod ?: continue
+            if (decoded.raw !is RawBinding.Axis || decoded.raw.axis != rawBinding.axis) continue
+            val dz = (mod.deadzone ?: 0f).coerceIn(BindingModifiers.DEADZONE_MIN, BindingModifiers.DEADZONE_MAX)
+            if (dz <= 0f) continue
+            if (result == null) result = mutableMapOf()
+            result[button] = dz
+        }
+        return result ?: emptyMap()
+    }
+
+    /** H §2.3: re-deriva o estado ativo do botão de meia-eixo com o limiar do binding. */
+    private fun applyButtonDeadzone(
+        event: InputEvent,
+        raw: RawAxisInput,
+        mapping: GamepadMapping,
+        deadzones: Map<GamepadButton, Float>,
+    ): InputEvent {
+        val button: GamepadButton
+        val deviceId: Int
+        val isDown: Boolean
+        when (event) {
+            is InputEvent.ButtonDown -> {
+                button = event.button
+                deviceId = event.deviceId
+                isDown = true
+            }
+            is InputEvent.ButtonUp -> {
+                button = event.button
+                deviceId = event.deviceId
+                isDown = false
+            }
+            else -> return event
+        }
+        val dz = deadzones[button] ?: return event
+        val binding = mapping.buttons[button] as? RawBinding.Axis ?: return event
+        val value = raw.axisValues[binding.axis] ?: return event
+        val active = value * binding.direction >= dz
+        return if (active) {
+            if (isDown) event else InputEvent.ButtonDown(deviceId, button)
+        } else {
+            if (!isDown) event else InputEvent.ButtonUp(deviceId, button)
+        }
+    }
+
+    /**
+     * H §2.3: aplica o mod do binding no AxisMotion DEPOIS do processamento existente
+     * (o override vence o global por ser o último). O fullAxis já foi pré-aplicado no
+     * valor CRU (domínio antes do pipeline); aqui roda o resto da cadeia — invert →
+     * scale → deadzone — na ordem documentada de [BindingModifiers.apply].
+     */
+    private fun applyAxisMods(event: InputEvent, mods: Map<GamepadAxis, BindingModifier>): InputEvent? {
+        if (event !is InputEvent.AxisMotion) return event
+        val mod = mods[event.axis] ?: return event
+        val value = BindingModifiers.apply(event.value, mod.copy(fullAxis = null))
+        return if (value == 0f) null else event.copy(value = value)
     }
 
     /** Instrumentação Onda 2 (spec §1.9): par do GamepadTrace cru. */
