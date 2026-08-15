@@ -2235,6 +2235,20 @@
     <string name="gamepad_layer_trigger_conflict">Esse botão já é o gatilho de outra camada</string>
     <string name="gamepad_touchpad_double_tap_title">Toque duplo = clique direito</string>
     <string name="gamepad_touchpad_double_tap_subtitle">Dois toques rápidos enviam o botão direito (off: dois cliques esquerdos)</string>
+    <!-- D (spec 2026-08-16-D-touchpad-swipes-macros): swipes direcionais do touchpad -->
+    <string name="gamepad_touchpad_swipes_title">Swipes</string>
+    <string name="gamepad_touchpad_swipes_subtitle">Deslize rápido no touchpad para disparar uma macro — arrastos lentos e toques parados continuam funcionando</string>
+    <string name="gamepad_touchpad_swipe_up">Cima</string>
+    <string name="gamepad_touchpad_swipe_up_right">Cima-direita</string>
+    <string name="gamepad_touchpad_swipe_right">Direita</string>
+    <string name="gamepad_touchpad_swipe_down_right">Baixo-direita</string>
+    <string name="gamepad_touchpad_swipe_down">Baixo</string>
+    <string name="gamepad_touchpad_swipe_down_left">Baixo-esquerda</string>
+    <string name="gamepad_touchpad_swipe_left">Esquerda</string>
+    <string name="gamepad_touchpad_swipe_up_left">Cima-esquerda</string>
+    <string name="gamepad_touchpad_swipe_unbound">Nada</string>
+    <string name="gamepad_touchpad_swipe_capture_hint">Aperte as teclas… (BACK encerra)</string>
+    <string name="gamepad_touchpad_swipe_open_radial_action">Abrir radial</string>
     <!-- F1 (spec 2026-08-15-input-core-avancado) -->
         <string name="gamepad_stick_left_title">Analógico esquerdo</string>
     <string name="gamepad_stick_right_title">Analógico direito</string>

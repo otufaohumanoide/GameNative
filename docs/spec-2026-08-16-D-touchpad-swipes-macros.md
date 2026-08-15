@@ -90,6 +90,11 @@ longo continua arrasto; duplo-toque parado continua clique direito; swipe
 configurado p/ radial abre/fecha com pause par-e-par; harness `touch:`
 sintético exercita os mesmos caminhos.
 
+Consolidado (fechamento 2026-08-16, §2 linha D — protocolo único do roadmap):
+`setprop debug.gamenative.input touch:0.5:0.5` + swipe sintético rápido vs
+arrasto lento → macro/radial dispara; arrasto/duplo-toque intactos.
+**Status: on-device pendente.**
+
 ## 4. Fora de escopo
 
 Swipes de 2 dedos, swipe-during-drag (dedo que arrasta e acelera no fim),

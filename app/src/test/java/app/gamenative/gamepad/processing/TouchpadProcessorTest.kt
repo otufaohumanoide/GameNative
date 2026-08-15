@@ -2,6 +2,7 @@ package app.gamenative.gamepad.processing
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -182,5 +183,148 @@ class TouchpadProcessorTest {
         // Depois da janela, down normal ancora.
         TouchpadProcessor.process(TouchSample(down = true, x = 0.5f, y = 0.5f, nowMs = 200), state, config)
         assertTrue(state.fingerDown)
+    }
+
+    // ── D (spec 2026-08-16-D-touchpad-swipes-macros) ──
+
+    /** Down em (0.5,0.5) → up em (0.5+dx, 0.5+dy) aos 150 ms — gesto único. */
+    private fun swipeGesture(
+        dx: Float,
+        dy: Float,
+        upAtMs: Long = 150L,
+        cfg: TouchpadConfig = config,
+    ): TouchpadDecision {
+        val state = TouchpadState()
+        TouchpadProcessor.process(TouchSample(down = true, x = 0.5f, y = 0.5f, nowMs = 0), state, cfg)
+        return TouchpadProcessor.process(
+            TouchSample(down = false, x = 0.5f + dx, y = 0.5f + dy, nowMs = upAtMs),
+            state,
+            cfg,
+        )
+    }
+
+    @Test
+    fun `swipe right is decided on the finger up and suppresses tap`() {
+        val d = swipeGesture(dx = 0.3f, dy = 0f)
+        assertEquals(SwipeDir.RIGHT, d.swipe)
+        assertFalse(d.tap)
+        assertFalse(d.dragRelease)
+        assertFalse(d.rightClick)
+        // O up do swipe não gera delta de mouse.
+        assertEquals(0, d.deltaX)
+        assertEquals(0, d.deltaY)
+    }
+
+    @Test
+    fun `swipe recognizes all 8 directions`() {
+        val vectors = listOf(
+            (0f to -0.3f) to SwipeDir.UP,
+            (0.25f to -0.25f) to SwipeDir.UP_RIGHT,
+            (0.3f to 0f) to SwipeDir.RIGHT,
+            (0.25f to 0.25f) to SwipeDir.DOWN_RIGHT,
+            (0f to 0.3f) to SwipeDir.DOWN,
+            (-0.25f to 0.25f) to SwipeDir.DOWN_LEFT,
+            (-0.3f to 0f) to SwipeDir.LEFT,
+            (-0.25f to -0.25f) to SwipeDir.UP_LEFT,
+        )
+        for ((vector, expected) in vectors) {
+            assertEquals(expected, swipeGesture(dx = vector.first, dy = vector.second).swipe)
+        }
+    }
+
+    @Test
+    fun `quick still tap is a tap not a swipe`() {
+        val state = TouchpadState()
+        TouchpadProcessor.process(TouchSample(down = true, x = 0.5f, y = 0.5f, nowMs = 0), state, config)
+        val d = TouchpadProcessor.process(TouchSample(down = false, x = 0.5f, y = 0.5f, nowMs = 100), state, config)
+        assertTrue(d.tap)
+        assertNull(d.swipe)
+    }
+
+    @Test
+    fun `slow long drag is a drag not a swipe`() {
+        val state = TouchpadState()
+        TouchpadProcessor.process(TouchSample(down = true, x = 0.5f, y = 0.5f, nowMs = 0), state, config)
+        val engage = TouchpadProcessor.process(TouchSample(down = true, x = 0.8f, y = 0.5f, nowMs = 700), state, config)
+        assertTrue(engage.dragPress)
+        val up = TouchpadProcessor.process(TouchSample(down = false, x = 0.8f, y = 0.5f, nowMs = 900), state, config)
+        assertTrue(up.dragRelease)
+        assertNull(up.swipe)
+    }
+
+    @Test
+    fun `fast long flick beyond swipe window is neither swipe nor tap`() {
+        // Deslocamento 0.3 ≥ swipeMinDistance, mas duração 350 ms > swipeMaxMs 300 ms.
+        val d = swipeGesture(dx = 0.3f, dy = 0f, upAtMs = 350L)
+        assertNull(d.swipe)
+        assertFalse(d.tap)
+        assertFalse(d.dragRelease)
+        assertFalse(d.rightClick)
+    }
+
+    @Test
+    fun `fast flick below min distance is not a swipe`() {
+        // Deslocamento 0.1 < swipeMinDistance 0.22 (e > tapMoveDeadzone → sem tap).
+        val d = swipeGesture(dx = 0.1f, dy = 0f, upAtMs = 120L)
+        assertNull(d.swipe)
+        assertFalse(d.tap)
+    }
+
+    @Test
+    fun `swipe at exactly the max duration is still a swipe`() {
+        val d = swipeGesture(dx = 0.3f, dy = 0f, upAtMs = 300L)
+        assertEquals(SwipeDir.RIGHT, d.swipe)
+    }
+
+    @Test
+    fun `swipe suppresses right click after a tap within the double tap window`() {
+        val cfg = TouchpadConfig(doubleTapRightClick = true)
+        val state = TouchpadState()
+        TouchpadProcessor.process(TouchSample(down = true, x = 0.5f, y = 0.5f, nowMs = 0), state, cfg)
+        val first = TouchpadProcessor.process(TouchSample(down = false, x = 0.5f, y = 0.5f, nowMs = 50), state, cfg)
+        assertTrue(first.tap)
+        // Segundo gesto rápido dentro da janela do duplo-toque, mas com percurso de
+        // swipe: o up vira SWIPE — nunca rightClick nem tap.
+        TouchpadProcessor.process(TouchSample(down = true, x = 0.5f, y = 0.5f, nowMs = 160), state, cfg)
+        val second = TouchpadProcessor.process(TouchSample(down = false, x = 0.8f, y = 0.5f, nowMs = 260), state, cfg)
+        assertEquals(SwipeDir.RIGHT, second.swipe)
+        assertFalse(second.rightClick)
+        assertFalse(second.tap)
+    }
+
+    @Test
+    fun `swipe disabled keeps the decision identical to the current behavior`() {
+        val cfg = TouchpadConfig(swipeEnabled = false)
+        // Rápido + longe com swipe OFF: exatamente a decisão atual (moved >
+        // tapMoveDeadzone → NONE — sem tap, sem delta, sem swipe).
+        val d = swipeGesture(dx = 0.3f, dy = 0f, upAtMs = 120L, cfg = cfg)
+        assertNull(d.swipe)
+        assertFalse(d.tap)
+        assertFalse(d.dragPress)
+        assertFalse(d.dragRelease)
+        assertFalse(d.rightClick)
+        assertEquals(0, d.deltaX)
+        assertEquals(0, d.deltaY)
+        // E o caminho de tap continua intacto com swipe OFF.
+        val state = TouchpadState()
+        TouchpadProcessor.process(TouchSample(down = true, x = 0.5f, y = 0.5f, nowMs = 0), state, cfg)
+        val tap = TouchpadProcessor.process(TouchSample(down = false, x = 0.5f, y = 0.5f, nowMs = 100), state, cfg)
+        assertTrue(tap.tap)
+        assertNull(tap.swipe)
+    }
+
+    @Test
+    fun `deltas keep flowing during the swipe move and stop on the up`() {
+        val state = TouchpadState()
+        TouchpadProcessor.process(TouchSample(down = true, x = 0.5f, y = 0.5f, nowMs = 0), state, config)
+        // Move do percurso: delta de mouse flui normalmente (≈0.2 * 350 = 70 px;
+        // arredondamento float do toInt — intervalo, não valor exato).
+        val move = TouchpadProcessor.process(TouchSample(down = true, x = 0.7f, y = 0.5f, nowMs = 100), state, config)
+        assertTrue(move.deltaX in 60..70)
+        assertNull(move.swipe)
+        // Up conclui o swipe: delta zero, direção do vetor start→end.
+        val up = TouchpadProcessor.process(TouchSample(down = false, x = 0.8f, y = 0.5f, nowMs = 150), state, config)
+        assertEquals(SwipeDir.RIGHT, up.swipe)
+        assertEquals(0, up.deltaX)
     }
 }

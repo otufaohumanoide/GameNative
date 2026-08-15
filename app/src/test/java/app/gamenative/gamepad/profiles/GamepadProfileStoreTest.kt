@@ -6,6 +6,7 @@ import app.gamenative.gamepad.GamepadDevice
 import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.layers.LayerTriggerMode
 import app.gamenative.gamepad.layers.LayerTriggerSpec
+import app.gamenative.gamepad.radial.RadialMacroKey
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,12 +35,14 @@ class GamepadProfileStoreTest {
         leftStickDeadzone: Float? = null,
         rightStickDeadzone: Float? = null,
         layers: Map<String, Map<String, String>> = emptyMap(),
+        touchpadSwipes: Map<String, List<RadialMacroKey>>? = null,
     ) = GamepadProfile(
         faceStyle = faceStyle,
         swapOkCancel = swapOkCancel,
         leftStickDeadzone = leftStickDeadzone,
         rightStickDeadzone = rightStickDeadzone,
         layers = layers,
+        touchpadSwipes = touchpadSwipes,
     )
 
     private val ds4 = GamepadDevice(
@@ -276,6 +279,53 @@ class GamepadProfileStoreTest {
                 layerTriggers = mapOf("X" to LayerTriggerSpec("FACE_BOTTOM", LayerTriggerMode.TOGGLE)),
             ).isDefault(),
         )
+    }
+
+    // ── D (spec 2026-08-16-D-touchpad-swipes-macros): touchpadSwipes — roundtrip,
+    // merge por direção e default ──
+
+    @Test
+    fun `D - touchpad swipes roundtrip and null default`() {
+        val s = store()
+        val right = listOf(RadialMacroKey(96))
+        s.save("054c09cc", profile(touchpadSwipes = mapOf("RIGHT" to right)))
+        val loaded = s.load("054c09cc")!!
+        assertEquals(1, loaded.touchpadSwipes!!.size)
+        assertEquals(96, loaded.touchpadSwipes!!["RIGHT"]!![0].keyCode)
+        // Campos novos com default: perfil vazio segue null (OFF = byte-identical).
+        assertNull(GamepadProfile().touchpadSwipes)
+        assertNull(s.load("045e028e")?.touchpadSwipes)
+    }
+
+    @Test
+    fun `D - merged swipes is a union by direction with the game winning`() {
+        val device = profile(
+            touchpadSwipes = mapOf(
+                "RIGHT" to listOf(RadialMacroKey(96)),
+                "LEFT" to listOf(RadialMacroKey(97)),
+            ),
+        )
+        val game = profile(touchpadSwipes = mapOf("LEFT" to listOf(RadialMacroKey(98))))
+        val merged = GamepadProfileStore.merged(device, game)
+        assertEquals(2, merged.touchpadSwipes!!.size)
+        assertEquals(listOf(RadialMacroKey(96)), merged.touchpadSwipes!!["RIGHT"]) // device preservado
+        assertEquals(listOf(RadialMacroKey(98)), merged.touchpadSwipes!!["LEFT"])  // jogo vence
+        // Jogo sem swipes preserva o device; device sem swipes preserva o jogo.
+        assertEquals(2, GamepadProfileStore.merged(device, null).touchpadSwipes!!.size)
+        assertEquals(listOf(RadialMacroKey(98)), GamepadProfileStore.merged(null, game).touchpadSwipes!!["LEFT"])
+        assertNull(GamepadProfileStore.merged(null, null).touchpadSwipes)
+    }
+
+    @Test
+    fun `D - default detection includes swipes`() {
+        // null E vazio = OFF (mesma convenção de layers).
+        assertTrue(GamepadProfile().isDefault())
+        assertTrue(GamepadProfile(touchpadSwipes = emptyMap()).isDefault())
+        assertFalse(GamepadProfile(touchpadSwipes = mapOf("UP" to listOf(RadialMacroKey(96)))).isDefault())
+        // save de perfil com mapa vazio remove a entrada (default).
+        val s = store()
+        s.save("054c09cc", profile(touchpadSwipes = emptyMap()))
+        assertNull(s.load("054c09cc"))
     }
 
     // ── ProfileResolver ──

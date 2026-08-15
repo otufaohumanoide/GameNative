@@ -23,3 +23,12 @@ class GamepadDeviceRemovedEvent(val deviceId: Int) : Event<Unit>
  * Emitido pelo GamepadHub.resolveLayerTriggers (main thread, síncrono).
  */
 class GamepadLayerEvent(val deviceId: Int, val layer: String, val activated: Boolean) : Event<Unit>
+
+/**
+ * D (spec 2026-08-16-D-touchpad-swipes-macros): swipe do touchpad mapeado para
+ * "abrir radial" (binding `RadialMacroKey(SWIPE_OPEN_RADIAL)`) — emitido pelo
+ * GamepadTouchpadForwarder (main thread, síncrono), consumido pelo RadialMenuHost:
+ * abre o menu com o pause/resume par-e-par do caminho de camada, SEM exigir
+ * triggerLayer configurado. O caminho GamepadLayerEvent permanece intacto.
+ */
+class GamepadSwipeEvent(val deviceId: Int) : Event<Unit>

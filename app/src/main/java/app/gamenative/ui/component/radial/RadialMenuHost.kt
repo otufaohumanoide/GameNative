@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import app.gamenative.PluviaApp
 import app.gamenative.events.GamepadLayerEvent
+import app.gamenative.events.GamepadSwipeEvent
 import app.gamenative.gamepad.profiles.ActionLayer
 import app.gamenative.gamepad.radial.ExecuteMode
 import app.gamenative.gamepad.radial.RadialMenuConfig
@@ -50,6 +51,11 @@ class RadialMenuStateHolder {
  * persistente sobre o jogo RODANDO — os macros executados no meio do jogo precisam
  * chegar ao jogo) e a execução NÃO fecha nem retoma; `GamepadLayerEvent(false)` é
  * quem fecha (já existia). TAP_RELEASE = caminho v1 byte-identical.
+ *
+ * D (spec 2026-08-16-D-touchpad-swipes-macros): além do gatilho de camada, o host
+ * ganha UM listener de [GamepadSwipeEvent] ("Abrir radial" por swipe do touchpad) —
+ * mesmo ciclo de abertura (pause/resume par-e-par), sem triggerLayer configurado.
+ * Nada do caminho GamepadLayerEvent muda.
  */
 @Composable
 fun RadialMenuHost(
@@ -98,9 +104,30 @@ fun RadialMenuHost(
                 }
             }
         }
+        // D (spec 2026-08-16-D-touchpad-swipes-macros): swipe do touchpad →
+        // "Abrir radial" (GamepadSwipeEvent do forwarder) — MESMO ciclo de abertura
+        // do caminho de camada (pause/resume par-e-par), SEM exigir triggerLayer
+        // configurado. Menu já aberto ignora (preserva o pausedByRadial — um segundo
+        // swipe re-setaria o flag e quebraria o resume par-e-par).
+        val swipeListener: (GamepadSwipeEvent) -> Unit = { event ->
+            if (!state.open && config.sectors.isNotEmpty()) {
+                state.deviceId = event.deviceId
+                state.open = true
+                if (config.executeMode == ExecuteMode.HOLD) {
+                    // F §1.2: HOLD — painel persistente; jogo CONTINUA rodando.
+                    pausedByRadial = false
+                } else {
+                    // Só pausa o que não estava pausado (par-e-par do caminho de camada).
+                    pausedByRadial = !PluviaApp.isOverlayPaused
+                    if (pausedByRadial) pauseGame()
+                }
+            }
+        }
         PluviaApp.events.on<GamepadLayerEvent, Unit>(listener)
+        PluviaApp.events.on<GamepadSwipeEvent, Unit>(swipeListener)
         onDispose {
             PluviaApp.events.off<GamepadLayerEvent, Unit>(listener)
+            PluviaApp.events.off<GamepadSwipeEvent, Unit>(swipeListener)
         }
     }
 

@@ -73,7 +73,10 @@ import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.processing.DeadzoneMode
 import app.gamenative.gamepad.processing.ResponseCurve
 import app.gamenative.gamepad.processing.StickTransform
+import app.gamenative.gamepad.processing.SwipeDir
 import app.gamenative.gamepad.profiles.ActionLayer
+import app.gamenative.gamepad.radial.RadialMacroKey
+import app.gamenative.gamepad.radial.SWIPE_OPEN_RADIAL
 import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -126,6 +129,11 @@ fun GamepadRemapDialog(
     var touchpadDoubleTapRightClick by remember {
         mutableStateOf(profile.touchpadDoubleTapRightClick ?: false)
     }
+    // D (spec 2026-08-16-D-touchpad-swipes-macros): seção Swipes (só com hasTouchpad).
+    // Chaves = nomes de SwipeDir; valor = macro (lista de RadialMacroKey) OU lista
+    // com 1 RadialMacroKey(SWIPE_OPEN_RADIAL) = abrir radial.
+    var swipeBindings by remember { mutableStateOf(profile.touchpadSwipes ?: emptyMap()) }
+    var captureSwipe by remember { mutableStateOf<SwipeDir?>(null) }
     // ── F1 (spec 2026-08-15-input-core-avancado) — seção Stick + Flick + fusão ──
     var leftStickMode by remember { mutableStateOf(profile.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL) }
     var rightStickMode by remember { mutableStateOf(profile.rightStickDeadzoneMode ?: DeadzoneMode.RADIAL) }
@@ -174,6 +182,9 @@ fun GamepadRemapDialog(
         gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
         gyroActivateButton = gyroActivateButton,
         touchpadDoubleTapRightClick = if (touchpadDoubleTapRightClick) true else null,
+        // D (spec 2026-08-16-D-touchpad-swipes-macros): vazio = OFF → null
+        // (política do store: null = sem preferência).
+        touchpadSwipes = if (swipeBindings.isEmpty()) null else swipeBindings,
         // F1 (spec 2026-08-15-input-core-avancado)
         leftStickDeadzoneMode = if (leftStickMode == DeadzoneMode.RADIAL) null else leftStickMode,
         rightStickDeadzoneMode = if (rightStickMode == DeadzoneMode.RADIAL) null else rightStickMode,
@@ -198,6 +209,7 @@ fun GamepadRemapDialog(
         gyroDeadzone = imported.gyroDeadzone ?: 0.05f
         gyroActivateButton = imported.gyroActivateButton
         touchpadDoubleTapRightClick = imported.touchpadDoubleTapRightClick ?: false
+        swipeBindings = imported.touchpadSwipes ?: emptyMap()
         leftStickMode = imported.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL
         rightStickMode = imported.rightStickDeadzoneMode ?: DeadzoneMode.RADIAL
         leftCurve = imported.leftStickCurve ?: ResponseCurve.LINEAR
@@ -538,6 +550,41 @@ fun GamepadRemapDialog(
         }
     }
 
+    // ── D (spec 2026-08-16-D-touchpad-swipes-macros): captura de MACRO do swipe —
+    // mesmo padrão do RadialMenuEditorDialog (bus CRU do deviceId): teclas CONCATENAM
+    // enquanto a captura está ativa (macro de N teclas, timing default 60/40 ms);
+    // BACK/ESCAPE encerra. Mutuamente exclusiva com as capturas existentes (todo
+    // início de captura zera captureSwipe, e o início da captura de swipe zera as
+    // demais).
+    DisposableEffect(captureSwipe) {
+        val dir = captureSwipe ?: return@DisposableEffect onDispose {}
+
+        fun handleKey(androidEvent: AndroidEvent.KeyEvent): Boolean {
+            val ev = androidEvent.event ?: return false
+            if (ev.deviceId != device.deviceId) return false
+            if (ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0) {
+                when (ev.keyCode) {
+                    KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
+                        captureSwipe = null
+                        status = context.getString(R.string.gamepad_remap_capture_cancelled)
+                    }
+                    else -> {
+                        val current = swipeBindings[dir.name] ?: emptyList()
+                        swipeBindings = swipeBindings + (dir.name to (current + RadialMacroKey(ev.keyCode)))
+                    }
+                }
+                return true
+            }
+            return false
+        }
+
+        val swipeKeyHandler: (AndroidEvent.KeyEvent) -> Boolean = ::handleKey
+        PluviaApp.events.on<AndroidEvent.KeyEvent, Boolean>(swipeKeyHandler)
+        onDispose {
+            PluviaApp.events.off<AndroidEvent.KeyEvent, Boolean>(swipeKeyHandler)
+        }
+    }
+
     // ── B §1.2: flash ao vivo — listener de GamepadInputEvent com holders vivos
     // (lição C1): o handler registrado UMA vez lê o deviceId ATUAL via
     // rememberUpdatedState; o retorno false = observador (nunca consome input).
@@ -576,14 +623,16 @@ fun GamepadRemapDialog(
             usePlatformDefaultWidth = false,
             // B §1.3: hardware back CANCELA a captura visual em vez de fechar o dialog
             // (sem consumo pelo Dialog, o BACK chega ao bus e o handler cancela).
-            dismissOnBackPress = visualCapture == null,
+            // D: idem para a captura de swipe.
+            dismissOnBackPress = visualCapture == null && captureSwipe == null,
             dismissOnClickOutside = false,
         ),
     ) {
         val initialFocus = remember { FocusRequester() }
         // Enquanto captura, o escopo de foco fica OFF: todo input do controle é captura.
         GamepadFocusScope(
-            enabled = captureTarget == null && !captureGyroActivate && !captureLayerTrigger && visualCapture == null,
+            enabled = captureTarget == null && !captureGyroActivate && !captureLayerTrigger &&
+                visualCapture == null && captureSwipe == null,
             backAction = onDismiss,
             initialFocusRequester = initialFocus,
         ) {
@@ -591,7 +640,9 @@ fun GamepadRemapDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(
-                        if (captureTarget == null && !captureGyroActivate && !captureLayerTrigger && visualCapture == null) {
+                        if (captureTarget == null && !captureGyroActivate && !captureLayerTrigger &&
+                            visualCapture == null && captureSwipe == null
+                        ) {
                             Modifier.gamepadBackHandler(onDismiss)
                         } else {
                             Modifier
@@ -666,6 +717,7 @@ fun GamepadRemapDialog(
                                 captureTarget = null
                                 captureGyroActivate = false
                                 visualCapture = null
+                                captureSwipe = null
                                 status = null
                             },
                             onClearTrigger = {
@@ -748,6 +800,7 @@ fun GamepadRemapDialog(
                                     captureTarget = null
                                     captureGyroActivate = false
                                     captureLayerTrigger = false
+                                    captureSwipe = null
                                 }
                                 status = null
                             },
@@ -855,6 +908,7 @@ fun GamepadRemapDialog(
                                 onClick = {
                                     captureTarget = if (captureTarget == button) null else button
                                     visualCapture = null
+                                    captureSwipe = null
                                     status = null
                                 },
                                 onClear = { clearBinding(button) },
@@ -862,6 +916,52 @@ fun GamepadRemapDialog(
                                 // (período fixo 80 ms v2; OFF = byte-identical).
                                 onToggleTurbo = { setTurbo(button, !(rowBinding?.turbo ?: false)) },
                             )
+                        }
+
+                        // ── D (spec 2026-08-16-D-touchpad-swipes-macros, §1.4):
+                        // seção Swipes — 8 direções → macro / "Abrir radial". Só com
+                        // hasTouchpad (capability V11 — a seção SOME sem touchpad
+                        // físico, nunca mostra erro).
+                        if (device.hasTouchpad) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            Text(
+                                text = stringResource(R.string.gamepad_touchpad_swipes_title),
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(bottom = 2.dp),
+                            )
+                            Text(
+                                text = stringResource(R.string.gamepad_touchpad_swipes_subtitle),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 4.dp),
+                            )
+                            SwipeDir.entries.forEach { dir ->
+                                SwipeBindingRow(
+                                    dir = dir,
+                                    binding = swipeBindings[dir.name],
+                                    capturing = captureSwipe == dir,
+                                    onCaptureToggle = {
+                                        captureSwipe = if (captureSwipe == dir) null else dir
+                                        if (captureSwipe != null) {
+                                            captureTarget = null
+                                            captureGyroActivate = false
+                                            captureLayerTrigger = false
+                                            visualCapture = null
+                                        }
+                                        status = null
+                                    },
+                                    onOpenRadial = {
+                                        swipeBindings = swipeBindings + (
+                                            dir.name to listOf(RadialMacroKey(SWIPE_OPEN_RADIAL))
+                                        )
+                                        status = null
+                                    },
+                                    onClear = {
+                                        swipeBindings = swipeBindings - dir.name
+                                        status = null
+                                    },
+                                )
+                            }
                         }
                     }
                     // ── U1: Gyro (spec 2026-08-14-gamepad-u1-gyro, §1.5) — só com
@@ -921,6 +1021,7 @@ fun GamepadRemapDialog(
                                         captureGyroActivate = !captureGyroActivate
                                         captureTarget = null
                                         visualCapture = null
+                                        captureSwipe = null
                                         status = null
                                     },
                                     shape = RoundedCornerShape(8.dp),
@@ -1151,6 +1252,88 @@ private fun RemapRow(
             }
         }
     }
+}
+
+/**
+ * D (spec 2026-08-16-D-touchpad-swipes-macros, §1.4): linha de UMA direção de swipe
+ * — rótulo, ação atual (macro / "Abrir radial" / nada), captura de macro por bus cru
+ * (teclas concatenam — padrão do RadialMenuEditorDialog) e atalho "Abrir radial"
+ * (binding especial SWIPE_OPEN_RADIAL).
+ */
+@Composable
+private fun SwipeBindingRow(
+    dir: SwipeDir,
+    binding: List<RadialMacroKey>?,
+    capturing: Boolean,
+    onCaptureToggle: () -> Unit,
+    onOpenRadial: () -> Unit,
+    onClear: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val openRadial = binding != null && binding.size == 1 && binding[0].keyCode == SWIPE_OPEN_RADIAL
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .gamepadSelectable(
+                selected = capturing,
+                onClick = onCaptureToggle,
+                shape = RoundedCornerShape(8.dp),
+                interactionSource = interactionSource,
+            )
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(swipeDirLabelRes(dir)),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        if (capturing) {
+            Text(
+                text = stringResource(R.string.gamepad_touchpad_swipe_capture_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        } else {
+            Text(
+                text = when {
+                    openRadial -> stringResource(R.string.gamepad_touchpad_swipe_open_radial_action)
+                    binding.isNullOrEmpty() -> stringResource(R.string.gamepad_touchpad_swipe_unbound)
+                    else -> binding.joinToString(" → ") { keyName(it.keyCode) }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onOpenRadial) {
+                Text(
+                    text = stringResource(R.string.gamepad_touchpad_swipe_open_radial_action),
+                    color = if (openRadial) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            if (!binding.isNullOrEmpty()) {
+                TextButton(onClick = onClear) {
+                    Text(stringResource(R.string.gamepad_remap_clear))
+                }
+            }
+        }
+    }
+}
+
+/** D: rótulo localizado de cada direção de swipe. */
+private fun swipeDirLabelRes(dir: SwipeDir): Int = when (dir) {
+    SwipeDir.UP -> R.string.gamepad_touchpad_swipe_up
+    SwipeDir.UP_RIGHT -> R.string.gamepad_touchpad_swipe_up_right
+    SwipeDir.RIGHT -> R.string.gamepad_touchpad_swipe_right
+    SwipeDir.DOWN_RIGHT -> R.string.gamepad_touchpad_swipe_down_right
+    SwipeDir.DOWN -> R.string.gamepad_touchpad_swipe_down
+    SwipeDir.DOWN_LEFT -> R.string.gamepad_touchpad_swipe_down_left
+    SwipeDir.LEFT -> R.string.gamepad_touchpad_swipe_left
+    SwipeDir.UP_LEFT -> R.string.gamepad_touchpad_swipe_up_left
 }
 
 private fun bindingDescription(binding: RawBinding?, context: Context): String = when (binding) {

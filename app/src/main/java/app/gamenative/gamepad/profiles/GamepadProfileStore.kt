@@ -122,7 +122,8 @@ class GamepadProfileStore(private val file: File) {
          * `layers`: merge GRANULAR (spec 2026-08-14-gamepad-u3-u4-layers-remap-jogo,
          * §1.3 — decisão do intuito U3(c)) — o jogo adiciona/substitui SÓ as camadas
          * que define, nunca apaga as do device. `layerTriggers` idem. U1/U5: campos
-         * novos seguem o mesmo padrão null-preserva.
+         * novos seguem o mesmo padrão null-preserva. D (spec 2026-08-16-D-touchpad-
+         * swipes-macros): `touchpadSwipes` idem — união por direção, jogo vence.
          */
         fun merged(device: GamepadProfile?, game: GamepadProfile?): GamepadProfile {
             val base = device ?: GamepadProfile()
@@ -144,6 +145,14 @@ class GamepadProfileStore(private val file: File) {
                 rumbleOnBack = override.rumbleOnBack ?: base.rumbleOnBack,
                 touchpadDoubleTapRightClick = override.touchpadDoubleTapRightClick
                     ?: base.touchpadDoubleTapRightClick,
+                // D (spec 2026-08-16-D-touchpad-swipes-macros): merge = UNIÃO por
+                // direção; o jogo (camada mais alta) vence por direção — nunca apaga
+                // as direções do device.
+                touchpadSwipes = when {
+                    base.touchpadSwipes == null -> override.touchpadSwipes
+                    override.touchpadSwipes == null -> base.touchpadSwipes
+                    else -> base.touchpadSwipes + override.touchpadSwipes
+                },
                 // F1 (spec 2026-08-15-input-core-avancado): mesmos null-preserva.
                 leftStickDeadzoneMode = override.leftStickDeadzoneMode ?: base.leftStickDeadzoneMode,
                 rightStickDeadzoneMode = override.rightStickDeadzoneMode ?: base.rightStickDeadzoneMode,

@@ -15,6 +15,15 @@ import kotlinx.serialization.json.Json
  * sem macro são inertes). Seleção touch-first (slide → release executa), fallback
  * stick (direção → destaque; confirmação com A).
  */
+/**
+ * D (spec 2026-08-16-D-touchpad-swipes-macros): keyCode RESERVADO do swipe → abrir o
+ * radial. NUNCA um keyCode Android real (valor negativo fora do range): o
+ * [app.gamenative.gamepad.GamepadTouchpadForwarder] intercepta ANTES do executor —
+ * nenhum KeyEvent sintético carrega este valor. O binding é a lista com UM
+ * `RadialMacroKey(SWIPE_OPEN_RADIAL)` no mapa `GamepadProfile.touchpadSwipes`.
+ */
+const val SWIPE_OPEN_RADIAL: Int = -1000
+
 @Serializable
 data class RadialMacroKey(
     /** Keycode Android cru (tabela AndroidConstants — nada inventado). */

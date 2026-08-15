@@ -53,6 +53,7 @@ import app.gamenative.data.GameSource
 import app.gamenative.powercontrol.PowerManager
 import app.gamenative.gamepad.mapping.AndroidInputAdapter
 import app.gamenative.gamepad.processing.LatencyTracker
+import app.gamenative.gamepad.radial.RadialMenuExecutor
 import app.gamenative.gamepad.GamepadTouchpadForwarder
 import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.IconDecoder
@@ -202,6 +203,16 @@ class MainActivity : ComponentActivity() {
         ControllerManager.getInstance().init(applicationContext)
         // O InputDeviceListener ÚNICO é o GamepadHub (spec 2026-08-13-onda2 §1.1) —
         // registrado no PluviaApp.onCreate; o listener por-Activity foi removido.
+
+        // D (spec 2026-08-16-D-touchpad-swipes-macros): o forwarder do touchpad NÃO
+        // tem Activity (é app-scoped) — este MainActivity (que alimenta o gate de
+        // ghost input) injeta o executor de macros de swipe via RadialMenuExecutor
+        // (padrão de injeção do TouchpadMouseSink). Múltiplas janelas: a última
+        // criada vence — mesma política do forwarder compartilhado.
+        PluviaApp.gamepadTouchpad.swipeExecutorSink =
+            GamepadTouchpadForwarder.SwipeExecutorSink { keys, deviceId ->
+                RadialMenuExecutor.execute(keys, deviceId, this@MainActivity)
+            }
 
         ContainerUtils.setContainerDefaults(applicationContext)
 

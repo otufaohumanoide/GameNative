@@ -4,6 +4,7 @@ import app.gamenative.gamepad.FaceStyle
 import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.layers.LayerTriggerSpec
 import app.gamenative.gamepad.processing.DeadzoneMode
+import app.gamenative.gamepad.radial.RadialMacroKey
 import app.gamenative.gamepad.processing.ResponseCurve
 import app.gamenative.gamepad.processing.StickTransform
 import kotlinx.serialization.Serializable
@@ -51,6 +52,11 @@ data class GamepadProfile(
     // P2-6 (spec 2026-08-14-touchpad-drag-double-tap): duplo-toque do touchpad =
     // clique direito (opt-in por perfil; null = OFF — 2 cliques, comportamento U2).
     val touchpadDoubleTapRightClick: Boolean? = null,
+    // D (spec 2026-08-16-D-touchpad-swipes-macros): swipes do touchpad por direção.
+    // Keys = nomes de SwipeDir; valor = macro OU lista com 1
+    // RadialMacroKey(SWIPE_OPEN_RADIAL) = abrir radial. null/vazio = OFF
+    // (caminho atual byte-identical). Campos novos com a política V1 do store.
+    val touchpadSwipes: Map<String, List<RadialMacroKey>>? = null,
     // ── F1 (spec 2026-08-15-input-core-avancado) ──
     // F1.1: deadzone radial/axial POR STICK (null = RADIAL, comportamento atual) e
     // response curve (null = LINEAR). LUT = lista de pontos 0..1 serializada no JSON.
@@ -100,6 +106,8 @@ data class GamepadProfile(
             rumbleOnActivate == null &&
             rumbleOnBack == null &&
             touchpadDoubleTapRightClick == null &&
+            // D: null E vazio = OFF (mesma convenção de layers — mapa vazio é default).
+            touchpadSwipes.isNullOrEmpty() &&
             leftStickDeadzoneMode == null &&
             rightStickDeadzoneMode == null &&
             leftStickCurve == null &&

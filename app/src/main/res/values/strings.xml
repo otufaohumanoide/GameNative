@@ -2367,6 +2367,20 @@
     <string name="gamepad_layer_trigger_conflict">That button is already the trigger of another layer</string>
     <string name="gamepad_touchpad_double_tap_title">Double-tap = right click</string>
     <string name="gamepad_touchpad_double_tap_subtitle">Two quick taps send the right button (off: two left clicks)</string>
+    <!-- D (spec 2026-08-16-D-touchpad-swipes-macros): swipes direcionais do touchpad -->
+    <string name="gamepad_touchpad_swipes_title">Swipes</string>
+    <string name="gamepad_touchpad_swipes_subtitle">Flick the touchpad (quick swipe) to trigger a macro — slow drags and still taps keep working</string>
+    <string name="gamepad_touchpad_swipe_up">Up</string>
+    <string name="gamepad_touchpad_swipe_up_right">Up-right</string>
+    <string name="gamepad_touchpad_swipe_right">Right</string>
+    <string name="gamepad_touchpad_swipe_down_right">Down-right</string>
+    <string name="gamepad_touchpad_swipe_down">Down</string>
+    <string name="gamepad_touchpad_swipe_down_left">Down-left</string>
+    <string name="gamepad_touchpad_swipe_left">Left</string>
+    <string name="gamepad_touchpad_swipe_up_left">Up-left</string>
+    <string name="gamepad_touchpad_swipe_unbound">Nothing</string>
+    <string name="gamepad_touchpad_swipe_capture_hint">Press keys… (BACK ends)</string>
+    <string name="gamepad_touchpad_swipe_open_radial_action">Open radial</string>
     <!-- F1 (spec 2026-08-15-input-core-avancado) -->
         <string name="gamepad_stick_left_title">Left stick</string>
     <string name="gamepad_stick_right_title">Right stick</string>

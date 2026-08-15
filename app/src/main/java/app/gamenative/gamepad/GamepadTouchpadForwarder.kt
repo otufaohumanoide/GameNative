@@ -4,10 +4,13 @@ import android.view.InputDevice
 import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
 import app.gamenative.gamepad.mapping.RawTouchInput
+import app.gamenative.events.GamepadSwipeEvent
 import app.gamenative.gamepad.processing.TouchSample
 import app.gamenative.gamepad.processing.TouchpadConfig
 import app.gamenative.gamepad.processing.TouchpadProcessor
 import app.gamenative.gamepad.processing.TouchpadState
+import app.gamenative.gamepad.radial.RadialMacroKey
+import app.gamenative.gamepad.radial.SWIPE_OPEN_RADIAL
 import com.winlator.xserver.Pointer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,10 +44,24 @@ class GamepadTouchpadForwarder {
         fun rightClick()
     }
 
+    /**
+     * D (spec 2026-08-16-D-touchpad-swipes-macros): executor de macros de swipe.
+     * O forwarder NÃO tem Activity (é app-scoped) — o MainActivity (que alimenta o
+     * gate de ghost input) injeta a implementação real via
+     * `RadialMenuExecutor.execute(keys, deviceId, activity)`; sem injeção o sink é
+     * no-op (mesmo padrão de injeção do [TouchpadMouseSink]).
+     */
+    fun interface SwipeExecutorSink {
+        fun execute(keys: List<RadialMacroKey>, deviceId: Int)
+    }
+
     private val states = mutableMapOf<Int, TouchpadState>()
 
     @Volatile
     var sink: TouchpadMouseSink = NoopSink
+
+    @Volatile
+    var swipeExecutorSink: SwipeExecutorSink = NoopSwipeExecutorSink
 
     /**
      * Spec 2026-08-16-C §1.3: preview do touchpad para o card de diagnóstico
@@ -85,6 +102,23 @@ class GamepadTouchpadForwarder {
                 doubleTapRightClick = profile.touchpadDoubleTapRightClick ?: false,
             ),
         )
+        // D (spec 2026-08-16-D-touchpad-swipes-macros): swipe = ação do PERFIL do
+        // device (mesmo merge device→jogo do profileFor). Sem binding para a direção
+        // o swipe vira NADA (nem delta de mouse do up — o dedo já levantou; os deltas
+        // do percurso já fluíram DURANTE o move). Um gesto, uma decisão: o swipe
+        // suprime tap/dragRelease/rightClick daquele up (campos false na decisão).
+        decision.swipe?.let { swipeDir ->
+            val keys = profile.touchpadSwipes?.get(swipeDir.name)
+            if (keys.isNullOrEmpty()) return true
+            if (keys.size == 1 && keys[0].keyCode == SWIPE_OPEN_RADIAL) {
+                // "Abrir radial": o jogo NÃO pausa aqui — o RadialMenuHost faz o
+                // pause/resume par-e-par no listener do evento.
+                PluviaApp.events.emit(GamepadSwipeEvent(raw.deviceId))
+            } else {
+                swipeExecutorSink.execute(keys, raw.deviceId)
+            }
+            return true
+        }
         if (decision.deltaX != 0 || decision.deltaY != 0) {
             sink.move(decision.deltaX, decision.deltaY)
         }
@@ -114,6 +148,10 @@ class GamepadTouchpadForwarder {
         override fun pressLeft() {}
         override fun releaseLeft() {}
         override fun rightClick() {}
+    }
+
+    private object NoopSwipeExecutorSink : SwipeExecutorSink {
+        override fun execute(keys: List<RadialMacroKey>, deviceId: Int) {}
     }
 }
 

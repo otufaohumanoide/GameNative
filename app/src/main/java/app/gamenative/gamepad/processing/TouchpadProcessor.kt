@@ -1,5 +1,7 @@
 package app.gamenative.gamepad.processing
 
+import app.gamenative.gamepad.radial.RadialMenuGeometry
+
 /**
  * Processador PURO do touchpad do controle → mouse (spec 2026-08-14-gamepad-u2-
  * touchpad-mouse, §1.1 + spec 2026-08-14-touchpad-drag-double-tap, P2-6):
@@ -23,6 +25,11 @@ package app.gamenative.gamepad.processing
  * - Duplo-toque (opt-in [TouchpadConfig.doubleTapRightClick]): 2 taps dentro de
  *   [TouchpadConfig.doubleTapWindowMs] com ≤ [TouchpadConfig.doubleTapMoveDeadzone]
  *   → BUTTON_RIGHT (gesto "botão direito" do moonlight); default OFF = 2 cliques.
+ * - Swipe (D — spec 2026-08-16-D-touchpad-swipes-macros): decidido NO UP, antes das
+ *   regras de tap/duplo-toque — duração down→up ≤ [TouchpadConfig.swipeMaxMs] E
+ *   deslocamento total ≥ [TouchpadConfig.swipeMinDistance] → [SwipeDir] (8 setores,
+ *   0° = cima). Suprime tap/drag-release/rightClick daquele up; deltas do percurso
+ *   continuam fluindo durante o move.
  */
 data class TouchSample(
     val down: Boolean,
@@ -53,6 +60,14 @@ data class TouchpadConfig(
     val postTouchDeadzoneMs: Long = 100L,
     /** Opt-in por perfil: duplo-toque = clique DIREITO (default OFF = 2 cliques). */
     val doubleTapRightClick: Boolean = false,
+    // D (spec 2026-08-16-D-touchpad-swipes-macros): swipe direcional no UP do dedo.
+    // OFF = decisão IDÊNTICA à atual (degradação byte-identical).
+    /** Swipes direcionais (default ON — sem binding de perfil nada acontece). */
+    val swipeEnabled: Boolean = true,
+    /** Deslocamento mínimo do vetor start→end (normalizado) para virar swipe. */
+    val swipeMinDistance: Float = 0.22f,
+    /** Duração máxima down→up (ms) para o gesto contar como swipe. */
+    val swipeMaxMs: Long = 300L,
 )
 
 /** Estado entre amostras — UMA instância por device, morta no removeDevice (V6). */
@@ -83,11 +98,25 @@ data class TouchpadDecision(
     val dragRelease: Boolean,
     /** Duplo-toque (opt-in) → clique DIREITO (P2-6). */
     val rightClick: Boolean,
+    /**
+     * D (spec 2026-08-16-D-touchpad-swipes-macros): swipe direcional concluído NESTE
+     * up. null = sem swipe — default mantém os chamadores existentes byte-identical.
+     * Um gesto, uma decisão: swipe suprime tap/drag-release/rightClick deste up.
+     */
+    val swipe: SwipeDir? = null,
 ) {
     companion object {
         val NONE = TouchpadDecision(0, 0, false, false, false, false)
     }
 }
+
+/**
+ * D (spec 2026-08-16-D-touchpad-swipes-macros): direção do swipe em 8 setores —
+ * mesma convenção do radial (0° = cima, sentido horário), índice = setor de
+ * [RadialMenuGeometry.sectorIndex]. Os NOMES do enum são as chaves do mapa
+ * `GamepadProfile.touchpadSwipes`.
+ */
+enum class SwipeDir { UP, UP_RIGHT, RIGHT, DOWN_RIGHT, DOWN, DOWN_LEFT, LEFT, UP_LEFT }
 
 object TouchpadProcessor {
 
@@ -144,6 +173,14 @@ object TouchpadProcessor {
         state.dragging = false
         // P2-6: dead zone de pós-toque — o próximo down dentro dela é bounce.
         state.ignoreUntilMs = sample.nowMs + config.postTouchDeadzoneMs
+        // D (spec 2026-08-16-D-touchpad-swipes-macros): swipe NO UP, ANTES das regras
+        // de drag/tap/duplo-toque — duração down→up ≤ swipeMaxMs E deslocamento total
+        // ≥ swipeMinDistance. Um gesto, uma decisão: swipe SUPRIME tap/drag-release/
+        // rightClick deste up. Desambiguação estrutural: drag (≥650 ms) nunca é swipe
+        // (janela ≤300 ms); duplo-toque exige 2 taps parados (≤0.06 ≪ 0.22).
+        swipeDirection(sample, state, config)?.let {
+            return TouchpadDecision(0, 0, false, false, false, false, swipe = it)
+        }
         if (wasDragging) {
             return TouchpadDecision(0, 0, false, false, true, false)
         }
@@ -168,5 +205,25 @@ object TouchpadProcessor {
         state.lastTapX = sample.x
         state.lastTapY = sample.y
         return TouchpadDecision(0, 0, true, false, false, false)
+    }
+
+    /**
+     * D (spec 2026-08-16-D-touchpad-swipes-macros): vetor start→end → [SwipeDir]
+     * (8 setores via [RadialMenuGeometry.angleOf] + [RadialMenuGeometry.sectorIndex],
+     * convenção 0° = cima) ou null se o gesto NÃO é swipe. Deslocamento medido como
+     * a norma euclidiana do vetor start→end (o mesmo vetor da direção).
+     */
+    private fun swipeDirection(sample: TouchSample, state: TouchpadState, config: TouchpadConfig): SwipeDir? {
+        if (!config.swipeEnabled) return null
+        if (sample.nowMs - state.tapStartAt > config.swipeMaxMs) return null
+        val dx = sample.x - state.tapStartX
+        val dy = sample.y - state.tapStartY
+        val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+        if (distance < config.swipeMinDistance) return null
+        val sector = RadialMenuGeometry.sectorIndex(
+            RadialMenuGeometry.angleOf(dx, dy),
+            SwipeDir.entries.size,
+        )
+        return SwipeDir.entries[sector]
     }
 }
