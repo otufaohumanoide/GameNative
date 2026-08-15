@@ -1495,6 +1495,15 @@ object PrefManager {
         get() = getPref(GAMEPAD_LAYER_TICK_ENABLED, true)
         set(value) { setPref(GAMEPAD_LAYER_TICK_ENABLED, value) }
 
+    /* Spec 2026-08-16-A §1.5: fallback de rumble no TELEFONE quando o controle não
+       expõe vibrator (curva pow 0.6 do GameNative original). Default ON (comportamento
+       do original); `gamepadRumbleEnabled` continua master — OFF desliga TUDO,
+       inclusive o fallback (o gate vive no GamepadHaptics.rumbleDevice). */
+    private val GAMEPAD_PHONE_RUMBLE_FALLBACK = booleanPreferencesKey("gamepadPhoneRumbleFallback")
+    var gamepadPhoneRumbleFallback: Boolean
+        get() = getPref(GAMEPAD_PHONE_RUMBLE_FALLBACK, true)
+        set(value) { setPref(GAMEPAD_PHONE_RUMBLE_FALLBACK, value) }
+
     private val GAMEPAD_TOUCHPAD_SENSITIVITY = floatPreferencesKey("gamepadTouchpadSensitivity")
     var gamepadTouchpadSensitivity: Float
         get() = getPref(GAMEPAD_TOUCHPAD_SENSITIVITY, 1.0f)

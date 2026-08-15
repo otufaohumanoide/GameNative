@@ -13,6 +13,7 @@ import app.gamenative.gamepad.GamepadHub
 import app.gamenative.gamepad.GamepadSensorSource
 import app.gamenative.gamepad.GamepadTouchpadForwarder
 import app.gamenative.gamepad.XServerTouchpadMouseSink
+import app.gamenative.ui.component.GamepadHaptics
 import app.gamenative.service.ActiveGameRegistry
 import app.gamenative.service.DownloadService
 import app.gamenative.service.SteamService
@@ -99,6 +100,11 @@ class PluviaApp : SplitCompatApplication() {
         // (multi-janela/external display); um hub por Activity registraria N listeners
         // duplicados (o exato bug C3 do hardening). O hub vive até o processo morrer.
         gamepadHub = GamepadHub(this).also { it.start() }
+
+        // Spec 2026-08-16-A §1.1: contexto de aplicação para o fallback de rumble no
+        // TELEFONE (GamepadHaptics.rumbleDevice sem device-vibrator). Uma vez por
+        // processo; sem isso o fallback degrada para no-op silencioso (V11).
+        GamepadHaptics.appContext = applicationContext
 
         // U1 (spec 2026-08-14-gamepad-u1-gyro): fonte de sensores por device (API 31+).
         // Começa SUSPENSA — só registra quando o XServerScreen (container rodando)

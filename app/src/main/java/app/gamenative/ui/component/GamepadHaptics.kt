@@ -2,9 +2,12 @@ package app.gamenative.ui.component
 
 import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
+import app.gamenative.gamepad.processing.RumblePhoneCurve
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.os.Build
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.view.InputDevice
@@ -23,8 +26,23 @@ import android.view.InputDevice
  * Wine/XInput → Vibrator) foi DIMENSIONADO no spec (§1.3) e ganhou contrato no P2-5
  * (spec 2026-08-14-gamepad-upgrades-pendencias): [rumbleDevice] é a assinatura única
  * low/high/duration/cancel que a ponte futura traduz — zero retrabalho.
+ *
+ * Spec 2026-08-16-A (rumble fallback + USAGE_MEDIA): [rumbleDevice] volta a vibrar o
+ * TELEFONE quando o device não expõe vibrator (curva pow 0.6 do original em
+ * [RumblePhoneCurve], toggle `gamepadPhoneRumbleFallback` default ON); todas as
+ * vibrações ganham `USAGE_MEDIA` (VibrationAttributes API 33+ / AudioAttributes
+ * 26–32 — MIUI suprime vibração sem atributo); [rumbleTargetFor] expõe a decisão
+ * CONTROLLER|PHONE|NONE para o botão "Testar vibração" dos settings.
  */
 object GamepadHaptics {
+
+    /**
+     * Contexto de aplicação para o fallback de TELEFONE (spec 2026-08-16-A, §1.1).
+     * Atribuído em `PluviaApp.onCreate` (uma vez por processo); null ⇒ o fallback
+     * degrada para no-op silencioso (V11) — nunca crash.
+     */
+    @Volatile
+    var appContext: Context? = null
 
     /** Efeitos de menu — padrões curtos (D4: sutil na ativação, menor no back). */
     enum class HapticEffect { ACTIVATE, BACK, LAYER_TICK }
@@ -108,10 +126,14 @@ object GamepadHaptics {
         timber.log.Timber.d("GamepadHaptics: LAYER_TICK device=%d", deviceId)
         val vibrators = deviceVibrators(deviceId) ?: return
         if (vibrators.isEmpty()) return
+        // Spec 2026-08-16-A §1.1: tick NÃO ganha fallback de telefone (feedback é do
+        // DEVICE; sem device = silêncio, V11). §1.2: attrs USAGE_MEDIA também aqui.
         for (vibrator in vibrators) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 runCatching {
-                    vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+                    vibrateWithAttributes(vibrator, LAYER_TICK_FALLBACK_MS) {
+                        VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                    }
                 }.onFailure {
                     vibrate(vibrator, LAYER_TICK_FALLBACK_MS)
                 }
@@ -130,14 +152,26 @@ object GamepadHaptics {
      * - `low == high == 0` ⇒ `vibrator.cancel()` (parar é parte do contrato);
      * - Amplitude: [amplitudeFor] (clamp 1..255; <1 = cancel); try/catch com fallback
      *   para o one-shot de amplitude default (API <26/defensivo, padrão SDL).
+     * - Device SEM vibrator: fallback no TELEFONE com a curva original
+     *   [RumblePhoneCurve.amplitudeFor] sobre [mixIntensity] quando
+     *   `gamepadPhoneRumbleFallback` está ON (spec 2026-08-16-A, §1.1);
+     *   cancel idem (low=high=0 → cancel também no vibrator do sistema).
      *
      * `gamepadRumbleEnabled` guarda TUDO (efeitos de menu E jogo — a ponte
      * Wine/XInput futura só traduz low/high/duration para esta função).
      */
     fun rumbleDevice(deviceId: Int, low: Float, high: Float, durationMs: Long): Boolean {
         if (!PrefManager.gamepadRumbleEnabled) return false
-        val vibrators = deviceVibrators(deviceId) ?: return false
-        if (vibrators.isEmpty()) return false
+        val vibrators = deviceVibrators(deviceId)
+        // Spec 2026-08-16-A §1.1: device sem vibrator E fallback ligado ⇒ vibra o
+        // TELEFONE (comportamento do GameNative original, com a curva pow 0.6).
+        if (vibrators.isNullOrEmpty()) {
+            return if (PrefManager.gamepadPhoneRumbleFallback) {
+                rumblePhoneFallback(low, high, durationMs)
+            } else {
+                false
+            }
+        }
         if (low <= 0f && high <= 0f) {
             // Jogos mandam rumble contínuo com durações longas e depois cancelam.
             vibrators.forEach { runCatching { it.cancel() } }
@@ -152,6 +186,42 @@ object GamepadHaptics {
         // Limpeza 1.3-4: retorno REAL — true = vibração de fato disparada (o
         // WinHandler usa para precisar o isRumbling; cancel/gate-off/sem-vibrator = false).
         return true
+    }
+
+    /**
+     * Spec 2026-08-16-A §1.1: fallback no TELEFONE — mesmo caminho do
+     * [systemVibrator], com a curva do GameNative original ([RumblePhoneCurve]) sobre
+     * [mixIntensity]. Cancel é parte do contrato (low=high=0 → cancel do sistema).
+     * `appContext` null (antes do onCreate/unit tests) ⇒ false, no-op silencioso (V11).
+     */
+    private fun rumblePhoneFallback(low: Float, high: Float, durationMs: Long): Boolean {
+        val context = appContext ?: return false
+        val vibrator = systemVibrator(context) ?: return false
+        if (!vibrator.hasVibrator()) return false
+        if (low <= 0f && high <= 0f) {
+            runCatching { vibrator.cancel() }
+            return false
+        }
+        val amplitude = RumblePhoneCurve.amplitudeFor(mixIntensity(low, high))
+        if (amplitude == 0) {
+            runCatching { vibrator.cancel() }
+            return false
+        }
+        vibrateWithAttributes(vibrator, durationMs) {
+            VibrationEffect.createOneShot(durationMs, amplitude)
+        }
+        return true
+    }
+
+    /**
+     * Spec 2026-08-16-A §1.4: destino efetivo de uma vibração por device — a MESMA
+     * lógica do fallback de 1.1 (decision pura em [RumblePhoneCurve.rumbleTargetFor];
+     * aqui só resolve as entradas Android: vibrators do device + toggle).
+     */
+    fun rumbleTargetFor(deviceId: Int): RumblePhoneCurve.RumbleTarget {
+        val vibrators = deviceVibrators(deviceId)
+        val hasDeviceVibrators = vibrators != null && vibrators.isNotEmpty()
+        return RumblePhoneCurve.rumbleTargetFor(hasDeviceVibrators, PrefManager.gamepadPhoneRumbleFallback)
     }
 
     /**
@@ -195,13 +265,8 @@ object GamepadHaptics {
     }
 
     private fun vibrate(vibrator: Vibrator, durationMs: Long) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(
-                VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE),
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator.vibrate(durationMs)
+        vibrateWithAttributes(vibrator, durationMs) {
+            VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
         }
     }
 
@@ -215,17 +280,49 @@ object GamepadHaptics {
             runCatching { vibrator.cancel() }
             return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        runCatching {
+            vibrateWithAttributes(vibrator, durationMs) {
+                VibrationEffect.createOneShot(durationMs, amplitude)
+            }
+        }.onFailure {
             runCatching {
-                vibrator.vibrate(VibrationEffect.createOneShot(durationMs, amplitude))
-            }.onFailure {
-                runCatching {
-                    vibrator.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrateWithAttributes(vibrator, durationMs) {
+                    VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
                 }
             }
-        } else {
-            @Suppress("DEPRECATION")
-            runCatching { vibrator.vibrate(durationMs) }
+        }
+    }
+
+    /**
+     * Spec 2026-08-16-A §1.2: `USAGE_MEDIA` em TODAS as vibrações (mímese do Dolphin —
+     * `reference/dolphin/.../ControllerInterface.kt`: `VibrationAttributes` API 33+,
+     * `AudioAttributes` API <33). OEMs (MIUI) tratam vibração sem atributo como
+     * "notificação" e podem suprimir. O [effect] é criado por lambda: em API < 26
+     * (`VibrationEffect` inexiste) só o one-shot legado roda e o lambda nem avalia.
+     */
+    private fun vibrateWithAttributes(
+        vibrator: Vibrator,
+        durationMs: Long,
+        effect: () -> VibrationEffect,
+    ) {
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
+                val attrs = VibrationAttributes.Builder()
+                    .setUsage(VibrationAttributes.USAGE_MEDIA)
+                    .build()
+                vibrator.vibrate(effect(), attrs)
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> {
+                @Suppress("DEPRECATION")
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .build()
+                vibrator.vibrate(effect(), attrs)
+            }
+            else -> {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(durationMs)
+            }
         }
     }
 }

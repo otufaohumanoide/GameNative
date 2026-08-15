@@ -2267,6 +2267,13 @@
     <string name="gamepad_layer_tick_subtitle">Clique háptico curto ao ativar uma camada (guardado pelo interruptor de vibração)</string>
 <string name="gamepad_rumble_title">Vibração do controle (menu)</string>
     <string name="gamepad_rumble_subtitle">Vibrar o controle nas confirmações de menu (efeitos por device no perfil de remap)</string>
+    <string name="gamepad_phone_rumble_fallback_title">Fallback de vibração no telefone</string>
+    <string name="gamepad_phone_rumble_fallback_subtitle">Vibrar o telefone quando o controle não tem vibração (guardado pelo interruptor de vibração)</string>
+    <string name="gamepad_rumble_test_title">Testar vibração</string>
+    <string name="gamepad_rumble_test_hint">Vibrar agora (controle ou fallback no telefone)</string>
+    <string name="gamepad_rumble_test_result_controller">Vibrou: controle</string>
+    <string name="gamepad_rumble_test_result_phone">Vibrou: telefone</string>
+    <string name="gamepad_rumble_test_result_none">Vibrou: nada</string>
     <string name="gamepad_devices_title">Controles conectados</string>
     <string name="gamepad_devices_empty">Nenhum controle conectado</string>
     <string name="gamepad_battery_format">%1$d%%</string>

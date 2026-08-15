@@ -2399,6 +2399,13 @@
     <string name="gamepad_layer_tick_subtitle">Short haptic click when a layer activates (guarded by the rumble switch)</string>
 <string name="gamepad_rumble_title">Controller rumble (menu)</string>
     <string name="gamepad_rumble_subtitle">Vibrate the controller on menu confirmations (per-device effects in the remap profile)</string>
+    <string name="gamepad_phone_rumble_fallback_title">Phone rumble fallback</string>
+    <string name="gamepad_phone_rumble_fallback_subtitle">Vibrate the phone when the controller has no vibration (guarded by the rumble switch)</string>
+    <string name="gamepad_rumble_test_title">Test vibration</string>
+    <string name="gamepad_rumble_test_hint">Vibrate now (controller, or phone fallback)</string>
+    <string name="gamepad_rumble_test_result_controller">Vibrated: controller</string>
+    <string name="gamepad_rumble_test_result_phone">Vibrated: phone</string>
+    <string name="gamepad_rumble_test_result_none">Vibrated: nothing</string>
     <string name="gamepad_devices_title">Connected controllers</string>
     <string name="gamepad_devices_empty">No controller connected</string>
     <string name="gamepad_battery_format">%1$d%%</string>

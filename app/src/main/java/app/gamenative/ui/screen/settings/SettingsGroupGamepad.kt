@@ -34,11 +34,14 @@ import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
 import app.gamenative.R
 import app.gamenative.gamepad.mapping.MappingDatabase
+import app.gamenative.gamepad.processing.RumblePhoneCurve
 import app.gamenative.gamepad.remap.GamepadRemapDialog
+import app.gamenative.ui.component.GamepadHaptics
 import app.gamenative.ui.component.gamepadAdjustableRow
 import app.gamenative.ui.component.gamepadSelectable
 import app.gamenative.ui.theme.PluviaTheme
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
  * Seção de settings "Gamepad" (spec 2026-08-14-onda2-pos-implementacao, M2/M3): o gate
@@ -92,6 +95,15 @@ fun SettingsGroupGamepad() {
     var layerTickEnabled by rememberSaveable {
         mutableStateOf(if (isPreview) true else PrefManager.gamepadLayerTickEnabled)
     }
+    // Spec 2026-08-16-A §1.5: fallback de rumble no TELEFONE (default ON = original).
+    var phoneRumbleFallback by rememberSaveable {
+        mutableStateOf(if (isPreview) true else PrefManager.gamepadPhoneRumbleFallback)
+    }
+    // Spec 2026-08-16-A §1.4: resultado do teste de vibração por device; auto-limpa
+    // após ~3 s (LaunchedEffect keyed no mapa — cliques reiniciam a janela).
+    var rumbleTestResults by rememberSaveable {
+        mutableStateOf<Map<Int, RumblePhoneCurve.RumbleTarget>>(emptyMap())
+    }
 
     // P3-4 (spec 2026-08-14-gamepad-upgrades-pendencias): refresh PULL da bateria ao
     // ABRIR a seção (a SettingsScreen é um destino de navegação — compõe ao abrir e
@@ -101,6 +113,14 @@ fun SettingsGroupGamepad() {
         LaunchedEffect(Unit) {
             val hub = PluviaApp.gamepadHub
             hub.connectedDevices.value.keys.forEach(hub::refreshBattery)
+        }
+    }
+
+    // Spec 2026-08-16-A §1.4: o resultado do teste some após ~3 s do ÚLTIMO clique.
+    if (rumbleTestResults.isNotEmpty()) {
+        LaunchedEffect(rumbleTestResults) {
+            delay(3000)
+            rumbleTestResults = emptyMap()
         }
     }
 
@@ -117,6 +137,30 @@ fun SettingsGroupGamepad() {
                 ConnectedDeviceRow(
                     device = device,
                     isActive = activeDevice?.deviceId == device.deviceId,
+                )
+                // Spec 2026-08-16-A §1.4: teste de vibração POR device — dispara o
+                // contrato P2-5 (rumbleDevice) e mostra o destino efetivo por ~3 s
+                // (CONTROLLER | PHONE | NONE — decisão compartilhada rumbleTargetFor).
+                GamepadSettingsButtonRow(
+                    title = stringResource(R.string.gamepad_rumble_test_title),
+                    subtitle = when (rumbleTestResults[device.deviceId]) {
+                        RumblePhoneCurve.RumbleTarget.CONTROLLER ->
+                            stringResource(R.string.gamepad_rumble_test_result_controller)
+                        RumblePhoneCurve.RumbleTarget.PHONE ->
+                            stringResource(R.string.gamepad_rumble_test_result_phone)
+                        RumblePhoneCurve.RumbleTarget.NONE ->
+                            stringResource(R.string.gamepad_rumble_test_result_none)
+                        null -> stringResource(R.string.gamepad_rumble_test_hint)
+                    },
+                    enabled = true,
+                    onClick = {
+                        val vibrated = GamepadHaptics.rumbleDevice(device.deviceId, 0.6f, 0.6f, 300L)
+                        val target = GamepadHaptics.rumbleTargetFor(device.deviceId)
+                        // Sem vibração de fato (master OFF, sem vibrator, sem fallback)
+                        // ⇒ "nada" — o resultado é o que ACONTECEU, não o alvo teórico.
+                        rumbleTestResults = rumbleTestResults + (device.deviceId to
+                            if (vibrated) target else RumblePhoneCurve.RumbleTarget.NONE)
+                    },
                 )
             }
             GamepadSettingsDivider()
@@ -203,6 +247,20 @@ fun SettingsGroupGamepad() {
             onCheckedChange = {
                 rumbleEnabled = it
                 PrefManager.gamepadRumbleEnabled = it
+            },
+        )
+        GamepadSettingsDivider()
+
+        // Spec 2026-08-16-A §1.5: fallback no telefone quando o controle não expõe
+        // vibrator (default ON — comportamento do GameNative original). O master
+        // `gamepadRumbleEnabled` continua guardando TUDO (gate no GamepadHaptics).
+        GamepadSettingsSwitchRow(
+            title = stringResource(R.string.gamepad_phone_rumble_fallback_title),
+            subtitle = stringResource(R.string.gamepad_phone_rumble_fallback_subtitle),
+            checked = phoneRumbleFallback,
+            onCheckedChange = {
+                phoneRumbleFallback = it
+                PrefManager.gamepadPhoneRumbleFallback = it
             },
         )
         GamepadSettingsDivider()
