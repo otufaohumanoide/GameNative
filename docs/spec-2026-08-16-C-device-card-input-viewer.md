@@ -81,6 +81,10 @@ apertar botões acende o desenho; gyro readout varia girando o controle;
 touchpad readout segue o dedo; testar vibração reporta controle/telefone/nada;
 recenterar gyro zera o readout.
 
+Consolidado (fechamento 2026-08-16, §2 linha C — protocolo único do roadmap):
+expandir o DeviceDiagnosticsCard → viewer acende; readouts gyro/touchpad
+variam; recentrar zera. **Status: on-device pendente.**
+
 Nota do impl (condições de entrega, registradas no impl doc): o readout do touchpad
 funciona independente do toggle mouse (o forwarder é alimentado quando o preview está
 ON — impl doc D1). O readout do gyro é um OBSERVADOR puro do pipeline (invariante "SEM

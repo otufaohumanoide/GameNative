@@ -104,6 +104,14 @@ submenu abre/retorna; HOLD mantém o menu aberto executando por mudança de
 setor; shift consume o botão físico e remapeia sem abrir radial; turbo alterna
 no jogo enquanto segura e solta limpo.
 
+Consolidado (fechamento 2026-08-16, §2 linha F — protocolo único do roadmap):
+perfil v1 antigo carrega; submenu abre/volta; HOLD executa sem fechar
+(anti-repeat 120 ms); shift consome o botão sem abrir radial; turbo pulsa e
+solta limpo — evidência: screenshots + logcat `gncontrol`. Consumo de touch do
+HOLD confirmado NO CÓDIGO na revisão (fechamento §1.2: `change.consume()` no
+overlay + `radialState.open` no contexto OVERLAY do bus — impl doc §5);
+confirmação física segue no protocolo humano. **Status: on-device pendente.**
+
 Nota do impl (condições de entrega, registradas no impl doc 2026-08-16): HOLD é
 um painel persistente — o host NÃO pausa o jogo ao abrir (os macros executados
 no meio do jogo precisam chegar ao jogo) e NÃO retoma ao executar;

@@ -106,6 +106,11 @@ renderiza com FaceStyle do device; tap em ✕ → captura → apertar R1 → ove
 salvo; flash acende ao apertar botões físicos; escopo Este jogo vs Todos os
 jogos persiste e o jogo respeita.
 
+Consolidado (fechamento 2026-08-16, §2 linha B — protocolo único do roadmap):
+abrir o remap pelo QuickMenu → mock renderiza no FaceStyle do device; tap →
+captura → bind salva; flash 600 ms; escopo Este jogo/Todos os jogos; restaurar
+automático. **Status: on-device pendente.**
+
 ## 4. Fora de escopo
 
 Desenho por VID/PID exato (só FaceStyle), editor arrastar-e-soltar, animação

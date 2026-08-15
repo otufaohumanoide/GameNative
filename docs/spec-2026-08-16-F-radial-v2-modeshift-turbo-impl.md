@@ -234,3 +234,43 @@ remapeia sem abrir radial; turbo alterna no jogo enquanto segura e solta limpo.
   compile fresco de todos os arquivos tocados).
 - Captura de trigger preserva `isShift` (regressão testada por leitura do código —
   sem teste JVM: a captura vive na UI).
+
+## 5. Revisão de fechamento (2026-08-16 — spec 2026-08-16-roadmap-ux-fechamento)
+
+Nits da revisão da fase F, aplicados antes do fechamento:
+
+- **Nit 1 — `TurboScheduler.nextToggleAt` sem `phase`** (resolvido por REMOÇÃO do
+  parâmetro — decisão da revisão: a fase vive no handler, e o repo já tem
+  precedente de remover parâmetro morto de função pura, commit d19ae234
+  "LatencyDebugOverlay sem parâmetro morto"): assinatura agora é
+  `nextToggleAt(nowMs, periodMs)` (TurboScheduler.kt:29); a alternância de fase
+  0/1 segue documentada no KDoc do object como contrato do
+  `PhysicalControllerHandler.turboStates` (TurboScheduler.kt:16-19), que injeta a
+  borda correspondente a cada toggle (PhysicalControllerHandler.kt:745-758).
+  `TurboSchedulerTest` alinhado (5 testes; o caso "fases alternam" virou
+  "ciclo completo down-up-down dura o período default" — o teste agora prende o
+  contrato de TIMING, que é o que pertence à função pura). Commit 5c79933a.
+- **Nit 2 — consumo de touch no HOLD (jogo rodando)** — confirmado NO CÓDIGO em
+  dois mecanismos independentes: (a) o overlay dona o gesto —
+  `RadialMenuOverlay.kt:233` `change.consume()` no `pointerInput` full-size (o
+  Box fillMaxSize é o alvo de hit mais alto; o interop filter da superfície do
+  jogo não recebe o toque); (b) roteamento do bus — `XServerScreen.kt:1559-1563`
+  `overlayInputState.context = OVERLAY` inclui `radialState.open` (qualquer modo,
+  inclusive HOLD), então nenhum evento de gamepad do bus chega ao branch do jogo
+  (invariante C2). HOLD não pausa o jogo por design (painel persistente — §1.2),
+  então esta dupla é exatamente a proteção do gesto do overlay contra o jogo
+  rodando. Confirmação física com o dedo no device: on-device pendente (tabela
+  consolidada A–F do fechamento §2).
+- **Nit 3 — gate re-rodado pós-nits**: 34/34 testes verdes (RadialMenuCoreTest 17,
+  LayerResolverTest 12, TurboSchedulerTest 5) + `assembleModernDebug` OK.
+- **Nit 4 — commit + checkpoint + impl doc + MILESTONES**: feat `1068604f`,
+  checkpoint §6 `13c60c5e`, impl doc (este arquivo); milestone anotada
+  `milestone-2026-08-16-radial-v2-modeshift-turbo` → `1068604f` (docs/MILESTONES.md).
+
+## 6. Verificação on-device consolidada (fase F)
+
+Protocolo do fechamento (§2, linha F — humano, Mi 11 + DS4 + Silksong):
+perfil v1 antigo carrega; submenu abre/volta; HOLD executa sem fechar
+(anti-repeat 120 ms); shift consome o botão sem abrir radial; turbo pulsa e
+solta limpo. Evidência: screenshots + logcat `gncontrol`.
+Status: **on-device pendente** (registrado na §3 do spec).

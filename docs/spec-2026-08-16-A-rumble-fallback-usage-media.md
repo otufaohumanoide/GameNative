@@ -103,6 +103,11 @@ On-device (humano, "on-device pendente"): DS4 USB (sem vibrator do device) →
 testar vibração → treme o TELEFONE; toggle OFF → nada; rumble de jogo
 (Silksong) idem; `dumpsys` confirma `USAGE_MEDIA` nos attrs.
 
+Consolidado (fechamento 2026-08-16, §2 linha A — protocolo único do roadmap):
+`setprop debug.gamenative.input rumble:0.6:0.6:300` + botão Testar vibração no
+card → log `rumble → true/false` + destino CONTROLLER/PHONE/NONE; `dumpsys`
+com USAGE_MEDIA; toggle OFF silencia. **Status: on-device pendente.**
+
 ## 4. Fora de escopo
 
 HD haptics/voice-coil, trigger effects, lightbar, waveforms compostas, rumble
