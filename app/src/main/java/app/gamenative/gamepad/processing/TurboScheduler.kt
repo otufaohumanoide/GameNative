@@ -7,10 +7,11 @@ package app.gamenative.gamepad.processing
  * [PERIOD_DEFAULT_MS]. Zero android.* — o agendamento real (Handler main) vive no
  * PhysicalControllerHandler; aqui só a decisão determinística de TEMPO.
  *
- * `phase` documenta o estado lógico da fonte no instante `nowMs` (0 = solta,
- * próximo toggle é DOWN; 1 = segurada, próximo toggle é UP) e alterna a cada
- * toggle aplicado pelo handler — o handler injeta a BORDA correspondente à fase
- * no instante retornado.
+ * A FASE vive no handler: `PhysicalControllerHandler.turboStates` alterna
+ * 0 (solta, próximo toggle é DOWN) / 1 (segurada, próximo toggle é UP) a cada
+ * toggle e injeta a BORDA correspondente no instante retornado — esta função
+ * pura não recebe fase (contrato da revisão de fechamento 2026-08-16: parâmetro
+ * sem uso na função pura é removido, não documentado).
  */
 object TurboScheduler {
 
@@ -25,6 +26,6 @@ object TurboScheduler {
      * `nowMs` + meio período. Determinístico: mesmos argumentos → mesmo resultado;
      * período degradado é clampado a [MIN_PERIOD_MS] (nunca exceção — hot path).
      */
-    fun nextToggleAt(nowMs: Long, periodMs: Long, phase: Int): Long =
+    fun nextToggleAt(nowMs: Long, periodMs: Long): Long =
         nowMs + (periodMs.coerceAtLeast(MIN_PERIOD_MS) / 2L)
 }

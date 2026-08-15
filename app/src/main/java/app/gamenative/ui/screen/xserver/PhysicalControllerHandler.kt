@@ -749,13 +749,13 @@ class PhysicalControllerHandler(
                 entry.phase = if (down) 1 else 0
                 entry.pending = this
                 val now = SystemClock.uptimeMillis()
-                val delay = (TurboScheduler.nextToggleAt(now, TurboScheduler.PERIOD_DEFAULT_MS, entry.phase) - now)
+                val delay = (TurboScheduler.nextToggleAt(now, TurboScheduler.PERIOD_DEFAULT_MS) - now)
                     .coerceAtLeast(0L)
                 mainHandler.postDelayed(this, delay)
             }
         }
         val now = SystemClock.uptimeMillis()
-        val delay = (TurboScheduler.nextToggleAt(now, TurboScheduler.PERIOD_DEFAULT_MS, 1) - now)
+        val delay = (TurboScheduler.nextToggleAt(now, TurboScheduler.PERIOD_DEFAULT_MS) - now)
             .coerceAtLeast(0L)
         mainHandler.postDelayed(runnable, delay)
         return runnable
