@@ -98,6 +98,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import app.gamenative.BuildConfig
 import app.gamenative.PrefManager
 import app.gamenative.R
 import app.gamenative.powercontrol.PowerManager
@@ -1515,6 +1516,9 @@ private fun PerformanceHudQuickMenuTab(
     modifier: Modifier = Modifier,
 ) {
     val accentColor = PluviaTheme.colors.accentPurple
+    // spec 2026-08-16-debug-hud-ui: estado local do toggle de latência (só a HUD
+    // tab observa; o overlay lê o pref via poll — sem estado novo no XServerScreen).
+    var isLatencyHudEnabled by remember { mutableStateOf(PrefManager.debugLatencyHudEnabled) }
 
     Column(
         modifier = modifier
@@ -1574,6 +1578,25 @@ private fun PerformanceHudQuickMenuTab(
             onToggle = onTogglePerformanceHud,
             accentColor = accentColor,
         )
+
+        // spec 2026-08-16-debug-hud-ui: HUD de latência de input — toggle de
+        // USUÁRIO para o LatencyDebugOverlay (mesma ergonomia do Performance HUD;
+        // só em builds de debug, onde o overlay existe). Sem QuickMenuAction: o
+        // overlay polla o pref (≤500 ms) e não há efeito colateral no XServerScreen.
+        if (BuildConfig.DEBUG) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            QuickMenuToggleRow(
+                title = stringResource(R.string.quick_menu_latency_hud),
+                subtitle = stringResource(R.string.quick_menu_latency_hud_description),
+                enabled = isLatencyHudEnabled,
+                onToggle = {
+                    isLatencyHudEnabled = !isLatencyHudEnabled
+                    PrefManager.debugLatencyHudEnabled = isLatencyHudEnabled
+                },
+                accentColor = accentColor,
+            )
+        }
 
         Spacer(modifier = Modifier.height(8.dp))
 

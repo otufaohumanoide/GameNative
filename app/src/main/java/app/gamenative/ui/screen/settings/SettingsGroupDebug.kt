@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.stringResource
+import app.gamenative.BuildConfig
 import app.gamenative.CrashHandler
 import coil.annotation.ExperimentalCoilApi
 import coil.imageLoader
@@ -87,6 +88,10 @@ fun SettingsGroupDebug() {
     var enableBox86Logs by rememberSaveable { mutableStateOf(
         if (isPreview) false else WinlatorPrefManager.getBoolean("enable_box86_64_logs", false)
     ) }
+    // spec 2026-08-16-debug-hud-ui: estado do HUD de latência de input.
+    var debugLatencyHudEnabled by rememberSaveable {
+        mutableStateOf(if (isPreview) false else PrefManager.debugLatencyHudEnabled)
+    }
     var latestCrashFile: File? by rememberSaveable { mutableStateOf(null) }
     LaunchedEffect(Unit) {
         val crashDir = File(context.getExternalFilesDir(null), "crash_logs")
@@ -222,6 +227,23 @@ fun SettingsGroupDebug() {
                 }
             },
         )
+        // spec 2026-08-16-debug-hud-ui: HUD de latência de input — interruptor de
+        // USUÁRIO do overlay (mesmo toggle do QuickMenu, tab HUD). Só em builds de
+        // debug, onde o overlay existe (em release o switch seria morto).
+        if (BuildConfig.DEBUG) {
+            SettingsSwitch(
+                colors = settingsTileColorsAlt(),
+                state = debugLatencyHudEnabled,
+                title = { Text(text = stringResource(R.string.settings_debug_latency_hud_title)) },
+                subtitle = { Text(text = stringResource(R.string.settings_debug_latency_hud_subtitle)) },
+                onCheckedChange = {
+                    debugLatencyHudEnabled = it
+                    if (!isPreview) {
+                        PrefManager.debugLatencyHudEnabled = it
+                    }
+                },
+            )
+        }
         SettingsMenuLink(
             colors = settingsTileColors(),
             title = { Text(text = stringResource(R.string.settings_debug_view_crash_title)) },

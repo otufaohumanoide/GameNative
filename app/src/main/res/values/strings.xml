@@ -329,6 +329,8 @@
     <string name="tools_wine_processes_empty">No running EXEs detected.</string>
     <string name="performance_hud">Performance HUD</string>
     <string name="performance_hud_description">Show or hide the in-game overlay.</string>
+    <string name="quick_menu_latency_hud">Input latency HUD</string>
+    <string name="quick_menu_latency_hud_description">Debug overlay with p50/p95 ms of KEY/MOTION/SENSOR. Requires a connected controller.</string>
     <string name="performance_hud_fps_limiter">FPS limiter</string>
     <string name="performance_hud_fps_limiter_description">Caps the in-game frame rate. Max: %1$d Hz.</string>
     <string name="performance_hud_fps_limiter_target">Target FPS</string>
@@ -1068,6 +1070,8 @@
     <string name="settings_debug_wine_logs_subtitle">Write Wine debug output to file</string>
     <string name="settings_debug_box_logs_title">Enable Box86/64 Logs</string>
     <string name="settings_debug_box_logs_subtitle">Write Box86 &amp; Box64 debug output to file</string>
+    <string name="settings_debug_latency_hud_title">Input latency HUD</string>
+    <string name="settings_debug_latency_hud_subtitle">In-game overlay with p50/p95 ms of KEY/MOTION/SENSOR (debug builds only). Requires a connected controller.</string>
     <string name="settings_debug_view_crash_title">View latest crash</string>
     <string name="settings_debug_view_crash_subtitle">Shows the most recent crash log</string>
     <string name="settings_debug_no_crash_logs">No recent crash logs found</string>

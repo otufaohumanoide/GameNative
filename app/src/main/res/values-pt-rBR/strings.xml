@@ -254,6 +254,8 @@
     <string name="quick_menu_tab_general">Geral</string>
     <string name="quick_menu_tab_controller">Controle</string>
     <string name="performance_hud">HUD de desempenho</string>
+    <string name="quick_menu_latency_hud">HUD de latência de input</string>
+    <string name="quick_menu_latency_hud_description">Overlay de debug com p50/p95 ms de KEY/MOTION/SENSOR. Requer um controle conectado.</string>
     <string name="performance_hud_description">Mostrar ou ocultar a sobreposição no jogo.</string>
     <string name="performance_hud_fps_limiter">Limitador de FPS</string>
     <string name="performance_hud_fps_limiter_description">Limita a taxa de quadros no jogo. Máx.: %1$d Hz.</string>
@@ -789,6 +791,8 @@
     <string name="settings_debug_wine_logs_subtitle">Gravar saída de debug do Wine em arquivo</string>
     <string name="settings_debug_box_logs_title">Habilitar logs do Box86/64</string>
     <string name="settings_debug_box_logs_subtitle">Gravar saída de debug do Box86 &amp; Box64 em arquivo</string>
+    <string name="settings_debug_latency_hud_title">HUD de latência de input</string>
+    <string name="settings_debug_latency_hud_subtitle">Overlay no jogo com p50/p95 ms de KEY/MOTION/SENSOR (só builds de debug). Requer um controle conectado.</string>
     <string name="settings_debug_view_crash_title">Ver última falha</string>
     <string name="settings_debug_view_crash_subtitle">Mostra o log de falha mais recente</string>
     <string name="settings_debug_no_crash_logs">Nenhum log de falha recente encontrado</string>

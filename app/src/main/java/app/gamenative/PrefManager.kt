@@ -548,6 +548,16 @@ object PrefManager {
         set(value) {
             setPref(SHOW_CONTROLLER_DEBUG_MENU, value)
         }
+
+    // HUD de latência de input (spec 2026-08-16-debug-hud-ui): interruptor de USUÁRIO
+    // (default OFF); a propriedade debug.gamenative.latency continua valendo para
+    // automação/harness — o overlay mostra com prop=="1" OU este pref ligado.
+    private val DEBUG_LATENCY_HUD_ENABLED = booleanPreferencesKey("debugLatencyHudEnabled")
+    var debugLatencyHudEnabled: Boolean
+        get() = getPref(DEBUG_LATENCY_HUD_ENABLED, false)
+        set(value) {
+            setPref(DEBUG_LATENCY_HUD_ENABLED, value)
+        }
     private val LAUNCH_BIONIC_STEAM = booleanPreferencesKey("launch_bionic_steam")
     var launchBionicSteam: Boolean
         get() = getPref(LAUNCH_BIONIC_STEAM, false)

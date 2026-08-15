@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.gamenative.BuildConfig
+import app.gamenative.PrefManager
 import app.gamenative.gamepad.processing.LatencyTracker
 import kotlinx.coroutines.delay
 
@@ -44,7 +45,12 @@ fun LatencyDebugOverlay() {
 
     LaunchedEffect(Unit) {
         while (true) {
-            val on = DebugPropertyCache.read(LATENCY_PROPERTY) == "1"
+            // spec 2026-08-16-debug-hud-ui: duas fontes — o pref é o interruptor de
+            // USUÁRIO (QuickMenu/Settings→Debug); a propriedade continua para
+            // automação/harness. LatencyTracker.enabled segue o MESMO OR (desligar
+            // pela UI também para a coleta).
+            val on = PrefManager.debugLatencyHudEnabled ||
+                DebugPropertyCache.read(LATENCY_PROPERTY) == "1"
             LatencyTracker.enabled = on
             if (on) {
                 visible = true
