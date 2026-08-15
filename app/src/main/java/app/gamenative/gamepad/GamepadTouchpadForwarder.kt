@@ -9,6 +9,9 @@ import app.gamenative.gamepad.processing.TouchpadConfig
 import app.gamenative.gamepad.processing.TouchpadProcessor
 import app.gamenative.gamepad.processing.TouchpadState
 import com.winlator.xserver.Pointer
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import timber.log.Timber
 
 /**
@@ -43,8 +46,27 @@ class GamepadTouchpadForwarder {
     @Volatile
     var sink: TouchpadMouseSink = NoopSink
 
+    /**
+     * Spec 2026-08-16-C §1.3: preview do touchpad para o card de diagnóstico
+     * ([DeviceDiagnosticsCard]) — última amostra de CADA device (o card filtra por
+     * deviceId). Hook de observação: ligado pelo card no DisposableEffect enquanto
+     * expandido; 1 write por evento quando ON, ZERO quando OFF (byte-identical).
+     * NÃO afeta as decisões do forwarder — só observa.
+     */
+    @Volatile
+    var previewEnabled: Boolean = false
+
+    private val _touchpadPreview = MutableStateFlow<TouchpadPreview?>(null)
+    val touchpadPreview: StateFlow<TouchpadPreview?> = _touchpadPreview.asStateFlow()
+
     /** Chamado pelo MainActivity ANTES do consume do gate. Retorna true se processou. */
     fun onRawTouch(raw: RawTouchInput): Boolean {
+        // Spec 2026-08-16-C §1.3: preview escrito NO TOPO, ANTES de todos os gates de
+        // pref — o readout do card funciona mesmo com o toggle mouse OFF (a escrita
+        // num StateFlow não muda NENHUMA decisão abaixo).
+        if (previewEnabled) {
+            _touchpadPreview.value = TouchpadPreview(raw.deviceId, raw.x, raw.y, raw.down)
+        }
         if (!PrefManager.gamepadTouchpadMouseEnabled) return false
         if (!PrefManager.ignoreControllerTouchpad) return false
         if ((raw.source and InputDevice.SOURCE_CLASS_POINTER) == 0) return false
@@ -136,3 +158,17 @@ class XServerTouchpadMouseSink : GamepadTouchpadForwarder.TouchpadMouseSink {
         Timber.d("GamepadTouchpad: double-tap -> right click")
     }
 }
+
+/**
+ * Spec 2026-08-16-C §1.3: amostra do preview do touchpad para o card de diagnóstico
+ * (DeviceDiagnosticsCard). O card filtra por [deviceId] (o StateFlow do forwarder
+ * guarda só a última amostra global).
+ *
+ * [x]/[y] = posição do dedo NORMALIZADA [0..1] (mesmo contrato do [RawTouchInput]).
+ */
+data class TouchpadPreview(
+    val deviceId: Int,
+    val x: Float,
+    val y: Float,
+    val down: Boolean,
+)

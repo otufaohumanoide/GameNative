@@ -94,6 +94,19 @@ class GamepadHub(context: Context) {
     private val _activeDevice = MutableStateFlow<GamepadDevice?>(null)
     val activeDevice: StateFlow<GamepadDevice?> = _activeDevice.asStateFlow()
 
+    /**
+     * Spec 2026-08-16-C §1.2: preview do gyro para o card de diagnóstico
+     * ([DeviceDiagnosticsCard]) — última amostra processada pelo [GyroProcessor] de
+     * CADA device (o card filtra por deviceId). Hook de observação: ligado pelo card
+     * no DisposableEffect enquanto expandido; 1 write por amostra quando ON, ZERO
+     * quando OFF (caminho byte-identical com OFF). NÃO altera o pipeline — só observa.
+     */
+    @Volatile
+    var gyroPreviewEnabled: Boolean = false
+
+    private val _gyroPreview = MutableStateFlow<GyroPreview?>(null)
+    val gyroPreview: StateFlow<GyroPreview?> = _gyroPreview.asStateFlow()
+
     private val deviceStore =
         GamepadProfileStore(File(File(appContext.filesDir, "gamepad"), "device_profiles.json"))
     private val gameStore =
@@ -536,6 +549,27 @@ class GamepadHub(context: Context) {
             }
             GyroMode.OFF -> {}
         }
+
+        // Spec 2026-08-16-C §1.2: preview do card de diagnóstico — escrito NO FIM de
+        // onSensorSample, APÓS o processamento existente (SEM alterá-lo): 1 write por
+        // amostra quando ON, ZERO quando OFF (byte-identical). As velocidades vêm do
+        // GyroProcessor (morta pela deadzone) — recenterar zera o readout.
+        if (gyroPreviewEnabled) {
+            _gyroPreview.value = GyroPreview(deviceId, output.yawRadS, output.pitchRadS, nowMs)
+        }
+    }
+
+    /**
+     * Spec 2026-08-16-C §1.2 ("Recentrar gyro"): reaplica a âncora de offset do
+     * [GyroState] do device — a MESMA operação da borda de ativação, extraída em
+     * [GyroProcessor.recenter]. Usa `state.lastSample` (a última amostra processada);
+     * sem lastSample (gyro nunca ativado/inativo) = no-op. Não muda o pipeline: só
+     * recalibra o offset observado pelo readout do card.
+     */
+    fun recenterGyro(deviceId: Int) {
+        val state = gyroStates[deviceId] ?: return
+        val sample = state.lastSample ?: return
+        GyroProcessor.recenter(state, sample)
     }
 
     /**
@@ -805,3 +839,18 @@ class GamepadHub(context: Context) {
         )
     }
 }
+
+/**
+ * Spec 2026-08-16-C §1.2: amostra do preview de gyro para o card de diagnóstico
+ * (DeviceDiagnosticsCard) — última amostra processada pelo [GyroProcessor] do device.
+ * O card filtra por [deviceId] (o StateFlow do hub guarda só a última amostra global).
+ */
+data class GyroPreview(
+    val deviceId: Int,
+    /** Velocidade angular de yaw morta pela deadzone, rad/s. */
+    val yawRadS: Float,
+    /** Velocidade angular de pitch morta pela deadzone, rad/s. */
+    val pitchRadS: Float,
+    /** Timestamp da amostra (ms — relógio do evento de sensor, P2-1). */
+    val timestampMs: Long,
+)

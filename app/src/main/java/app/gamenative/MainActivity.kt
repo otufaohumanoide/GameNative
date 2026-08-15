@@ -659,7 +659,12 @@ class MainActivity : ComponentActivity() {
             // ROTEADOR — o consumidor do touchpad→mouse lê o MESMO ponto ANTES do
             // consume (única exceção do V7). O consume continua valendo para
             // navegação/jogo: fantasmas nunca chegam ao foco nem ao jogo.
-            if (PrefManager.gamepadTouchpadMouseEnabled) {
+            // Spec 2026-08-16-C §1.3: além do consumidor do mouse (toggle ON), o
+            // forwarder é alimentado quando o PREVIEW do card de diagnóstico está ON
+            // (o readout funciona mesmo com o mouse-toggle OFF). Preview OFF ⇒
+            // condição idêntica à anterior (byte-identical); o forwarder decide tudo
+            // nos próprios gates — nenhuma decisão muda aqui.
+            if (PrefManager.gamepadTouchpadMouseEnabled || PluviaApp.gamepadTouchpad.previewEnabled) {
                 AndroidInputAdapter.toRawTouch(ev)?.let { PluviaApp.gamepadTouchpad.onRawTouch(it) }
             }
             return true

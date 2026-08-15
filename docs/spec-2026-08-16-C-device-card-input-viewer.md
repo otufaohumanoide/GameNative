@@ -81,6 +81,13 @@ apertar botões acende o desenho; gyro readout varia girando o controle;
 touchpad readout segue o dedo; testar vibração reporta controle/telefone/nada;
 recenterar gyro zera o readout.
 
+Nota do impl (condições de entrega, registradas no impl doc): o readout do touchpad
+funciona independente do toggle mouse (o forwarder é alimentado quando o preview está
+ON — impl doc D1). O readout do gyro é um OBSERVADOR puro do pipeline (invariante "SEM
+tocar no pipeline"): precisa de amostras fluindo — jogo rodando com `gyroMode ≠ OFF`,
+ou o harness `gyro:x:y:z` com universal ON (o GamepadSensorSource registra listeners
+dirigido pelo uso, P1-3). Fora disso o readout segura "—" até a primeira amostra.
+
 ## 4. Fora de escopo
 
 Gráficos de latência no card (HUD F0 já existe), log de eventos em arquivo,

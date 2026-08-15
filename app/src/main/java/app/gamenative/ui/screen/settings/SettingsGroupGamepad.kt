@@ -1,7 +1,6 @@
 package app.gamenative.ui.screen.settings
 
 import android.content.res.Configuration
-import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -34,14 +34,11 @@ import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
 import app.gamenative.R
 import app.gamenative.gamepad.mapping.MappingDatabase
-import app.gamenative.gamepad.processing.RumblePhoneCurve
 import app.gamenative.gamepad.remap.GamepadRemapDialog
-import app.gamenative.ui.component.GamepadHaptics
 import app.gamenative.ui.component.gamepadAdjustableRow
 import app.gamenative.ui.component.gamepadSelectable
 import app.gamenative.ui.theme.PluviaTheme
 import java.util.Locale
-import kotlinx.coroutines.delay
 
 /**
  * Seção de settings "Gamepad" (spec 2026-08-14-onda2-pos-implementacao, M2/M3): o gate
@@ -99,12 +96,6 @@ fun SettingsGroupGamepad() {
     var phoneRumbleFallback by rememberSaveable {
         mutableStateOf(if (isPreview) true else PrefManager.gamepadPhoneRumbleFallback)
     }
-    // Spec 2026-08-16-A §1.4: resultado do teste de vibração por device; auto-limpa
-    // após ~3 s (LaunchedEffect keyed no mapa — cliques reiniciam a janela).
-    var rumbleTestResults by rememberSaveable {
-        mutableStateOf<Map<Int, RumblePhoneCurve.RumbleTarget>>(emptyMap())
-    }
-
     // P3-4 (spec 2026-08-14-gamepad-upgrades-pendencias): refresh PULL da bateria ao
     // ABRIR a seção (a SettingsScreen é um destino de navegação — compõe ao abrir e
     // descarta ao sair). Fora do hot path, sem polling; o nível do hotplug ficava
@@ -113,14 +104,6 @@ fun SettingsGroupGamepad() {
         LaunchedEffect(Unit) {
             val hub = PluviaApp.gamepadHub
             hub.connectedDevices.value.keys.forEach(hub::refreshBattery)
-        }
-    }
-
-    // Spec 2026-08-16-A §1.4: o resultado do teste some após ~3 s do ÚLTIMO clique.
-    if (rumbleTestResults.isNotEmpty()) {
-        LaunchedEffect(rumbleTestResults) {
-            delay(3000)
-            rumbleTestResults = emptyMap()
         }
     }
 
@@ -134,34 +117,16 @@ fun SettingsGroupGamepad() {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
             connectedDevices.values.forEach { device ->
-                ConnectedDeviceRow(
-                    device = device,
-                    isActive = activeDevice?.deviceId == device.deviceId,
-                )
-                // Spec 2026-08-16-A §1.4: teste de vibração POR device — dispara o
-                // contrato P2-5 (rumbleDevice) e mostra o destino efetivo por ~3 s
-                // (CONTROLLER | PHONE | NONE — decisão compartilhada rumbleTargetFor).
-                GamepadSettingsButtonRow(
-                    title = stringResource(R.string.gamepad_rumble_test_title),
-                    subtitle = when (rumbleTestResults[device.deviceId]) {
-                        RumblePhoneCurve.RumbleTarget.CONTROLLER ->
-                            stringResource(R.string.gamepad_rumble_test_result_controller)
-                        RumblePhoneCurve.RumbleTarget.PHONE ->
-                            stringResource(R.string.gamepad_rumble_test_result_phone)
-                        RumblePhoneCurve.RumbleTarget.NONE ->
-                            stringResource(R.string.gamepad_rumble_test_result_none)
-                        null -> stringResource(R.string.gamepad_rumble_test_hint)
-                    },
-                    enabled = true,
-                    onClick = {
-                        val vibrated = GamepadHaptics.rumbleDevice(device.deviceId, 0.6f, 0.6f, 300L)
-                        val target = GamepadHaptics.rumbleTargetFor(device.deviceId)
-                        // Sem vibração de fato (master OFF, sem vibrator, sem fallback)
-                        // ⇒ "nada" — o resultado é o que ACONTECEU, não o alvo teórico.
-                        rumbleTestResults = rumbleTestResults + (device.deviceId to
-                            if (vibrated) target else RumblePhoneCurve.RumbleTarget.NONE)
-                    },
-                )
+                // Spec 2026-08-16-C §1.1: o cartão de diagnóstico substitui o
+                // ConnectedDeviceRow (header colapsado idêntico) e absorve o teste de
+                // vibração da fase A dentro da seção expandida. `key(deviceId)` fixa a
+                // identidade do card por device (hotplug não reusa estado entre ids).
+                key(device.deviceId) {
+                    DeviceDiagnosticsCard(
+                        device = device,
+                        isActive = activeDevice?.deviceId == device.deviceId,
+                    )
+                }
             }
             GamepadSettingsDivider()
         } else if (!isPreview) {
@@ -310,66 +275,6 @@ fun SettingsGroupGamepad() {
             onDismiss = { showRemapDialog = false },
         )
     }
-}
-
-/**
- * U7 (spec 2026-08-14-gamepad-u7-battery): linha de um controle conectado — nome,
- * bateria (API 31+; hidden quando desconhecida — V11) e badges de capacidade
- * (GYRO/TOUCHPAD, mesma coleta do U1).
- */
-@Composable
-private fun ConnectedDeviceRow(
-    device: app.gamenative.gamepad.GamepadDevice,
-    isActive: Boolean,
-) {
-    val battery = device.batteryPercent
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text = device.name,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-            color = if (isActive) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-            modifier = Modifier.weight(1f),
-        )
-        if (battery != null) {
-            Text(
-                text = stringResource(R.string.gamepad_battery_format, battery),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (device.hasGyro) {
-            CapabilityBadge(stringResource(R.string.gamepad_cap_gyro))
-        }
-        if (device.hasTouchpad) {
-            CapabilityBadge(stringResource(R.string.gamepad_cap_touchpad))
-        }
-    }
-}
-
-@Composable
-private fun CapabilityBadge(label: String) {
-    Text(
-        text = label,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier
-            .background(
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                RoundedCornerShape(6.dp),
-            )
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    )
 }
 
 @Composable

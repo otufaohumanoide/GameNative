@@ -93,13 +93,24 @@ data class GyroOutput(
 
 object GyroProcessor {
 
+    /**
+     * Reaplica a âncora de offset do [state] com a [sample] (spec 2026-08-16-C, §1.2 —
+     * refator pura): a MESMA operação da borda de ativação (off→on), extraída para ser
+     * reutilizada pelo recenter explícito do card de diagnóstico
+     * (`GamepadHub.recenterGyro`). Não altera `active`/calibração — só o offset.
+     */
+    fun recenter(state: GyroState, sample: GyroSample) {
+        state.offsetX = sample.gyroX
+        state.offsetY = sample.gyroY
+        state.offsetZ = sample.gyroZ
+    }
+
     fun process(sample: GyroSample, state: GyroState, config: GyroConfig, activate: Boolean): GyroOutput {
         // Recenter na borda de ativação (off→on): o desvio atual vira zero — padrão
-        // DS4Windows ("recenter a cada ativação").
+        // DS4Windows ("recenter a cada ativação"). Operação compartilhada com o
+        // recenter explícito do card de diagnóstico (spec 2026-08-16-C, §1.2).
         if (activate && !state.active) {
-            state.offsetX = sample.gyroX
-            state.offsetY = sample.gyroY
-            state.offsetZ = sample.gyroZ
+            recenter(state, sample)
         }
         state.active = activate
         if (!activate) {

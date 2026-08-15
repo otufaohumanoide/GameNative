@@ -174,4 +174,53 @@ class GyroProcessorTest {
         assertEquals(0f, out.deltaXRad, 0.0001f)
         assertEquals(0f, out.deltaYRad, 0.0001f)
     }
+
+    // ── Spec 2026-08-16-C §1.2: recenter explícito reutilizável (refator pura) ──
+
+    @Test
+    fun `explicit recenter zeroes deltas for the held position`() {
+        val state = GyroState()
+        GyroProcessor.process(sample(0f, 0f, 0f, 0), state, config, activate = true)
+        // Movimento: yaw de 0.1 rad/s acima da deadzone.
+        val moved = GyroProcessor.process(sample(0f, 0f, 0.1f, 16), state, config, activate = true)
+        assertTrue(kotlin.math.abs(moved.deltaXRad) > 0f)
+        // Recentrar com a amostra atual → a posição mantida vira a nova âncora.
+        GyroProcessor.recenter(state, sample(0f, 0f, 0.1f, 32))
+        val out = GyroProcessor.process(sample(0f, 0f, 0.1f, 48), state, config, activate = true)
+        assertEquals(0f, out.deltaXRad, 0.0001f)
+        assertEquals(0f, out.deltaYRad, 0.0001f)
+    }
+
+    @Test
+    fun `explicit recenter is equivalent to the activation edge anchor`() {
+        val atA = sample(0f, 0f, 0f, 0)
+        val atB = sample(0f, 0f, 0.1f, 16)
+        // Mesmo timestamp nas duas trajetórias: o dt do PRÓXIMO movimento depende do
+        // lastSample — a equivalência exige âncora E lastSample idênticos.
+        val bAnchored = sample(0f, 0f, 0.1f, 48)
+        // (a) Borda de ativação com B (t=48) como primeira amostra: B vira o offset.
+        val edgeState = GyroState()
+        val edgeFirst = GyroProcessor.process(bAnchored, edgeState, config, activate = true)
+        // (b) Estado ativado em A, movido para B, recentrado EXPLICITAMENTE com B (t=48).
+        val explicitState = GyroState()
+        GyroProcessor.process(atA, explicitState, config, activate = true)
+        GyroProcessor.process(atB, explicitState, config, activate = true)
+        GyroProcessor.recenter(explicitState, bAnchored)
+        val explicitOut = GyroProcessor.process(bAnchored, explicitState, config, activate = true)
+        // Âncoras idênticas ⇒ output idêntico (B é o offset nos dois estados).
+        assertEquals(edgeFirst.deltaXRad, explicitOut.deltaXRad, 0.0001f)
+        assertEquals(edgeFirst.deltaYRad, explicitOut.deltaYRad, 0.0001f)
+        assertEquals(edgeState.offsetX, explicitState.offsetX, 0.0001f)
+        assertEquals(edgeState.offsetY, explicitState.offsetY, 0.0001f)
+        assertEquals(edgeState.offsetZ, explicitState.offsetZ, 0.0001f)
+        // E o PRÓXIMO movimento é idêntico nos dois estados (mesma âncora, mesmo
+        // lastSample ⇒ mesmo dt).
+        val next = sample(0f, 0f, 0.2f, 64)
+        val edgeNext = GyroProcessor.process(next, edgeState, config, activate = true)
+        val explicitNext = GyroProcessor.process(next, explicitState, config, activate = true)
+        assertEquals(edgeNext.deltaXRad, explicitNext.deltaXRad, 0.0001f)
+        assertEquals(edgeNext.deltaYRad, explicitNext.deltaYRad, 0.0001f)
+        assertEquals(edgeNext.yawRadS, explicitNext.yawRadS, 0.0001f)
+        assertEquals(edgeNext.pitchRadS, explicitNext.pitchRadS, 0.0001f)
+    }
 }
