@@ -2320,6 +2320,22 @@
     <string name="gamepad_remap_binding_none">Unbound</string>
     <string name="gamepad_remap_axis_format">Axis %1$d %2$s</string>
     <string name="gamepad_remap_hat_format">Hat %1$d mask %2$d</string>
+
+    <!-- ══════════ Remap visual PPSSPP (spec 2026-08-16-B-remap-visual-ppsspp) ══════════ -->
+    <string name="gamepad_visual_section_title">Visual map</string>
+    <string name="gamepad_visual_scope_game">This game</string>
+    <string name="gamepad_visual_scope_all">All games</string>
+    <string name="gamepad_visual_scope_game_unavailable">“This game” becomes available while a game is running</string>
+    <string name="gamepad_visual_badge_auto">A</string>
+    <string name="gamepad_visual_state_auto">AUTO</string>
+    <string name="gamepad_visual_state_override">OVERRIDE</string>
+    <string name="gamepad_visual_legend_auto">AUTO — controller’s default mapping</string>
+    <string name="gamepad_visual_legend_override">OVERRIDE — remapped in this scope</string>
+    <string name="gamepad_visual_restore_control">Restore auto</string>
+    <string name="gamepad_visual_restore_all">Restore all</string>
+    <string name="gamepad_visual_capture_prompt">Press the button for %1$s… (B = cancel)</string>
+    <string name="gamepad_visual_restored_control">Control restored to AUTO</string>
+    <string name="gamepad_visual_restored_all">All bindings of this scope restored</string>
 <!-- ══════════ Gamepad settings (spec 2026-08-14 — onda2 pos-implementação, M2/M3) ══════════ -->
     <string name="settings_gamepad_title">Gamepad</string>
     <string name="gamepad_settings_universal_title">Universal gamepad support</string>

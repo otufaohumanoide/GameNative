@@ -3,6 +3,7 @@ package app.gamenative.gamepad.remap
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Slider
@@ -34,9 +37,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +58,7 @@ import androidx.compose.ui.window.DialogProperties
 import app.gamenative.PluviaApp
 import app.gamenative.R
 import app.gamenative.events.AndroidEvent
+import app.gamenative.events.GamepadInputEvent
 import app.gamenative.gamepad.FaceStyle
 import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.layers.LayerTriggerMode
@@ -60,6 +66,8 @@ import app.gamenative.gamepad.layers.LayerTriggerSpec
 import app.gamenative.gamepad.GamepadButton
 import app.gamenative.gamepad.GamepadDevice
 import app.gamenative.gamepad.glyphs.GamepadGlyphProvider
+import app.gamenative.gamepad.mapping.AndroidConstants
+import app.gamenative.gamepad.mapping.ControllerVisualLayout
 import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.processing.DeadzoneMode
@@ -75,7 +83,10 @@ import app.gamenative.ui.component.GamepadFocusScope
 import app.gamenative.ui.component.gamepadAdjustableRow
 import app.gamenative.ui.component.gamepadBackHandler
 import app.gamenative.ui.component.gamepadSelectable
+import app.gamenative.ui.component.remap.ControllerVisualView
+import app.gamenative.ui.component.remap.VisualControlState
 import kotlin.math.abs
+import kotlinx.coroutines.delay
 
 /**
  * Diálogo de remap (spec 2026-08-13, Passo 7 — D8). Janela separada: padrão
@@ -129,6 +140,26 @@ fun GamepadRemapDialog(
     var flickSnap by remember { mutableStateOf(profile.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP) }
     var gyroFusionEnabled by remember { mutableStateOf(profile.gyroFusionEnabled ?: false) }
     var status by remember { mutableStateOf<String?>(null) }
+    // ── B (spec 2026-08-16-B-remap-visual-ppsspp): mapa visual + escopo + flash ──
+    val hub = PluviaApp.gamepadHub
+    // appId do container ativo (holder do hub — lido ao abrir o dialog; null fora de
+    // jogo desabilita o escopo "Este jogo" com hint, §1.4).
+    val appId = remember { hub.activeAppId }
+    // Perfil BRUTO do jogo (sem merge com o device) — base dos bindings do escopo GAME
+    // no save; o merge efetivo (JOGO > GLOBAL > AUTO) continua no profileFor.
+    val initialGameProfile = remember(appId) { hub.gameProfileFor(appId) }
+    var gameLayers by remember(initialGameProfile) {
+        mutableStateOf(initialGameProfile?.layers ?: emptyMap())
+    }
+    var visualExpanded by remember { mutableStateOf(true) }
+    var visualScope by remember {
+        mutableStateOf(if (appId != null) VisualScope.GAME else VisualScope.DEVICE)
+    }
+    var visualCapture by remember { mutableStateOf<GamepadButton?>(null) }
+    // Flash ao vivo (§1.2): timestamps por controle + set derivado para a view (o set
+    // expira em ~600 ms; o decaimento visual é do ControllerVisualView).
+    val flashTimes = remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    val flashSet = remember { mutableStateOf<Set<String>>(emptySet()) }
 
     /**
      * Perfil efetivo do editor — defaults colapsados em null (política do store:
@@ -283,6 +314,63 @@ fun GamepadRemapDialog(
         status = null
     }
 
+    // ── B §1.4: bindings EFETIVOS da camada DEFAULT (device + jogo; jogo vence) ──
+    fun visualEffectiveDefault(): Map<String, String> =
+        layerMap(ActionLayer.DEFAULT.name) + (gameLayers[ActionLayer.DEFAULT.name] ?: emptyMap())
+
+    /** Estado do controle no mapa visual: binding explícito no efetivo = OVERRIDE. */
+    fun visualStateOf(button: GamepadButton): VisualControlState =
+        if (button.name in visualEffectiveDefault()) {
+            VisualControlState.OVERRIDE
+        } else {
+            VisualControlState.AUTO
+        }
+
+    /** B §1.3/§1.4: commit do mapa visual na camada DEFAULT do escopo selecionado. */
+    fun commitVisualBinding(button: GamepadButton, binding: RawBinding) {
+        val conflict = visualEffectiveDefault().entries.any { (name, token) ->
+            name != button.name && GamepadBindingCodec.decode(token)?.let {
+                GamepadBindingCodec.conflicts(it, binding)
+            } == true
+        }
+        if (conflict) {
+            status = context.getString(R.string.gamepad_remap_conflict)
+            return
+        }
+        val token = GamepadBindingCodec.encode(binding)
+        if (visualScope == VisualScope.DEVICE) {
+            layers = layers + (
+                ActionLayer.DEFAULT.name to (layerMap(ActionLayer.DEFAULT.name) + (button.name to token))
+            )
+        } else {
+            val gameDefault = gameLayers[ActionLayer.DEFAULT.name] ?: emptyMap()
+            gameLayers = gameLayers + (ActionLayer.DEFAULT.name to (gameDefault + (button.name to token)))
+        }
+        status = null
+    }
+
+    /** B §1.4: restaurar automático POR CONTROLE — limpa o override de onde ele vier. */
+    fun restoreVisualControl(button: GamepadButton) {
+        val name = button.name
+        val gameDefault = gameLayers[ActionLayer.DEFAULT.name] ?: emptyMap()
+        if (name in gameDefault) {
+            gameLayers = gameLayers + (ActionLayer.DEFAULT.name to (gameDefault - name))
+        }
+        val deviceDefault = layerMap(ActionLayer.DEFAULT.name)
+        if (name in deviceDefault) {
+            layers = layers + (ActionLayer.DEFAULT.name to (deviceDefault - name))
+        }
+        if (visualCapture == button) visualCapture = null
+        status = context.getString(R.string.gamepad_visual_restored_control)
+    }
+
+    /** B §1.4: restaurar automático GERAL — limpa todos os bindings do escopo selecionado. */
+    fun restoreVisualScope() {
+        if (visualScope == VisualScope.DEVICE) layers = emptyMap() else gameLayers = emptyMap()
+        visualCapture = null
+        status = context.getString(R.string.gamepad_visual_restored_all)
+    }
+
     // Captura via eventos do BUS cru enquanto captureTarget != null OU
     // captureGyroActivate (o escopo de foco fica desabilitado: TODO o input do
     // controle vira binding).
@@ -380,18 +468,101 @@ fun GamepadRemapDialog(
         }
     }
 
+    // ── B §1.3: captura do mapa visual — padrão do RadialMenuEditorDialog (bus CRU do
+    // deviceId); B cruzeiro / hardware back cancela. Mutuamente exclusiva com as
+    // capturas existentes (os inícios de captura antigos zeram visualCapture, e o tap
+    // no hotspot zera captureTarget/gyro/trigger).
+    DisposableEffect(visualCapture) {
+        val target = visualCapture
+        if (target == null) return@DisposableEffect onDispose {}
+
+        fun handleKey(androidEvent: AndroidEvent.KeyEvent): Boolean {
+            val ev = androidEvent.event ?: return false
+            if (ev.deviceId != device.deviceId) return false
+            if (ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0) {
+                when (ev.keyCode) {
+                    KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE,
+                    AndroidConstants.BUTTON_B -> {
+                        visualCapture = null
+                        status = context.getString(R.string.gamepad_remap_capture_cancelled)
+                    }
+                    else -> {
+                        commitVisualBinding(target, RawBinding.Key(ev.keyCode))
+                        visualCapture = null
+                    }
+                }
+                return true
+            }
+            return false
+        }
+
+        fun handleMotion(androidEvent: AndroidEvent.MotionEvent): Boolean {
+            val ev = androidEvent.event ?: return false
+            if (ev.deviceId != device.deviceId) return false
+            if (ev.actionMasked != MotionEvent.ACTION_MOVE) return false
+            val (axis, direction, magnitude) = strongestCapturableAxis(ev) ?: return false
+            if (magnitude < 0.5f) return false
+            commitVisualBinding(target, RawBinding.Axis(axis, direction))
+            visualCapture = null
+            return true
+        }
+
+        val keyHandler: (AndroidEvent.KeyEvent) -> Boolean = ::handleKey
+        val motionHandler: (AndroidEvent.MotionEvent) -> Boolean = ::handleMotion
+        PluviaApp.events.on<AndroidEvent.KeyEvent, Boolean>(keyHandler)
+        PluviaApp.events.on<AndroidEvent.MotionEvent, Boolean>(motionHandler)
+        onDispose {
+            PluviaApp.events.off<AndroidEvent.KeyEvent, Boolean>(keyHandler)
+            PluviaApp.events.off<AndroidEvent.MotionEvent, Boolean>(motionHandler)
+        }
+    }
+
+    // ── B §1.2: flash ao vivo — listener de GamepadInputEvent com holders vivos
+    // (lição C1): o handler registrado UMA vez lê o deviceId ATUAL via
+    // rememberUpdatedState; o retorno false = observador (nunca consome input).
+    val currentDeviceId by rememberUpdatedState(device.deviceId)
+    DisposableEffect(Unit) {
+        fun handle(event: GamepadInputEvent): Boolean {
+            val control = ControllerVisualLayout.flashControlFor(event.input, currentDeviceId)
+                ?: return false
+            flashTimes.value = flashTimes.value + (control to SystemClock.uptimeMillis())
+            flashSet.value = flashSet.value + control
+            return false
+        }
+        val handler: (GamepadInputEvent) -> Boolean = ::handle
+        PluviaApp.events.on<GamepadInputEvent, Boolean>(handler)
+        onDispose { PluviaApp.events.off<GamepadInputEvent, Boolean>(handler) }
+    }
+    // Expiração do flash (~600 ms) — remove dos holders; o decaimento visual (alpha) é
+    // do ControllerVisualView, que deriva os timestamps de entrada do set.
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (flashTimes.value.isNotEmpty()) {
+                val now = SystemClock.uptimeMillis()
+                val pruned = flashTimes.value.filterValues { now - it < VISUAL_FLASH_MS }
+                if (pruned.size != flashTimes.value.size) {
+                    flashTimes.value = pruned
+                    flashSet.value = pruned.keys
+                }
+            }
+            delay(50)
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
+            // B §1.3: hardware back CANCELA a captura visual em vez de fechar o dialog
+            // (sem consumo pelo Dialog, o BACK chega ao bus e o handler cancela).
+            dismissOnBackPress = visualCapture == null,
             dismissOnClickOutside = false,
         ),
     ) {
         val initialFocus = remember { FocusRequester() }
         // Enquanto captura, o escopo de foco fica OFF: todo input do controle é captura.
         GamepadFocusScope(
-            enabled = captureTarget == null && !captureGyroActivate && !captureLayerTrigger,
+            enabled = captureTarget == null && !captureGyroActivate && !captureLayerTrigger && visualCapture == null,
             backAction = onDismiss,
             initialFocusRequester = initialFocus,
         ) {
@@ -399,7 +570,7 @@ fun GamepadRemapDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(
-                        if (captureTarget == null && !captureGyroActivate && !captureLayerTrigger) {
+                        if (captureTarget == null && !captureGyroActivate && !captureLayerTrigger && visualCapture == null) {
                             Modifier.gamepadBackHandler(onDismiss)
                         } else {
                             Modifier
@@ -473,6 +644,7 @@ fun GamepadRemapDialog(
                                 captureLayerTrigger = !captureLayerTrigger
                                 captureTarget = null
                                 captureGyroActivate = false
+                                visualCapture = null
                                 status = null
                             },
                             onClearTrigger = {
@@ -490,6 +662,35 @@ fun GamepadRemapDialog(
                             .weight(1f)
                             .verticalScroll(rememberScrollState()),
                     ) {
+                        // ── B (spec 2026-08-16-B-remap-visual-ppsspp, §1.5): seção
+                        // colapsável "Mapa visual" NO TOPO do tab CONTROLLER; a lista
+                        // avançada existente permanece intacta embaixo. Nada existente
+                        // é removido. ──
+                        VisualRemapSection(
+                            expanded = visualExpanded,
+                            onToggleExpanded = { visualExpanded = !visualExpanded },
+                            scope = visualScope,
+                            scopeGameEnabled = appId != null,
+                            onScopeChange = { visualScope = it },
+                            faceStyle = device.faceStyle,
+                            stateOf = { visualStateOf(it) },
+                            flash = flashSet,
+                            capturing = visualCapture,
+                            onHotspotTap = { button ->
+                                visualCapture = if (visualCapture == button) null else button
+                                if (visualCapture != null) {
+                                    captureTarget = null
+                                    captureGyroActivate = false
+                                    captureLayerTrigger = false
+                                }
+                                status = null
+                            },
+                            onCancelCapture = { visualCapture = null },
+                            onRestoreControl = { restoreVisualControl(it) },
+                            onRestoreAll = { restoreVisualScope() },
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
                         // ── F1: Stick (deadzone radial/axial + response curve + LUT) ──
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                         Text(
@@ -586,6 +787,7 @@ fun GamepadRemapDialog(
                                 capturing = captureTarget == button,
                                 onClick = {
                                     captureTarget = if (captureTarget == button) null else button
+                                    visualCapture = null
                                     status = null
                                 },
                                 onClear = { clearBinding(button) },
@@ -648,6 +850,7 @@ fun GamepadRemapDialog(
                                     onClick = {
                                         captureGyroActivate = !captureGyroActivate
                                         captureTarget = null
+                                        visualCapture = null
                                         status = null
                                     },
                                     shape = RoundedCornerShape(8.dp),
@@ -801,6 +1004,16 @@ fun GamepadRemapDialog(
                         }
                         TextButton(onClick = {
                             onSave(editorProfile())
+                            // B §1.4: persiste o override do JOGO (mapa visual) na
+                            // chave appId do gameStore — o perfil do device não é
+                            // contaminado. Sem edição no escopo GAME o save é
+                            // idempotente (mesmo conteúdo / default remove a entrada).
+                            if (appId != null) {
+                                hub.saveGameProfile(
+                                    appId,
+                                    (initialGameProfile ?: GamepadProfile()).copy(layers = gameLayers),
+                                )
+                            }
                         }) {
                             Icon(Icons.Filled.Save, contentDescription = null)
                             Text(stringResource(R.string.gamepad_remap_save))
@@ -1378,5 +1591,157 @@ private fun LutPreviewCanvas(lut: List<Float>) {
             }
             drawPath(path, color = lineColor)
         }
+    }
+}
+
+
+// ── B (spec 2026-08-16-B-remap-visual-ppsspp) ──
+
+/** Duração do flash do mapa visual (mesma constante do ControllerVisualView). */
+private const val VISUAL_FLASH_MS = 600L
+
+/** B §1.4 — escopo do mapa visual: override do jogo (chave appId) ou global do device. */
+private enum class VisualScope { GAME, DEVICE }
+
+/**
+ * B §1.5 — seção colapsável "Mapa visual" no TOPO do dialog de remap: header com
+ * colapso + "Restaurar tudo" (geral, §1.4), seletor de escopo "Este jogo"/"Todos os
+ * jogos" (§1.4) e o [ControllerVisualView] (desenho vetorial + flash + captura §1.2/
+ * §1.3). Tudo gamepad-navegável (view-level — diálogo, regra do AGENTS.md: nunca
+ * bus-navigators dentro de janela de diálogo).
+ */
+@Composable
+private fun VisualRemapSection(
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+    scope: VisualScope,
+    scopeGameEnabled: Boolean,
+    onScopeChange: (VisualScope) -> Unit,
+    faceStyle: FaceStyle,
+    stateOf: (GamepadButton) -> VisualControlState,
+    flash: androidx.compose.runtime.State<Set<String>>,
+    capturing: GamepadButton?,
+    onHotspotTap: (GamepadButton) -> Unit,
+    onCancelCapture: () -> Unit,
+    onRestoreControl: (GamepadButton) -> Unit,
+    onRestoreAll: () -> Unit,
+) {
+    val hotspots = remember(faceStyle) { ControllerVisualLayout.layoutFor(faceStyle) }
+    val headerInteraction = remember { MutableInteractionSource() }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .gamepadSelectable(
+                    selected = false,
+                    onClick = onToggleExpanded,
+                    shape = RoundedCornerShape(8.dp),
+                    interactionSource = headerInteraction,
+                )
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = stringResource(R.string.gamepad_visual_section_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 8.dp),
+            )
+            TextButton(onClick = onRestoreAll) {
+                Text(stringResource(R.string.gamepad_visual_restore_all))
+            }
+        }
+        if (expanded) {
+            // ── Escopo (§1.4): Este jogo / Todos os jogos ──
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                VisualScopeChip(
+                    label = stringResource(R.string.gamepad_visual_scope_game),
+                    selected = scope == VisualScope.GAME,
+                    enabled = scopeGameEnabled,
+                    onClick = { onScopeChange(VisualScope.GAME) },
+                )
+                VisualScopeChip(
+                    label = stringResource(R.string.gamepad_visual_scope_all),
+                    selected = scope == VisualScope.DEVICE,
+                    enabled = true,
+                    onClick = { onScopeChange(VisualScope.DEVICE) },
+                )
+            }
+            if (!scopeGameEnabled) {
+                Text(
+                    text = stringResource(R.string.gamepad_visual_scope_game_unavailable),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+            }
+
+            ControllerVisualView(
+                faceStyle = faceStyle,
+                hotspots = hotspots,
+                stateOf = { control ->
+                    val button = runCatching { GamepadButton.valueOf(control) }.getOrNull()
+                    if (button != null) stateOf(button) else VisualControlState.AUTO
+                },
+                flash = flash,
+                onHotspotTap = { control ->
+                    runCatching { GamepadButton.valueOf(control) }.getOrNull()?.let(onHotspotTap)
+                },
+                capturingControl = capturing?.name,
+                onCancelCapture = onCancelCapture,
+                onRestoreControl = { control ->
+                    runCatching { GamepadButton.valueOf(control) }.getOrNull()?.let(onRestoreControl)
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
+    }
+}
+
+/** B §1.4 — chip do escopo (gamepadSelectable; desabilitado sem jogo ativo). */
+@Composable
+private fun VisualScopeChip(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier
+            .gamepadSelectable(
+                selected = selected,
+                onClick = onClick,
+                enabled = enabled,
+                shape = RoundedCornerShape(8.dp),
+                interactionSource = interactionSource,
+            )
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (enabled) {
+                if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+            },
+        )
     }
 }

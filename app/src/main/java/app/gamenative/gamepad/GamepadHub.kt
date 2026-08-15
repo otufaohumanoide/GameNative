@@ -275,6 +275,23 @@ class GamepadHub(context: Context) {
         invalidateProfiles()
     }
 
+    /**
+     * Perfil BRUTO do escopo JOGO (chave = appId), SEM merge com o device
+     * (spec 2026-08-16-B-remap-visual-ppsspp, §1.4): o mapa visual do remap edita o
+     * override por-jogo em separado — o merge (JOGO > GLOBAL > AUTO) continua sendo do
+     * [GamepadProfileStore.merged] via [profileFor]. null = sem entrada para esse jogo.
+     */
+    fun gameProfileFor(appId: String?): GamepadProfile? = appId?.let { gameStore.load(it) }
+
+    /**
+     * Persiste o perfil do JOGO (chave = appId) e invalida o cache (spec B §1.4).
+     * Um perfil default REMOVE a entrada (padrão do store).
+     */
+    fun saveGameProfile(appId: String, profile: GamepadProfile) {
+        gameStore.save(appId, profile)
+        invalidateProfiles()
+    }
+
     // U3: estado de camadas por device (V6 — morto no removeDevice).
     private val layerStates = mutableMapOf<Int, LayerState>()
 

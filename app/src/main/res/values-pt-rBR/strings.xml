@@ -2188,6 +2188,22 @@
     <string name="gamepad_remap_binding_none">Sem vínculo</string>
     <string name="gamepad_remap_axis_format">Eixo %1$d %2$s</string>
     <string name="gamepad_remap_hat_format">Hat %1$d máscara %2$d</string>
+
+    <!-- ══════════ Remap visual PPSSPP (spec 2026-08-16-B-remap-visual-ppsspp) ══════════ -->
+    <string name="gamepad_visual_section_title">Mapa visual</string>
+    <string name="gamepad_visual_scope_game">Este jogo</string>
+    <string name="gamepad_visual_scope_all">Todos os jogos</string>
+    <string name="gamepad_visual_scope_game_unavailable">“Este jogo” fica disponível com um jogo em execução</string>
+    <string name="gamepad_visual_badge_auto">A</string>
+    <string name="gamepad_visual_state_auto">AUTO</string>
+    <string name="gamepad_visual_state_override">OVERRIDE</string>
+    <string name="gamepad_visual_legend_auto">AUTO — mapeamento padrão do controle</string>
+    <string name="gamepad_visual_legend_override">OVERRIDE — remapeado neste escopo</string>
+    <string name="gamepad_visual_restore_control">Restaurar automático</string>
+    <string name="gamepad_visual_restore_all">Restaurar tudo</string>
+    <string name="gamepad_visual_capture_prompt">Pressione o botão para %1$s… (B = cancelar)</string>
+    <string name="gamepad_visual_restored_control">Controle restaurado para AUTO</string>
+    <string name="gamepad_visual_restored_all">Todos os bindings deste escopo foram restaurados</string>
     <!-- ══════════ Gamepad settings (spec 2026-08-14 — onda2 pos-implementação, M2/M3) ══════════ -->
     <string name="settings_gamepad_title">Gamepad</string>
     <string name="gamepad_settings_universal_title">Suporte universal a gamepads</string>
