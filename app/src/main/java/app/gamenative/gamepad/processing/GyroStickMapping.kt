@@ -51,7 +51,11 @@ object GyroStickMapping {
         val linear = (angularVelRadS * scale * sensitivity).coerceIn(-1f, 1f)
         if (linear == 0f) return 0f
         val maxOut = maxOutput.coerceIn(0f, 1f)
-        val anti = antiDeadzone.coerceIn(0f, 1f)
+        // Correção G-v2-revisão: anti > maxOut invertia a resposta (mais rotação =
+        // menos deflexão — não-monotônico). O clamp mantém a curva sempre
+        // monotônica, mesmo com JSON importado contendo anti > maxOutput (a UI não
+        // é a única porta de entrada).
+        val anti = antiDeadzone.coerceIn(0f, 1f).coerceAtMost(maxOut)
         // (0..1] → (anti..maxOut]: floor = anti no menor movimento; teto = maxOut.
         val magnitude = anti + (maxOut - anti) * kotlin.math.abs(linear)
         return kotlin.math.sign(linear) * magnitude.coerceIn(0f, 1f)

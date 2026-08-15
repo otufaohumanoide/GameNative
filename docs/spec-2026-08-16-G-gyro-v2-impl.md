@@ -21,6 +21,8 @@
   morto no removeDevice:959); aplicado no branch MOUSE de `onSensorSample`
   (file:lines 584-599). O `.toInt()` antigo (GamepadHub.kt:531 pré-G) descartava a
   fração — giro lento abaixo de 1 px/amostra nunca movia o cursor.
+- Correção G-v2-revisão: o estado também morre na DESATIVAÇÃO (branch `!active`,
+  junto do OneEuro — mesmo padrão `SixMouseReset` do DS4Windows).
 
 ### G2 — OneEuro opt-in (MOUSE)
 
@@ -75,15 +77,19 @@
 ### G5 — Ativação TOGGLE
 
 - `app/src/main/java/app/gamenative/gamepad/processing/GyroActivation.kt` (NOVO,
-  puro): `onReleaseButton(latch, toggle)` (borda de descida flipa o latch) e
+  puro): `onPressButton(latch, toggle)` (borda de PRESS flipa o latch) e
   `active(held, latch, toggle)` (toggle lê latch; hold lê botão) — testado em JVM.
 - Hub: `gyroActivateLatches` por device (file:709, V6 — morto no removeDevice:961 e
   no `setActiveAppId`:168, junto do re-arme do perfil novo). Escrito NO caminho onde
-  `gyroActivateHeld` já é escrito (emitLogical, file:lines 415-426): ButtonUp do
+  `gyroActivateHeld` já é escrito (emitLogical, file:lines 415-426): ButtonDown do
   botão de ativação com `gyroActivateToggle == true` inverte o latch.
   `gyroActivateHeld(deviceId, profile)` (file:lines 732-748) decide via
   `GyroActivation.active`. O recenter da borda off→on é o existente do
   GyroProcessor — sai de graça.
+- **Correção G-v2-revisão (decisão de revisão):** o spec original dizia "borda de
+  descida", mas o flip acontece no PRESS — padrão DS4Windows `IsGyroTriggerActive`
+  (edge no press), eliminando a surpresa "segurar mantém ligado, SOLTAR desliga".
+  Ver §2.7.
 - **Bugfix descoberto no caminho** (ver §2.3): a amostra inativa agora emite o
   REPOUSO do stick CAMERA (file:lines 556-572) — sem isto o toggle deixaria a
   deflexão congelada a cada desligada.
@@ -173,8 +179,9 @@ ficava ATRÁS do `if (!output.active) return` — morto: a deflexão congelava n
 último valor enquanto o botão ficava solto (e o recenter da próxima ativação só
 mascarava). O toggle do G5 tornaria o defeito visível a cada desligada. Corrigido
 no caminho inativo (file:lines 556-572): CAMERA emite `(0,0,…)` no release/toggle
-off; G2 remove o estado do filtro no mesmo ponto. Registrado como divergência
-deliberada (bugfix habilitado pelo G3/G5, verificação on-device na §6).
+off; G1+G2 removem estado no mesmo ponto (o resto sub-pixel também morre — padrão
+`SixMouseReset`). Registrado como divergência deliberada (bugfix habilitado pelo
+G3/G5, verificação on-device na §6).
 
 ### 2.4 Sinal do grip angle
 
@@ -201,6 +208,34 @@ Um campo só com o outro null: liga com o default DS4Windows no ausente (o spec
 define "ambos null = OFF"; a UI liga/desliga os dois juntos, então o caso meio-ligado
 só aparece via import/edição manual — comportamento definido, não exceção).
 
+### 2.7 Correções da revisão (commit de fix, mesma spec)
+
+Revisão pós-implementação (avaliação do plano G) apontou 3 ajustes + 1 nota, todos
+aplicados neste commit:
+
+1. **G4 — curva sempre monotônica**: com `antiDeadzone > maxOutput` (configurável
+   na UI: anti 0..1.0 × maxOut 0.1..1.0) o remap afim ficava NÃO-monotônico (mais
+   rotação = menos deflexão). Fix em dois níveis: processor clampa
+   `anti ≤ maxOutput` (GyroStickMapping.kt — perfis importados do catálogo também
+   passam por lá, a UI não é a única porta de entrada) e o slider da UI ganha range
+   dinâmico `0..gyroStickMaxOutput` (GamepadRemapDialog.kt). Teste novo cobre o
+   caso.
+2. **G1 — estado morre na desativação**: o commit G dizia "morre na desativação"
+   mas só o OneEuro era removido; o resto sub-pixel persistia (salto <1 px possível
+   na reativação — invisível, mas inconsistente com o `SixMouseReset` citado). Agora
+   `gyroMouseStates.remove(deviceId)` roda junto do `gyroSmoothStates.remove`
+   (hub, branch `!active`).
+3. **G5 — flip no PRESS, não no release**: o texto original do spec (§1 G5) dizia
+   "borda de descida"; a fonte citada no próprio spec (DS4Windows
+   `IsGyroTriggerActive`) flipa no press. Press-flip elimina a surpresa "segurar
+   mantém ligado, soltar desliga" e é o comportamento esperado por quem já usou
+   DS4Windows/JoyShock. Implementação: `GyroActivation.onPressButton` chamado no
+   ButtonDown (emitLogical); `active()` inalterado. Divergência deliberada do texto
+   original do spec, registrada aqui.
+4. **Nota (sem código)**: com o botão de ativação consumido por uma camada SHIFT
+   (F §1.3), o `emitLogical` não roda e o latch não flipa — limitação herdada do
+   tracking pós-remap do hold (pré-existente ao G), documentada apenas.
+
 ## 3. Testes (JVM, objetos puros)
 
 - `OneEuroFilterTest` (NOVO): constante passa intacta; escada converge com lag e
@@ -212,13 +247,13 @@ só aparece via import/edição manual — comportamento definido, não exceçã
   movia); negativos simétricos; eixos independentes.
 - `GyroStickMappingTest` (novas): defaults byte-identical ao linear antigo; floor
   anti-deadzone ±; teto maxOutput ±; pontos da curva afim; zero continua zero com
-  shaping.
+  shaping; anti > maxOutput clampa e permanece monotônico (fix §2.7.1).
 - `GyroProcessorTest` (novas): θ=0 idêntico ao legado (deltas E velocidades); θ=90°
   mistura os eixos (X do sensor vira yaw); θ=−90° compensa pad de lado (yaw puro);
   calibração contínua intacta com θ=45° (janela absorve bias); `gripAngleFromAccel`
   flat/virado/lados.
-- `GyroActivationTest` (NOVO): latch flipa por borda de descida só com toggle;
-  hold lê botão; ciclo completo de press/release em toggle.
+- `GyroActivationTest` (NOVO): latch flipa no PRESS só com toggle (fix §2.7.3 — UP
+  não flipa); hold lê botão; ciclo completo de press/release em toggle.
 - `GamepadProfileStoreTest` (novas): roundtrip dos 9 campos; merge jogo-vence +
   null-preserva; detecção de default inclui os 9.
 
@@ -246,8 +281,9 @@ absoluto — intocados.
    no cursor (MOUSE) e na câmera (CAMERA).
 4. **CAMERA + shaping**: maxOutput < 100% satura o stick cedo; anti-deadzone dá o
    salto mínimo acima da deadzone; defaults idênticos ao comportamento anterior.
-5. **CAMERA + toggle**: aperta liga, aperta de novo desliga; stick volta ao centro
-   a cada desligada (bugfix §2.3); recenter na borda off→on (sem salto).
+5. **CAMERA + toggle**: aperta liga (flip no press), aperta de novo desliga; stick
+   volta ao centro a cada desligada (bugfix §2.3); recenter na borda off→on (sem
+   salto).
 6. **Grip**: segurar o pad na pegada natural → "Calibrar grip" no card de
    diagnóstico → yaw vira horizontal de verdade no CAMERA/MOUSE (sinal confirmado
    ou invertido — §2.4). Slider manual idem.

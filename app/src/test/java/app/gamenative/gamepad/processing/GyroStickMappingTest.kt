@@ -90,4 +90,17 @@ class GyroStickMappingTest {
         // O floor vale ACIMA da deadzone — repouso nunca gera deflexão.
         assertEquals(0f, GyroStickMapping.deflection(0f, 1f, maxOutput = 0.5f, antiDeadzone = 0.2f), 0.0001f)
     }
+
+    @Test
+    fun `antiDeadzone above maxOutput clamps and stays monotonic`() {
+        // Correção G-v2-revisão: anti > maxOut invertia a resposta (mais rotação =
+        // menos deflexão). O clamp efetivo anti = maxOut mantém a curva monotônica.
+        val maxOut = 0.2f
+        val anti = 0.8f
+        // Com anti efetivo 0.2: linear 0.5 → 0.2 + (0.2 − 0.2) × 0.5 = 0.2.
+        assertEquals(0.2f, GyroStickMapping.deflection(2.5f, 1f, maxOutput = maxOut, antiDeadzone = anti), 0.0001f)
+        // Linear 1.0: teto maxOut — e o sinal é preservado.
+        assertEquals(0.2f, GyroStickMapping.deflection(5f, 1f, maxOutput = maxOut, antiDeadzone = anti), 0.0001f)
+        assertEquals(-0.2f, GyroStickMapping.deflection(-5f, 1f, maxOutput = maxOut, antiDeadzone = anti), 0.0001f)
+    }
 }

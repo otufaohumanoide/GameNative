@@ -7,27 +7,28 @@ import org.junit.Test
 
 /**
  * G5 (spec 2026-08-16-G-gyro-v2, §3): latch do toggle de ativação — a borda de
- * descida do botão inverte o latch (aperta liga, aperta de novo desliga); hold
- * continua lendo o botão pressionado; o recenter da borda off→on fica por conta do
- * GyroProcessor (sai de graça — nada testado aqui além da decisão pura).
+ * PRESS do botão inverte o latch (aperta liga, aperta de novo desliga — padrão
+ * DS4Windows IsGyroTriggerActive; correção G-v2-revisão: antes era no release);
+ * hold continua lendo o botão pressionado; o recenter da borda off→on fica por
+ * conta do GyroProcessor (sai de graça — nada testado aqui além da decisão pura).
  */
 class GyroActivationTest {
 
     @Test
-    fun `toggle flips the latch on every release edge`() {
+    fun `toggle flips the latch on every press edge`() {
         var latch = false
-        latch = GyroActivation.onReleaseButton(latch, toggle = true)
+        latch = GyroActivation.onPressButton(latch, toggle = true)
         assertTrue(latch)
-        latch = GyroActivation.onReleaseButton(latch, toggle = true)
+        latch = GyroActivation.onPressButton(latch, toggle = true)
         assertFalse(latch)
-        latch = GyroActivation.onReleaseButton(latch, toggle = true)
+        latch = GyroActivation.onPressButton(latch, toggle = true)
         assertTrue(latch)
     }
 
     @Test
-    fun `release edge does not flip the latch in hold mode`() {
+    fun `press edge does not flip the latch in hold mode`() {
         var latch = false
-        latch = GyroActivation.onReleaseButton(latch, toggle = false)
+        latch = GyroActivation.onPressButton(latch, toggle = false)
         assertFalse(latch)
     }
 
@@ -48,17 +49,16 @@ class GyroActivationTest {
     fun `full press-release cycle in toggle mode`() {
         var held = false
         var latch = false
-        // DOWN não muda o latch (a borda de descida é que flipa).
+        // DOWN com toggle ⇒ latch abre (correção G-v2-revisão: flip no press).
         held = true
-        assertEquals(false, GyroActivation.active(held, latch, toggle = true))
-        // UP com toggle ⇒ latch abre.
-        held = false
-        latch = GyroActivation.onReleaseButton(latch, toggle = true)
+        latch = GyroActivation.onPressButton(latch, toggle = true)
         assertEquals(true, GyroActivation.active(held, latch, toggle = true))
-        // Segundo ciclo ⇒ latch fecha.
-        held = true
+        // UP NÃO flipa (o latch fica aberto até o próximo press).
         held = false
-        latch = GyroActivation.onReleaseButton(latch, toggle = true)
+        assertEquals(true, GyroActivation.active(held, latch, toggle = true))
+        // Segundo ciclo ⇒ latch fecha no press.
+        held = true
+        latch = GyroActivation.onPressButton(latch, toggle = true)
         assertEquals(false, GyroActivation.active(held, latch, toggle = true))
     }
 }

@@ -411,17 +411,19 @@ class GamepadHub(context: Context) {
         for (e in emitted) {
             if (activateButton != null && e is InputEvent.ButtonDown && e.button.name == activateButton) {
                 gyroActivateHeld[deviceId] = activateButton
-            } else if (activateButton != null && e is InputEvent.ButtonUp && e.button.name == activateButton) {
-                gyroActivateHeld.remove(deviceId)
-                // G5 (spec 2026-08-16-G-gyro-v2): borda de descida do botão de
-                // ativação flipa o latch por device (toggle). O recenter da borda
-                // off→on já existe no GyroProcessor — sai de graça.
+                // G5 (spec 2026-08-16-G-gyro-v2): borda de PRESS do botão de
+                // ativação flipa o latch por device (toggle — padrão DS4Windows
+                // IsGyroTriggerActive; correção G-v2-revisão: antes era no release).
+                // O recenter da borda off→on já existe no GyroProcessor — sai de
+                // graça.
                 if (profile.gyroActivateToggle == true) {
-                    gyroActivateLatches[deviceId] = GyroActivation.onReleaseButton(
+                    gyroActivateLatches[deviceId] = GyroActivation.onPressButton(
                         latch = gyroActivateLatches[deviceId] ?: false,
                         toggle = true,
                     )
                 }
+            } else if (activateButton != null && e is InputEvent.ButtonUp && e.button.name == activateButton) {
+                gyroActivateHeld.remove(deviceId)
             }
             logLogical(device, e)
             PluviaApp.events.emit(GamepadInputEvent(e))
@@ -554,10 +556,11 @@ class GamepadHub(context: Context) {
         val sensX = sensitivity * (if (profile.gyroInvertX == true) -1f else 1f)
         val sensY = (profile.gyroSensitivityY ?: sensitivity) * (if (profile.gyroInvertY == true) -1f else 1f)
         if (!output.active) {
-            // G2: o estado do OneEuro morre quando o gyro desativa — o próximo
-            // período ativo recomeça limpo (mesmo padrão do SixMouseReset do
-            // DS4Windows).
+            // G1/G2: o estado do OneEuro E o resto sub-pixel morrem quando o gyro
+            // desativa — o próximo período ativo recomeça limpo (mesmo padrão do
+            // SixMouseReset do DS4Windows).
             gyroSmoothStates.remove(deviceId)
+            gyroMouseStates.remove(deviceId)
             // G3/G5: com CAMERA ativo, a amostra inativa (botão solto / toggle off)
             // leva o REPOUSO ao stick — o branch existia no código antigo mas
             // ficava ATRÁS deste return (morto: a deflexão congelava no último

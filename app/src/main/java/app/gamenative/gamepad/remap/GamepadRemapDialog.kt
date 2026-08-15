@@ -1151,7 +1151,10 @@ fun GamepadRemapDialog(
                             GyroSliderRow(
                                 title = stringResource(R.string.gamepad_gyro_stick_anti_deadzone_title),
                                 value = gyroStickAntiDeadzone,
-                                range = 0.0f..1.0f,
+                                // Correção G-v2-revisão: teto = maxOutput (curva
+                                // sempre monotônica — anti > maxOutput invertia a
+                                // resposta: mais rotação = menos deflexão).
+                                range = 0.0f..gyroStickMaxOutput,
                                 format = { String.format(java.util.Locale.US, "%.0f%%", it * 100f) },
                                 onValueChange = { gyroStickAntiDeadzone = it },
                             )
