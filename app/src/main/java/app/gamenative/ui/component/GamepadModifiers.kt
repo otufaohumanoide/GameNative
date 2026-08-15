@@ -107,7 +107,9 @@ object GamepadKeyLogic {
  * - A / DPAD_CENTER / ENTER (ACTION_DOWN, repeat 0) while focused → [onClick], consumed.
  *   Works with the bridge (A arrives as synthetic DPAD_CENTER) and without it (raw A).
  * - Implicit focus (via [clickable]'s own focusable node, same [interactionSource]) and the
- *   D7 visual: focused → animated ring, selected → persistent accent border.
+ *   D7 visual: focused → bright animated ring + background overlay, selected → quiet
+ *   persistent tint (spec 2026-08-15 focus-feedback-v2: the bright/animated border is
+ *   exclusive to focus, so a checked toggle never competes with the focused row).
  * - Touch taps still activate; semantics keep the a11y "selected" state.
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -192,7 +194,9 @@ fun Modifier.gamepadSelectable(
  * DPAD_L/R and B propagate when unlocked (navigation / hierarchical back).
  *
  * The caller owns the [locked] state and renders the `●` indicator; this modifier provides the
- * focus visual (Focused when focused, Locked ring when locked) and focusability.
+ * focus visual and focusability — Focused (bright animated ring) when focused, Locked (thick
+ * solid ring) when locked. With Selected downgraded to a tint (spec 2026-08-15
+ * focus-feedback-v2, §1.4), Locked is the only static solid border besides focus.
  */
 @Composable
 fun Modifier.gamepadAdjustableRow(

@@ -570,7 +570,14 @@ fun QuickMenu(
             repeat(remembered) { focusManager.moveFocus(FocusDirection.Down) }
             return
         }
-        // Tab with no focusable content — fall back to its rail button.
+        // Tab with no focusable content — fall back to its rail button. D3 audit
+        // (spec 2026-08-15 focus-feedback-v2, §1.3): the rail buttons are always-VISIBLE
+        // focus targets that draw the same gamepadFocus ring when focused
+        // (QuickMenuTabButton -> gamepadSelectable), so this fallback never lands on an
+        // invisible container. Tabs whose list can be empty render an explicit focusable
+        // empty state instead (QuickMenuEmptyStateRow — TOOLS); this path remains the
+        // last resort for transient loading states (e.g. EFFECTS before the renderer
+        // reports in).
         val railRequester = when (tab) {
             QuickMenuTab.HUD -> hudTabFocusRequester
             QuickMenuTab.LSFG -> lsfgTabFocusRequester
@@ -1455,11 +1462,14 @@ private fun ToolsQuickMenuTab(
         )
 
         if (!isLoadingProcesses && processes.isEmpty()) {
-            Text(
+            // D3 (spec 2026-08-15 focus-feedback-v2, §1.3): the empty state is itself a
+            // focus target, so gamepad focus lands on a VISIBLE content node with a ring
+            // instead of silently falling back to the tab rail.
+            QuickMenuEmptyStateRow(
                 text = stringResource(R.string.tools_wine_processes_empty),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                accentColor = accentColor,
+                focusRequester = firstItemFocusRequester,
+                onFocusIndexChanged = onFocusIndexChanged,
             )
         } else {
             val clampedToolsIndex = if (processes.isEmpty()) {
@@ -2065,6 +2075,64 @@ private fun QuickMenuSectionHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/**
+ * Explicit "nothing navigable" state for tabs whose list can be empty (D3 audit,
+ * spec 2026-08-15 focus-feedback-v2, §1.3): the message itself is a focus target, so
+ * gamepad focus lands on a VISIBLE content node with the standard focus ring instead of
+ * silently falling back to the tab rail. Not clickable — A/DPAD_CENTER simply propagate.
+ */
+@Composable
+private fun QuickMenuEmptyStateRow(
+    text: String,
+    accentColor: Color,
+    focusRequester: FocusRequester? = null,
+    onFocusIndexChanged: ((Int) -> Unit)? = null,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(14.dp)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(shape)
+            .background(
+                if (isFocused) {
+                    accentColor.copy(alpha = 0.08f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f)
+                },
+            )
+            .then(
+                if (focusRequester != null) {
+                    Modifier.focusRequester(focusRequester)
+                } else {
+                    Modifier
+                }
+            )
+            .then(
+                if (onFocusIndexChanged != null) {
+                    Modifier.gamepadFocusIndex(0, onFocusIndexChanged)
+                } else {
+                    Modifier
+                }
+            )
+            .gamepadFocusable(
+                state = if (isFocused) GamepadFocusState.Focused else null,
+                shape = shape,
+                interactionSource = interactionSource,
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (isFocused) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
