@@ -110,7 +110,7 @@ H → I → J1 → (J2 stretch)
 | Fase | Spec | Gate | Status | Commit |
 |---|---|---|---|---|
 | H | `spec-2026-08-16-H-binding-modifiers-duckstation.md` | tests `*Binding* *Gamepad*` + assemble + sync determinístico | ✅ 2026-08-16 | `10526ba5` |
-| I | `spec-2026-08-16-I-trigger-engine-keymapper.md` | tests `*Trigger* *Layer* *Gamepad*` + assemble + sync determinístico | ⬜ PENDENTE | — |
+| I | `spec-2026-08-16-I-trigger-engine-keymapper.md` | tests `*Trigger* *Layer* *Gamepad*` + assemble + sync determinístico | ✅ 2026-08-16 | `92512ed4` |
 | J1 | `spec-2026-08-16-J-expressions-dolphin.md` (§2) | tests `*Expr* *Gamepad*` + assemble + sync determinístico | ⬜ PENDENTE | — |
 | J2 | `spec-2026-08-16-J-expressions-dolphin.md` (§3, stretch) | tests `*Expr* *Gamepad*` + assemble | ⬜ PENDENTE (opcional) | — |
 
