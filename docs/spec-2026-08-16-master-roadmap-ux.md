@@ -100,7 +100,7 @@ F0 → A → B → C → F → D → E
 | F0 | (este arquivo §3) | assemble | ✅ COMPLETO (2026-08-14) | `31002f42` (milestone `milestone-2026-08-14-focus-feedback-v2`) |
 | A | `spec-2026-08-16-A-rumble-fallback-usage-media.md` | tests `*RumblePhoneCurve* *GamepadProfileStore*` + assemble | ✅ COMPLETO (2026-08-14) | `015d6d09` |
 | B | `spec-2026-08-16-B-remap-visual-ppsspp.md` | tests `*ControllerVisual* *Gamepad*` + assemble | ✅ COMPLETO (2026-08-14) | `29f5cbd4` |
-| C | `spec-2026-08-16-C-device-card-input-viewer.md` | tests `*Gamepad*` + assemble | INCOMPLETO | — |
+| C | `spec-2026-08-16-C-device-card-input-viewer.md` | tests `*Gamepad*` + assemble | ✅ COMPLETO (2026-08-14) | `d5179c7b` |
 | F | `spec-2026-08-16-F-radial-v2-modeshift-turbo.md` | tests `*Radial* *LayerResolver* *Turbo*` + assemble | INCOMPLETO | — |
 | D | `spec-2026-08-16-D-touchpad-swipes-macros.md` | tests `*Touchpad*` + assemble | INCOMPLETO | — |
 | E | `spec-2026-08-16-E-profile-catalog-comunitario.md` | determinismo do sync (2× → diff vazio) + tests `*ProfileCatalog*` + assemble | INCOMPLETO | — |
