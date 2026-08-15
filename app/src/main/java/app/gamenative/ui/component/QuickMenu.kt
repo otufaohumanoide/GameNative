@@ -84,7 +84,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.KeyEventType
@@ -2389,20 +2388,14 @@ internal fun QuickMenuAdjustmentRow(
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(shape)
             .background(
+                // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus): gradientes
+                // são da TELA PRINCIPAL (Library) e scrims de artwork; menus internos
+                // usam cores ESTÁTICAS da escada do tema (padrão SettingsScreen row —
+                // focused = accent estático com alpha fixo, nunca gradiente).
                 if (isFocused) {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.16f),
-                            accentColor.copy(alpha = 0.08f),
-                        ),
-                    )
+                    accentColor.copy(alpha = 0.12f)
                 } else {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f),
-                        ),
-                    )
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
                 },
             )
             .then(
@@ -2603,20 +2596,11 @@ internal fun QuickMenuToggleRow(
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
+                // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus): estático.
                 if (isFocused) {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.16f),
-                            accentColor.copy(alpha = 0.08f),
-                        ),
-                    )
+                    accentColor.copy(alpha = 0.12f)
                 } else {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f),
-                        ),
-                    )
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
                 },
             )
             .then(
@@ -2714,20 +2698,11 @@ private fun QuickMenuDetailRow(
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(shape)
             .background(
+                // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus): estático.
                 if (isFocused) {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.14f),
-                            accentColor.copy(alpha = 0.06f),
-                        ),
-                    )
+                    accentColor.copy(alpha = 0.12f)
                 } else {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f),
-                        ),
-                    )
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
                 },
             )
             .then(
@@ -2822,12 +2797,9 @@ private fun QuickMenuItemRow(
             .then(
                 if (isFocused && isEnabled) {
                     Modifier.background(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                accentColor.copy(alpha = 0.15f),
-                                accentColor.copy(alpha = 0.05f),
-                            ),
-                        ),
+                        // Hierarquia de cor (spec 2026-08-16-cores-estaticas-menus):
+                        // estático — gradiente é só da tela principal.
+                        color = accentColor.copy(alpha = 0.12f),
                     )
                 } else {
                     Modifier
