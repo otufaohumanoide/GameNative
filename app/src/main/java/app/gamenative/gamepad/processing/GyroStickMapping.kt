@@ -7,8 +7,14 @@ package app.gamenative.gamepad.processing
  * integral. A deflexão é FUNÇÃO da velocidade angular (rad/s): parar de girar ⇒
  * deflexão volta a 0 automaticamente (nada a re-centrar).
  *
- * JVM-testável (V5): nenhum android.* — clamp, sinal e retorno a zero testados em
- * [GyroStickMappingTest].
+ * G4 (spec 2026-08-16-G-gyro-v2, §1): shaping por perfil — [maxOutput] (teto da
+ * deflexão) e [antiDeadzone] (floor logo acima da deadzone), semântica
+ * `SixMouseStick` (reference/DS4Windows/DS4Windows/DS4Control/Mouse.cs): a
+ * velocidade morta pela deadzone remapeia o intervalo (dz..1] de deflexão linear
+ * para (antiDeadzone..maxOutput]. Defaults (1.0, 0) = linear atual, byte-identical.
+ *
+ * JVM-testável (V5): nenhum android.* — clamp, sinal, retorno a zero e a curva de
+ * shaping testados em [GyroStickMappingTest].
  */
 object GyroStickMapping {
 
@@ -19,10 +25,35 @@ object GyroStickMapping {
      */
     const val DEFAULT_SCALE: Float = 0.2f
 
+    /** G4: teto default da deflexão (1.0 = deflexão completa). */
+    const val DEFAULT_MAX_OUTPUT: Float = 1.0f
+
+    /** G4: floor default acima da deadzone (0 = sem salto — linear atual). */
+    const val DEFAULT_ANTI_DEADZONE: Float = 0.0f
+
     /**
      * Deflexão de um eixo do stick a partir da velocidade angular já morta pela
      * deadzone (rad/s). Sinal preservado; clamp [-1, 1].
+     *
+     * G4: com [maxOutput] < 1 a deflexão satura mais cedo (teto); com
+     * [antiDeadzone] > 0 a menor velocidade acima da deadzone já produz uma
+     * deflexão mínima (floor — salto imediato de stick, padrão SixMouseStick).
+     * A curva é o remap afim (antiDeadzone..maxOutput) sobre a deflexão linear
+     * (0..1] — defaults (1.0, 0) reproduzem o linear antigo EXATO.
      */
-    fun deflection(angularVelRadS: Float, sensitivity: Float, scale: Float = DEFAULT_SCALE): Float =
-        (angularVelRadS * scale * sensitivity).coerceIn(-1f, 1f)
+    fun deflection(
+        angularVelRadS: Float,
+        sensitivity: Float,
+        scale: Float = DEFAULT_SCALE,
+        maxOutput: Float = DEFAULT_MAX_OUTPUT,
+        antiDeadzone: Float = DEFAULT_ANTI_DEADZONE,
+    ): Float {
+        val linear = (angularVelRadS * scale * sensitivity).coerceIn(-1f, 1f)
+        if (linear == 0f) return 0f
+        val maxOut = maxOutput.coerceIn(0f, 1f)
+        val anti = antiDeadzone.coerceIn(0f, 1f)
+        // (0..1] → (anti..maxOut]: floor = anti no menor movimento; teto = maxOut.
+        val magnitude = anti + (maxOut - anti) * kotlin.math.abs(linear)
+        return kotlin.math.sign(linear) * magnitude.coerceIn(0f, 1f)
+    }
 }

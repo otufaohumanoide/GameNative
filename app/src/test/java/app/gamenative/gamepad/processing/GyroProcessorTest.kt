@@ -223,4 +223,83 @@ class GyroProcessorTest {
         assertEquals(edgeNext.yawRadS, explicitNext.yawRadS, 0.0001f)
         assertEquals(edgeNext.pitchRadS, explicitNext.pitchRadS, 0.0001f)
     }
+
+    // ── G6 (spec 2026-08-16-G-gyro-v2): grip angle ──
+
+    private val gripConfig90 = GyroConfig(deadzone = 0.05f, gripAngleDeg = 90f)
+
+    @Test
+    fun `grip zero is identical to the legacy axes`() {
+        val plain = GyroState()
+        val grip = GyroState()
+        val config0 = GyroConfig(deadzone = 0.05f, gripAngleDeg = 0f)
+        GyroProcessor.process(sample(0f, 0f, 0f, 0), plain, config, activate = true)
+        GyroProcessor.process(sample(0f, 0f, 0f, 0), grip, config0, activate = true)
+        val plainOut = GyroProcessor.process(sample(0.5f, 0.2f, -1f, 16), plain, config, activate = true)
+        val gripOut = GyroProcessor.process(sample(0.5f, 0.2f, -1f, 16), grip, config0, activate = true)
+        assertEquals(plainOut.deltaXRad, gripOut.deltaXRad, 0f)
+        assertEquals(plainOut.deltaYRad, gripOut.deltaYRad, 0f)
+        assertEquals(plainOut.yawRadS, gripOut.yawRadS, 0f)
+        assertEquals(plainOut.pitchRadS, gripOut.pitchRadS, 0f)
+    }
+
+    @Test
+    fun `grip rotates the axes - sensor X mixes into yaw`() {
+        // θ = +90°: rotX = −Z, rotZ = +X ⇒ yaw = −X, pitch = +Z (mistura os eixos —
+        // exatamente o propósito do grip angle).
+        val state = GyroState()
+        GyroProcessor.process(sample(0f, 0f, 0f, 0), state, gripConfig90, activate = true)
+        val out = GyroProcessor.process(sample(1f, 0f, 0f, 16), state, gripConfig90, activate = true)
+        assertEquals(-1f, out.yawRadS, 0.0001f)
+        assertEquals(0f, out.pitchRadS, 0.0001f)
+        assertEquals(-0.016f, out.deltaXRad, 0.0005f)
+    }
+
+    @Test
+    fun `grip minus 90 compensates a pad held on its side`() {
+        // Pad de lado (lado direito para baixo ⇒ θ = atan2(ax, az) = −90°): a
+        // rotação no eixo VERTICAL do mundo chega no eixo X do sensor; compensada,
+        // vira yaw puro (girar à direita = deltaX positivo), sem pitch.
+        val state = GyroState()
+        val cfg = GyroConfig(deadzone = 0.05f, gripAngleDeg = -90f)
+        GyroProcessor.process(sample(0f, 0f, 0f, 0), state, cfg, activate = true)
+        val out = GyroProcessor.process(sample(1f, 0f, 0f, 16), state, cfg, activate = true)
+        assertEquals(1f, out.yawRadS, 0.0001f)
+        assertEquals(0f, out.pitchRadS, 0.0001f)
+        assertEquals(0.016f, out.deltaXRad, 0.0005f)
+    }
+
+    @Test
+    fun `grip angle does not break continuous calibration`() {
+        // P2-2 intacta com grip ≠ 0: a janela continua usando raw−offset por eixo
+        // (a rotação só afeta o delta) — bias de repouso vira offset no período.
+        val state = GyroState()
+        val cfg = GyroConfig(deadzone = 0.05f, calibPeriodMs = 300L, gripAngleDeg = 45f)
+        GyroProcessor.process(sample(0.02f, 0f, 0.02f, 0), state, cfg, activate = true)
+        var ms = 16L
+        while (ms <= 320L) {
+            GyroProcessor.process(sample(0.02f, 0f, 0.02f, ms), state, cfg, activate = true)
+            ms += 16
+        }
+        // Offset absorveu o bias — a amostra seguinte não produz rotação.
+        val out = GyroProcessor.process(sample(0.02f, 0f, 0.02f, ms), state, cfg, activate = true)
+        assertEquals(0f, out.yawRadS, 0.0001f)
+        assertEquals(0f, out.pitchRadS, 0.0001f)
+    }
+
+    @Test
+    fun `grip angle from accel reads zero with a flat pad`() {
+        // Pad plano de face para cima: gravidade toda em +Z ⇒ θ = 0.
+        assertEquals(0f, GyroProcessor.gripAngleFromAccel(0f, 9.81f), 0.0001f)
+        // Face para baixo (az = −g): atan2(0, −g) = 180° — documenta o atan2 cru.
+        assertEquals(180f, GyroProcessor.gripAngleFromAccel(0f, -9.81f), 0.0001f)
+    }
+
+    @Test
+    fun `grip angle from accel reads the side tilt`() {
+        // Lado direito para baixo: ax = −g, az = 0 ⇒ θ = −90°.
+        assertEquals(-90f, GyroProcessor.gripAngleFromAccel(-9.81f, 0f), 0.0001f)
+        // Lado esquerdo para baixo: ax = +g ⇒ θ = +90°.
+        assertEquals(90f, GyroProcessor.gripAngleFromAccel(9.81f, 0f), 0.0001f)
+    }
 }

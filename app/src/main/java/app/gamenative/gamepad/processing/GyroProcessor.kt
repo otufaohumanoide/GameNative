@@ -23,6 +23,9 @@ package app.gamenative.gamepad.processing
  * - Sinais: yaw (rotação no plano) → deltaX; pitch (inclinação) → deltaY. O sinal
  *   segue a convenção "girar para a direita = deltaX positivo, inclinar para cima =
  *   deltaY negativo" (verificação on-device pode inverter — anotado no spec).
+ * - G6 (spec 2026-08-16-G-gyro-v2): grip angle [GyroConfig.gripAngleDeg] — rotação
+ *   do par (X, Z) calibrado em torno do eixo longitudinal ANTES de yaw/pitch e da
+ *   deadzone (pad segurado inclinado deixa de misturar pitch/yaw); θ=0 = atual.
  */
 data class GyroSample(
     val gyroX: Float,
@@ -51,6 +54,14 @@ data class GyroConfig(
      * ≤ tolerância para considerar o device parado. 0,0,0 (sem accel) ignora o critério.
      */
     val accelStillnessTolerance: Float = 0.2f,
+    /**
+     * G6 (spec 2026-08-16-G-gyro-v2, §1): ângulo de pegada (grip) em GRAUS — rotação
+     * do par (X, Z) calibrado por θ em torno do eixo longitudinal (Y) ANTES da
+     * extração yaw/pitch e da deadzone. 0 = eixos atuais (pad plano — byte-identical).
+     * O ângulo vem de [gripAngleFromAccel] (botão "Calibrar grip" do card de
+     * diagnóstico) ou do slider da seção Gyro do remap.
+     */
+    val gripAngleDeg: Float = 0f,
 )
 
 /** Estado entre amostras — UMA instância por device, morta no removeDevice (V6). */
@@ -105,6 +116,18 @@ object GyroProcessor {
         state.offsetZ = sample.gyroZ
     }
 
+    /**
+     * G6 (spec 2026-08-16-G-gyro-v2, §1): ângulo de pegada a partir do accel
+     * corrente — θ = atan2(ax, az) em GRAUS (padrão JoyShockLibrary de grip angle).
+     * O accel em repouso mede a gravidade no frame do pad: com o pad plano, ax = 0 e
+     * az ≈ 1g ⇒ θ = 0; inclinado, a componente ax aparece e θ descreve a rotação no
+     * eixo longitudinal (Y). O valor alimenta o botão "Calibrar grip" do
+     * DeviceDiagnosticsCard (GamepadHub.calibrateGrip) e o perfil
+     * (gyroGripAngleDeg). Pura: sem android.*, testada em GyroProcessorTest.
+     */
+    fun gripAngleFromAccel(accelX: Float, accelZ: Float): Float =
+        Math.toDegrees(kotlin.math.atan2(accelX.toDouble(), accelZ.toDouble())).toFloat()
+
     fun process(sample: GyroSample, state: GyroState, config: GyroConfig, activate: Boolean): GyroOutput {
         // Recenter na borda de ativação (off→on): o desvio atual vira zero — padrão
         // DS4Windows ("recenter a cada ativação"). Operação compartilhada com o
@@ -132,8 +155,29 @@ object GyroProcessor {
         }
 
         val dt = ((sample.nowMs - last.nowMs).coerceIn(1L, 100L)) / 1000f
-        var yaw = -(sample.gyroZ - state.offsetZ) // girar à direita = -Z → +deltaX
-        var pitch = -(sample.gyroX - state.offsetX) // inclinar para cima = -X → -deltaY
+        val calX = sample.gyroX - state.offsetX
+        val calZ = sample.gyroZ - state.offsetZ
+        // G6 (spec 2026-08-16-G-gyro-v2, §1): grip angle — rotação do par (X, Z)
+        // CALIBRADO por θ em torno do eixo longitudinal (Y), ANTES da extração
+        // yaw/pitch e da deadzone. A calibração contínua continua usando o par
+        // raw−offset por eixo (janela inalterada — a rotação só afeta o delta).
+        // θ = atan2(ax, az) do accel é o INVERSO da rotação física do pad; compensar
+        // é girar por −θ (R(−θ): x' = x·cosθ − z·sinθ, z' = x·sinθ + z·cosθ).
+        // θ=0 degenera para os eixos atuais (byte-identical).
+        val rotX: Float
+        val rotZ: Float
+        if (config.gripAngleDeg == 0f) {
+            rotX = calX
+            rotZ = calZ
+        } else {
+            val gripRad = Math.toRadians(config.gripAngleDeg.toDouble())
+            val cosG = kotlin.math.cos(gripRad).toFloat()
+            val sinG = kotlin.math.sin(gripRad).toFloat()
+            rotX = calX * cosG - calZ * sinG
+            rotZ = calX * sinG + calZ * cosG
+        }
+        var yaw = -rotZ // girar à direita = -Z → +deltaX
+        var pitch = -rotX // inclinar para cima = -X → -deltaY
         // Histerese correta (P1-4 do spec 2026-08-14-gamepad-upgrades-pendencias):
         // entrada 1.2× / saída 0.8× — acima de deadzone*1.2 passa a valer; abaixo de
         // deadzone*0.8 zera. O estado usa o MESMO threshold aplicado (o deadzone cru
