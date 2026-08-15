@@ -34,12 +34,27 @@ object GamepadBindingCodec {
      * (O nome "Binding" do spec colidiria com `com.winlator.inputcontrols.Binding`
      * nos arquivos de injeção — chamado de LayerBinding; decisão registrada no impl doc.)
      */
-    data class LayerBinding(
-        val raw: RawBinding,
-        val turbo: Boolean = false,
-        /** H: modificadores por binding (sufixo `:m=`). null = default/ausente. */
-        val mod: BindingModifier? = null,
-    )
+    /**
+     * Token de camada decodificado — selado com DUAS formas (J, spec
+     * 2026-08-16-J-expressions-dolphin, §2.2):
+     * - [Physical]: fonte física + turbo + modificadores (H) — `key:`/`axis:`/
+     *   `hat:` (+ `:turbo`, `:m=`);
+     * - [ExprBinding]: expressão Dolphin — token `expr:<source>` (a expressão É o
+     *   binding; NÃO há fonte física).
+     * Os acessores [raw]/[turbo]/[mod] devolvem null/default para [ExprBinding]
+     * (call sites de remap físico tratam null = expressão dona do botão).
+     */
+    sealed interface LayerBinding {
+        data class Physical(
+            val raw: RawBinding,
+            val turbo: Boolean = false,
+            /** H: modificadores por binding (sufixo `:m=`). null = default/ausente. */
+            val mod: BindingModifier? = null,
+        ) : LayerBinding
+
+        /** J1: expressão de binding (Dolphin) — token `expr:<source>`. */
+        data class ExprBinding(val source: String) : LayerBinding
+    }
 
     fun encode(binding: RawBinding, turbo: Boolean = false, mod: BindingModifier? = null): String {
         val base = when (binding) {
@@ -79,6 +94,12 @@ object GamepadBindingCodec {
 
     /** null = token inválido (degrade, nunca exceção). */
     fun decode(token: String): LayerBinding? {
+        // J1 §2.2: `expr:<source>` — a expressão É o binding (source preservado cru;
+        // o parser roda no cache do hub, nunca aqui).
+        if (token.startsWith("expr:")) {
+            val source = token.removePrefix("expr:")
+            return if (source.isEmpty()) null else LayerBinding.ExprBinding(source)
+        }
         var parts = token.split(':')
         // H: o bloco `m=...` é o ÚLTIMO campo `:` (se existir) — vírgulas separam
         // subcampos DENTRO dele, então o split por `:` continua seguro.
@@ -106,7 +127,7 @@ object GamepadBindingCodec {
             }
             else -> null
         }
-        return binding?.let { LayerBinding(it, turbo, mod) }
+        return binding?.let { LayerBinding.Physical(it, turbo, mod) }
     }
 
     /**
@@ -146,3 +167,17 @@ object GamepadBindingCodec {
         else -> false
     }
 }
+
+/**
+ * Acessores de compatibilidade (J1 — o [GamepadBindingCodec.LayerBinding] virou
+ * selado): devolvem null/default para [GamepadBindingCodec.LayerBinding.ExprBinding]
+ * — os call sites de remap FÍSICO tratam null = a expressão é a dona do botão.
+ */
+val GamepadBindingCodec.LayerBinding.raw: RawBinding?
+    get() = (this as? GamepadBindingCodec.LayerBinding.Physical)?.raw
+
+val GamepadBindingCodec.LayerBinding.turbo: Boolean
+    get() = (this as? GamepadBindingCodec.LayerBinding.Physical)?.turbo ?: false
+
+val GamepadBindingCodec.LayerBinding.mod: BindingModifier?
+    get() = (this as? GamepadBindingCodec.LayerBinding.Physical)?.mod

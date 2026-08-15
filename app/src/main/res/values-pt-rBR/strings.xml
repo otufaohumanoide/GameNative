@@ -2323,6 +2323,13 @@
     <string name="gamepad_layer_shift_title">Camada de shift</string>
     <string name="gamepad_layer_shift_subtitle">Consome o botão: remapeia os outros botões enquanto segurado, sem abrir o menu radial nem tick háptico</string>
     <string name="gamepad_binding_turbo_title">Turbo</string>
+    <string name="gamepad_expr_chip">ƒx</string>
+    <string name="gamepad_expr_binding_desc">ƒx %1$s</string>
+    <string name="gamepad_expr_editor_title">Editor de expressão — %1$s</string>
+    <string name="gamepad_expr_field_label">Expressão</string>
+    <string name="gamepad_expr_parse_error">Expressão inválida: %1$s</string>
+    <string name="gamepad_expr_preview">Valor ao vivo: %1$s</string>
+    <string name="gamepad_expr_insert_input">Inserir entrada</string>
     <string name="gamepad_binding_modifier_more">⋯</string>
     <string name="gamepad_binding_modifier_title">Modificadores do vínculo</string>
     <string name="gamepad_binding_modifier_invert_title">Inverter eixo</string>
@@ -2425,6 +2432,7 @@
     <string name="profile_catalog_previous_page">Anterior</string>
     <string name="profile_catalog_next_page">Próxima</string>
     <string name="profile_summary_bindings">Bindings</string>
+    <string name="profile_summary_expr">Expressões</string>
     <string name="profile_summary_gyro">Gyro</string>
     <string name="profile_summary_layers">Camadas</string>
     <string name="profile_summary_swipes">Swipes</string>

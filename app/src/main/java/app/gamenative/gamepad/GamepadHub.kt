@@ -21,6 +21,8 @@ import app.gamenative.gamepad.layers.LayerTriggerMode
 import app.gamenative.gamepad.layers.TriggerEngine
 import app.gamenative.gamepad.layers.TriggerEngineState
 import app.gamenative.gamepad.layers.TriggerOutcome
+import app.gamenative.gamepad.expressions.ExprBindingProcessor
+import app.gamenative.gamepad.expressions.ExprState
 import app.gamenative.gamepad.mapping.EventTranslator
 import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.MappingDatabase
@@ -29,6 +31,8 @@ import app.gamenative.gamepad.mapping.SdlControllerDb
 import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.mapping.RawKeyInput
 import app.gamenative.gamepad.remap.GamepadBindingCodec
+import app.gamenative.gamepad.remap.mod
+import app.gamenative.gamepad.remap.raw
 import app.gamenative.gamepad.processing.DeadzoneConfig
 import app.gamenative.gamepad.processing.DeadzoneMode
 import app.gamenative.gamepad.processing.BindingModifier
@@ -310,6 +314,12 @@ class GamepadHub(context: Context) {
     /** Invalida o cache de perfis (hotplug e pós-save). Barata — chamada fora do hot path. */
     fun invalidateProfiles() {
         profileCache.clear()
+        // J1: estados das expressões RESETAM na troca de perfil (borda — padrão
+        // GyroProcessor) e o cache do parse morre junto.
+        exprStates.clear()
+        exprBindingCache.clear()
+        exprLastEvalMs.clear()
+        logicalInputState.clear()
     }
 
     /**
@@ -356,6 +366,16 @@ class GamepadHub(context: Context) {
     private val triggerEngineStates = mutableMapOf<Int, TriggerEngineState>()
 
     private val pendingEmits = mutableMapOf<Int, MutableMap<String, PendingEmit>>()
+
+    // J1 (spec 2026-08-16-J-expressions-dolphin, §2.2): expressões ATIVAS do perfil
+    // efetivo — cache do parse por (bindings efetivos) por device (M1); avaliadas
+    // no MESMO flush de eventos da fase I. Estado por device (V6) + estado lógico
+    // vivo dos botões/eixos (reader das expressões). SEM token expr: ⇒ zero parse,
+    // zero alocação (byte-identical).
+    private val exprBindingCache = mutableMapOf<Int, MutableMap<Map<String, String>, List<ExprBindingProcessor.Parsed>>>()
+    private val exprStates = mutableMapOf<Int, ExprState>()
+    private val exprLastEvalMs = mutableMapOf<Int, Long>()
+    private val logicalInputState = mutableMapOf<Int, MutableMap<String, Float>>()
 
     /** Camada ativa do device (U3/U4); null = DEFAULT. */
     fun activeLayerFor(deviceId: Int): String? = layerStates[deviceId]?.activeLayer
@@ -511,6 +531,54 @@ class GamepadHub(context: Context) {
     }
 
     /**
+     * J1 (spec 2026-08-16-J-expressions-dolphin, §2.2): dobra os eventos lógicos do
+     * MOMENTO no estado vivo ([logicalInputState]) e avalia as expressões ATIVAS do
+     * perfil efetivo — no MESMO flush de eventos da fase I. Sem token `expr:` no
+     * perfil efetivo ⇒ retorno imediato (zero parse/alocação no hot path —
+     * byte-identical). Emissão direta no bus (o valor da expressão É o valor
+     * lógico do botão — não passa pelo remapEvent, que consumiria o próprio token).
+     */
+    private fun flushExpressions(
+        deviceId: Int,
+        device: GamepadDevice,
+        mapping: GamepadMapping,
+        profile: GamepadProfile,
+        layerState: LayerState,
+        events: List<InputEvent>,
+    ) {
+        if (profile.layers.isEmpty()) return
+        val effective = LayerResolver.effectiveBindings(profile.layers, layerState.activeLayer)
+        if (effective.isEmpty()) return
+        val bindings = exprBindingCache.getOrPut(deviceId) { mutableMapOf() }
+            .getOrPut(effective) { ExprBindingProcessor.parseBindings(effective) }
+        if (bindings.isEmpty()) return
+        // Dobra o evento atual ANTES da avaliação (o próprio input não sofre lag).
+        val inputState = logicalInputState.getOrPut(deviceId) { mutableMapOf() }
+        for (event in events) {
+            when (event) {
+                is InputEvent.ButtonDown -> inputState[event.button.name.lowercase()] = 1f
+                is InputEvent.ButtonUp -> inputState[event.button.name.lowercase()] = 0f
+                is InputEvent.AxisMotion -> inputState["axis:" + event.axis.name.lowercase()] = event.value
+                else -> {}
+            }
+        }
+        val now = android.os.SystemClock.uptimeMillis()
+        val lastEval = exprLastEvalMs[deviceId] ?: now
+        exprLastEvalMs[deviceId] = now
+        val dtMs = (now - lastEval).coerceIn(1L, 100L)
+        val state = exprStates.getOrPut(deviceId) { ExprState() }
+        // Os nomes já vêm normalizados do parser (GamepadButton.name lowercased /
+        // axis:left_x) — o leitor só consulta o estado vivo.
+        val reader: (String, Boolean) -> Float = { name, axis ->
+            inputState[if (axis) "axis:$name" else name.lowercase()] ?: 0f
+        }
+        for (event in ExprBindingProcessor.evaluate(bindings, reader, state, dtMs, now, deviceId)) {
+            logLogical(device, event)
+            PluviaApp.events.emit(GamepadInputEvent(event))
+        }
+    }
+
+    /**
      * I §2.3: aplica um outcome do engine. Retorna true quando o EVENTO atual foi
      * consumido pelo trigger. [event] é null nos outcomes do relógio (flush) — nesse
      * caso só Activate/Deactivate/ReleaseDelay aparecem (nunca DelayEmit/Consume).
@@ -658,7 +726,9 @@ class GamepadHub(context: Context) {
         val token = bindings[button.name] ?: return listOf(event)
         // F §1.4: o flag turbo vive no token, mas o remap LÓGICO não pulsa — o
         // turbo é aplicado na injeção física (PhysicalControllerHandler, caminho U4).
-        val binding = GamepadBindingCodec.decode(token)?.raw ?: return listOf(event)
+        // J1 §2.2: binding `expr:` NÃO é fonte física — a expressão É o dono do
+        // botão (o evento físico é consumido; o valor lógico vem do avaliador).
+        val binding = GamepadBindingCodec.decode(token)?.raw ?: return emptyList()
         val down = event is InputEvent.ButtonDown
         return when (binding) {
             is RawBinding.Key -> {
@@ -723,13 +793,11 @@ class GamepadHub(context: Context) {
         val profile = profileFor(deviceId, activeAppId)
         // I §2.3: relógio do engine também no caminho de sensor (~50 Hz — suficiente
         // para os vencimentos; o MOUSE/CAMERA é o único caminho que não vê teclas).
-        flushTriggerClock(
-            deviceId,
-            device,
-            mappingFor(device),
-            profile,
-            layerStates.getOrPut(deviceId) { LayerState() },
-        )
+        val sensorLayerState = layerStates.getOrPut(deviceId) { LayerState() }
+        flushTriggerClock(deviceId, device, mappingFor(device), profile, sensorLayerState)
+        // J1 §2.2: o caminho de sensor (~50 Hz) também avalia expressões — o
+        // relógio das funções temporais (timer/smooth/hold) não depende de teclas.
+        flushExpressions(deviceId, device, mappingFor(device), profile, sensorLayerState, emptyList())
         val gyroState = gyroStates.getOrPut(deviceId) { GyroState() }
         val output = GyroProcessor.process(
             sample = GyroSample(gyroX, gyroY, gyroZ, nowMs, accelX, accelY, accelZ),
@@ -996,6 +1064,10 @@ class GamepadHub(context: Context) {
         val profile = profileFor(raw.deviceId, activeAppId)
         val activateButton = profile.gyroActivateButton
         val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
+        // J1 (spec 2026-08-16-J, §2.2): expressões do perfil efetivo avaliadas NO
+        // MESMO flush de eventos — o evento atual é dobrado no estado lógico ANTES
+        // da avaliação (sem lag de 1 evento para o próprio input).
+        flushExpressions(raw.deviceId, device, mapping, profile, layerState, events)
         // I (spec 2026-08-16-I, §2.3): relógio do engine + liberação de emits
         // retardados — os eventos de input SÃO o relógio (sem timer/coroutine).
         flushTriggerClock(raw.deviceId, device, mapping, profile, layerState)
@@ -1058,6 +1130,8 @@ class GamepadHub(context: Context) {
 
         // O tradutor descreve o ESTADO da amostra (hat/meia-eixo); o hub vira transição.
         val state = buttonStates.getOrPut(raw.deviceId) { mutableSetOf() }
+        // J1 §2.2: expressões no mesmo flush (evento atual dobrado antes da avaliação).
+        flushExpressions(raw.deviceId, device, mapping, profile, layerState, events)
         // I §2.3: relógio do engine + liberação de emits retardados (eventos = relógio).
         flushTriggerClock(raw.deviceId, device, mapping, profile, layerState)
         var emitted = false
@@ -1096,7 +1170,8 @@ class GamepadHub(context: Context) {
             val token = bindings[button.name] ?: continue
             val decoded = GamepadBindingCodec.decode(token) ?: continue
             val mod = decoded.mod ?: continue
-            if (decoded.raw !is RawBinding.Axis || decoded.raw.axis != bound) continue
+            val rawBinding = decoded.raw
+            if (rawBinding !is RawBinding.Axis || rawBinding.axis != bound) continue
             if (result == null) result = mutableMapOf()
             result[axis] = mod
         }
@@ -1118,13 +1193,14 @@ class GamepadHub(context: Context) {
         for ((axis, button) in TRIGGER_PAIRS) {
             val token = bindings[button.name] ?: continue
             val decoded = GamepadBindingCodec.decode(token) ?: continue
-            if (decoded.raw !is RawBinding.Axis) continue
+            val tokenRaw = decoded.raw
+            if (tokenRaw !is RawBinding.Axis) continue
             val mod = decoded.mod ?: continue
             if (mod.fullAxis != true) continue
             val axisBound = (mapping.axes[axis] as? RawBinding.Axis)?.axis
             val buttonBound = (mapping.buttons[button] as? RawBinding.Axis)?.axis
             val target = listOfNotNull(axisBound, buttonBound)
-                .firstOrNull { it == decoded.raw.axis } ?: continue
+                .firstOrNull { it == tokenRaw.axis } ?: continue
             val original = raw.axisValues[target] ?: continue
             val converted = original * 0.5f + 0.5f
             if (converted != original) {
@@ -1150,7 +1226,8 @@ class GamepadHub(context: Context) {
             val token = bindings[button.name] ?: continue
             val decoded = GamepadBindingCodec.decode(token) ?: continue
             val mod = decoded.mod ?: continue
-            if (decoded.raw !is RawBinding.Axis || decoded.raw.axis != rawBinding.axis) continue
+            val tokenRaw = decoded.raw
+            if (tokenRaw !is RawBinding.Axis || tokenRaw.axis != rawBinding.axis) continue
             val dz = (mod.deadzone ?: 0f).coerceIn(BindingModifiers.DEADZONE_MIN, BindingModifiers.DEADZONE_MAX)
             if (dz <= 0f) continue
             if (result == null) result = mutableMapOf()
@@ -1335,6 +1412,11 @@ class GamepadHub(context: Context) {
         // I (V6): estado do engine e fila de emits retardados morrem junto.
         triggerEngineStates.remove(deviceId)
         pendingEmits.remove(deviceId)
+        // J1 (V6): estados das expressões morrem junto (deviceId efêmero).
+        exprStates.remove(deviceId)
+        exprBindingCache.remove(deviceId)
+        exprLastEvalMs.remove(deviceId)
+        logicalInputState.remove(deviceId)
         sensorSource?.onDeviceRemoved(deviceId)
         val current = _connectedDevices.value
         if (deviceId !in current) return

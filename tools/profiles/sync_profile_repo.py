@@ -101,6 +101,16 @@ def binding_token_ok(token: str) -> bool:
     base tolera partes extras depois dos parâmetros obrigatórios."""
     if not isinstance(token, str):
         return False
+    # J1 (spec 2026-08-16-J-expressions-dolphin, §2.4): token de EXPRESSÃO —
+    # gramática MÍNIMA no validador (o parser Kotlin é quem valida a linguagem):
+    # prefixo expr: + fonte ≤ 256 chars com apenas ASCII imprimível.
+    if token.startswith("expr:"):
+        source = token[5:]
+        if not source:
+            return False
+        if len(source) > 256:
+            return False
+        return all(0x20 <= ord(ch) <= 0x7E for ch in source)
     parts = token.split(":")
     if parts and parts[-1].startswith("m="):
         block = parts[-1][2:]

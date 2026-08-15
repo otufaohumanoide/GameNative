@@ -49,9 +49,9 @@ class GamepadBindingCodecTest {
     fun `turbo roundtrips com sufixo`() {
         val key = RawBinding.Key(96)
         assertEquals("key:96:turbo", GamepadBindingCodec.encode(key, turbo = true))
-        assertEquals(GamepadBindingCodec.LayerBinding(key, turbo = true), GamepadBindingCodec.decode("key:96:turbo"))
-        assertEquals(GamepadBindingCodec.LayerBinding(RawBinding.Axis(17, -1), turbo = true), GamepadBindingCodec.decode("axis:17:-1:turbo"))
-        assertEquals(GamepadBindingCodec.LayerBinding(RawBinding.Hat(0, 4), turbo = true), GamepadBindingCodec.decode("hat:0:4:turbo"))
+        assertEquals(GamepadBindingCodec.LayerBinding.Physical(key, turbo = true), GamepadBindingCodec.decode("key:96:turbo"))
+        assertEquals(GamepadBindingCodec.LayerBinding.Physical(RawBinding.Axis(17, -1), turbo = true), GamepadBindingCodec.decode("axis:17:-1:turbo"))
+        assertEquals(GamepadBindingCodec.LayerBinding.Physical(RawBinding.Hat(0, 4), turbo = true), GamepadBindingCodec.decode("hat:0:4:turbo"))
     }
 
     @Test
@@ -77,19 +77,19 @@ class GamepadBindingCodecTest {
     @Test
     fun `mods roundtrip cada modificador isolado`() {
         assertEquals(
-            GamepadBindingCodec.LayerBinding(RawBinding.Key(96), mod = BindingModifier(invert = true)),
+            GamepadBindingCodec.LayerBinding.Physical(RawBinding.Key(96), mod = BindingModifier(invert = true)),
             GamepadBindingCodec.decode("key:96:m=inv"),
         )
         assertEquals(
-            GamepadBindingCodec.LayerBinding(RawBinding.Axis(17, 1), mod = BindingModifier(fullAxis = true)),
+            GamepadBindingCodec.LayerBinding.Physical(RawBinding.Axis(17, 1), mod = BindingModifier(fullAxis = true)),
             GamepadBindingCodec.decode("axis:17:1:m=full"),
         )
         assertEquals(
-            GamepadBindingCodec.LayerBinding(RawBinding.Axis(17, -1), mod = BindingModifier(scale = 1.3f)),
+            GamepadBindingCodec.LayerBinding.Physical(RawBinding.Axis(17, -1), mod = BindingModifier(scale = 1.3f)),
             GamepadBindingCodec.decode("axis:17:-1:m=s130"),
         )
         assertEquals(
-            GamepadBindingCodec.LayerBinding(RawBinding.Hat(0, 4), mod = BindingModifier(deadzone = 0.05f)),
+            GamepadBindingCodec.LayerBinding.Physical(RawBinding.Hat(0, 4), mod = BindingModifier(deadzone = 0.05f)),
             GamepadBindingCodec.decode("hat:0:4:m=dz5"),
         )
     }
@@ -100,7 +100,7 @@ class GamepadBindingCodecTest {
         val token = GamepadBindingCodec.encode(RawBinding.Axis(17, 1), turbo = true, mod = mod)
         assertEquals("axis:17:1:turbo:m=full,inv,s130,dz5", token)
         assertEquals(
-            GamepadBindingCodec.LayerBinding(RawBinding.Axis(17, 1), turbo = true, mod = mod),
+            GamepadBindingCodec.LayerBinding.Physical(RawBinding.Axis(17, 1), turbo = true, mod = mod),
             GamepadBindingCodec.decode(token),
         )
     }
@@ -130,7 +130,7 @@ class GamepadBindingCodecTest {
             "axis:23:-1:m=full,inv,s50,dz50",
         )) {
             val decoded = GamepadBindingCodec.decode(token)!!
-            assertEquals(token, GamepadBindingCodec.encode(decoded.raw, decoded.turbo, decoded.mod))
+            assertEquals(token, GamepadBindingCodec.encode(decoded.raw!!, decoded.turbo, decoded.mod))
         }
     }
 
@@ -159,11 +159,41 @@ class GamepadBindingCodecTest {
         // m= no MEIO do token não é reconhecido como bloco (o bloco é o ÚLTIMO campo):
         // as partes extras continuam lenientes como hoje.
         assertEquals(
-            GamepadBindingCodec.LayerBinding(RawBinding.Key(96), turbo = true),
+            GamepadBindingCodec.LayerBinding.Physical(RawBinding.Key(96), turbo = true),
             GamepadBindingCodec.decode("key:96:m=inv:turbo"),
         )
         // Token só com bloco m (sem base) ⇒ null.
         assertNull(GamepadBindingCodec.decode("m=inv"))
+    }
+
+    // ── J1 (spec 2026-08-16-J-expressions-dolphin, §2.2): token expr: ──
+
+    @Test
+    fun `expr roundtrip e variante selada`() {
+        val decoded = GamepadBindingCodec.decode("expr:toggle(face_bottom)")
+        assertTrue(decoded is GamepadBindingCodec.LayerBinding.ExprBinding)
+        assertEquals("toggle(face_bottom)", (decoded as GamepadBindingCodec.LayerBinding.ExprBinding).source)
+        // Acessores de compatibilidade: null/default para expressão.
+        assertNull(decoded.raw)
+        assertFalse(decoded.turbo)
+        assertNull(decoded.mod)
+        // expr vazio ⇒ null (degrade).
+        assertNull(GamepadBindingCodec.decode("expr:"))
+    }
+
+    @Test
+    fun `token legado continua byte-identical`() {
+        // O decode de tokens físicos continua produzindo LayerBinding.Physical
+        // com round-trip intacto (F/H).
+        assertEquals("key:96", GamepadBindingCodec.encode(RawBinding.Key(96)))
+        assertEquals(
+            GamepadBindingCodec.LayerBinding.Physical(RawBinding.Key(96)),
+            GamepadBindingCodec.decode("key:96"),
+        )
+        assertEquals(
+            GamepadBindingCodec.LayerBinding.Physical(RawBinding.Axis(17, 1), turbo = true, mod = BindingModifier(invert = true)),
+            GamepadBindingCodec.decode("axis:17:1:turbo:m=inv"),
+        )
     }
 
     @Test

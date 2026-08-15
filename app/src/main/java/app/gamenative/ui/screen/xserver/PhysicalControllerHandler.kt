@@ -29,6 +29,8 @@ import app.gamenative.gamepad.processing.GyroStickMapping
 import app.gamenative.gamepad.processing.StickSample
 import app.gamenative.gamepad.processing.TurboScheduler
 import app.gamenative.gamepad.remap.GamepadBindingCodec
+import app.gamenative.gamepad.remap.raw
+import app.gamenative.gamepad.remap.turbo
 import com.winlator.inputcontrols.Binding
 import com.winlator.inputcontrols.ControlElement
 import com.winlator.inputcontrols.ControlsProfile
@@ -240,6 +242,9 @@ class PhysicalControllerHandler(
             )
             // Hat não é traduzido no caminho do jogo (decisão U4 v1 — dpad via tecla).
             is RawBinding.Hat -> return true
+            // J1 (spec 2026-08-16-J): binding expr: — a expressão é a dona do
+            // botão; o evento físico é consumido (sem injeção por aqui).
+            null -> return true
         }
         val targetBinding = controller.getControllerBinding(targetKeyCode)
         // F §1.4: turbo — a FONTE lógica (mesma chave do caminho de eixo — triggers
@@ -688,6 +693,8 @@ class PhysicalControllerHandler(
                 binding.direction.toByte(),
             )
             is RawBinding.Hat -> return
+            // J1: binding expr: — dono do botão; eixo físico consumido.
+            null -> return
         }
         val target = controller.getControllerBinding(targetKeyCode) ?: return
         if (decoded.turbo) {

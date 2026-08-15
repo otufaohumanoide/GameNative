@@ -202,6 +202,22 @@ class ProfileCatalogTest {
     }
 
     @Test
+    fun `summaryOf conta tokens expr como categoria EXPR`() {
+        // J1 (spec 2026-08-16-J-expressions-dolphin, §2.4): categoria nova EXPR.
+        val exprOnly = GamepadProfile(
+            layers = mapOf("DEFAULT" to mapOf("FACE_TOP" to "expr:face_bottom and axis:left_y > 0.7")),
+        )
+        assertEquals(
+            listOf(ProfileSummaryCategory.BINDINGS, ProfileSummaryCategory.EXPR),
+            ProfileCatalog.summaryOf(exprOnly),
+        )
+        val plainBindings = GamepadProfile(
+            layers = mapOf("DEFAULT" to mapOf("RIGHT_BUMPER" to "key:96")),
+        )
+        assertTrue(ProfileSummaryCategory.EXPR !in ProfileCatalog.summaryOf(plainBindings))
+    }
+
+    @Test
     fun `summaryOf detecta categorias parciais`() {
         val swipesOnly = GamepadProfile(
             touchpadSwipes = mapOf("UP" to listOf(app.gamenative.gamepad.radial.RadialMacroKey(96))),

@@ -118,6 +118,9 @@ fun GamepadRemapDialog(
     // H (spec 2026-08-16-H-binding-modifiers-duckstation, §2.5): painel colapsável de
     // modificadores por binding (botão "⋯" na linha) — um aberto por vez.
     var modifierPanelFor by remember { mutableStateOf<GamepadButton?>(null) }
+    // J1 (spec 2026-08-16-J-expressions-dolphin, §2.3): editor de expressão por
+    // binding (janela própria por cima deste dialog — um dono do input).
+    var exprEditorFor by remember { mutableStateOf<GamepadButton?>(null) }
     // U1 (spec 2026-08-14-gamepad-u1-gyro): seção Gyro per-device (só com hasGyro).
     var gyroMode by remember { mutableStateOf(profile.gyroMode ?: GyroMode.OFF) }
     var gyroSensitivity by remember { mutableStateOf(profile.gyroSensitivity ?: 1f) }
@@ -351,7 +354,7 @@ fun GamepadRemapDialog(
         if (token != null) return GamepadBindingCodec.decode(token)
         // A camada só sobrepõe o que define; DEFAULT mostra o binding do mapping.
         if (selectedLayer == ActionLayer.DEFAULT.name) return mapping.buttons[button]?.let {
-            GamepadBindingCodec.LayerBinding(it)
+            GamepadBindingCodec.LayerBinding.Physical(it)
         }
         return null
     }
@@ -363,7 +366,7 @@ fun GamepadRemapDialog(
      */
     fun setTurbo(button: GamepadButton, turbo: Boolean) {
         val token = layerMap(selectedLayer)[button.name] ?: return
-        val decoded = GamepadBindingCodec.decode(token) ?: return
+        val decoded = GamepadBindingCodec.decode(token) as? GamepadBindingCodec.LayerBinding.Physical ?: return
         layers = layers + (
             selectedLayer to (layerMap(selectedLayer) + (button.name to GamepadBindingCodec.encode(decoded.raw, turbo)))
         )
@@ -381,7 +384,7 @@ fun GamepadRemapDialog(
         val normalized = mod?.takeUnless { it.isDefault() }
         val token = layerMap(selectedLayer)[button.name]
         if (token != null) {
-            val decoded = GamepadBindingCodec.decode(token) ?: return
+            val decoded = GamepadBindingCodec.decode(token) as? GamepadBindingCodec.LayerBinding.Physical ?: return
             layers = layers + (
                 selectedLayer to (layerMap(selectedLayer) +
                     (button.name to GamepadBindingCodec.encode(decoded.raw, decoded.turbo, normalized)))
@@ -392,6 +395,21 @@ fun GamepadRemapDialog(
             layers = layers + (
                 selectedLayer to (layerMap(selectedLayer) +
                     (button.name to GamepadBindingCodec.encode(base, mod = normalized)))
+            )
+        }
+        status = null
+    }
+
+    /**
+     * J1 §2.3: aplica uma expressão ao token do binding (prefixo `expr:`) — a
+     * expressão É o binding (nenhuma fonte física). Vazio = remover o binding.
+     */
+    fun setExpression(button: GamepadButton, source: String) {
+        if (source.isBlank()) {
+            layers = layers + (selectedLayer to (layerMap(selectedLayer) - button.name))
+        } else {
+            layers = layers + (
+                selectedLayer to (layerMap(selectedLayer) + (button.name to "expr:$source"))
             )
         }
         status = null
@@ -754,7 +772,7 @@ fun GamepadRemapDialog(
         // Enquanto captura, o escopo de foco fica OFF: todo input do controle é captura.
         GamepadFocusScope(
             enabled = captureTarget == null && !captureGyroActivate && !captureLayerTrigger &&
-                visualCapture == null && captureSwipe == null && !catalogOpen,
+                visualCapture == null && captureSwipe == null && !catalogOpen && exprEditorFor == null,
             backAction = onDismiss,
             initialFocusRequester = initialFocus,
         ) {
@@ -763,7 +781,7 @@ fun GamepadRemapDialog(
                     .fillMaxSize()
                     .then(
                         if (captureTarget == null && !captureGyroActivate && !captureLayerTrigger &&
-                            visualCapture == null && captureSwipe == null && !catalogOpen
+                            visualCapture == null && captureSwipe == null && !catalogOpen && exprEditorFor == null
                         ) {
                             Modifier.gamepadBackHandler(onDismiss)
                         } else {
@@ -1077,6 +1095,14 @@ fun GamepadRemapDialog(
                                 },
                                 modifiersOpen = modifierPanelFor == button,
                                 modifierEnabled = modifierEnabled,
+                                // J1 §2.3: opção "Expressão…" na linha do binding.
+                                onEditExpression = {
+                                    modifierPanelFor = null
+                                    captureTarget = null
+                                    visualCapture = null
+                                    captureSwipe = null
+                                    exprEditorFor = button
+                                },
                             )
                             if (modifierPanelFor == button && rowBinding != null && modifierEnabled) {
                                 BindingModifierPanel(
@@ -1477,6 +1503,26 @@ fun GamepadRemapDialog(
         }
     }
 
+    // J1 (spec 2026-08-16-J, §2.3): editor de expressão como JANELA PRÓPRIA por
+    // cima deste dialog (um dono do input por janela).
+    exprEditorFor?.let { button ->
+        val token = layerMap(selectedLayer)[button.name]
+        val initialSource = if (token != null && token.startsWith("expr:")) {
+            token.removePrefix("expr:")
+        } else {
+            ""
+        }
+        ExprEditorDialog(
+            device = device,
+            initialSource = initialSource,
+            onApply = { source ->
+                setExpression(button, source)
+                exprEditorFor = null
+            },
+            onDismiss = { exprEditorFor = null },
+        )
+    }
+
     // E (spec 2026-08-16-E, §1.3): browser do catálogo como JANELA PRÓPRIA por cima
     // deste dialog (dialogs não compartilham escopo de foco — um dono por janela).
     if (catalogOpen) {
@@ -1502,6 +1548,7 @@ private fun RemapRow(
     onToggleModifiers: () -> Unit,
     modifiersOpen: Boolean,
     modifierEnabled: Boolean,
+    onEditExpression: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val context = LocalContext.current
@@ -1526,11 +1573,16 @@ private fun RemapRow(
         )
         if (!capturing) {
             Text(
-                text = bindingDescription(binding?.raw, context),
+                text = when (binding) {
+                    // J1 §2.3: expressão — mostra a fonte (o binding É a expressão).
+                    is GamepadBindingCodec.LayerBinding.ExprBinding ->
+                        context.getString(R.string.gamepad_expr_binding_desc, binding.source)
+                    else -> bindingDescription(binding?.raw, context)
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (binding != null) {
+            if (binding is GamepadBindingCodec.LayerBinding.Physical) {
                 // F §1.4: chip Turbo — rapid-fire de 80 ms enquanto a fonte está
                 // segurada (OFF = token byte-identical ao v1).
                 TextButton(onClick = onToggleTurbo) {
@@ -1557,6 +1609,19 @@ private fun RemapRow(
                         )
                     }
                 }
+            }
+            // J1 §2.3: opção "Expressão…" — qualquer linha pode virar expressão.
+            TextButton(onClick = onEditExpression) {
+                Text(
+                    text = stringResource(R.string.gamepad_expr_chip),
+                    color = if (binding is GamepadBindingCodec.LayerBinding.ExprBinding) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            if (binding != null) {
                 TextButton(onClick = onClear) {
                     Text(stringResource(R.string.gamepad_remap_clear))
                 }

@@ -42,6 +42,24 @@
       }
     },
     {
+      "id": "expr-sprint-button",
+      "game": null,
+      "faceStyle": "XBOX",
+      "controller": "any controller",
+      "name": "Expression sprint button",
+      "author": "gamenative-seed",
+      "description": "FACE_TOP fires while face_bottom is held and the left stick is pushed past 70% (expression binding — spec 2026-08-16-J).",
+      "downloads": 18,
+      "profile": {
+        "layers": {
+          "DEFAULT": {
+            "FACE_TOP": "expr:face_bottom and axis:left_y > 0.7"
+          }
+        },
+        "schemaVersion": 1
+      }
+    },
+    {
       "id": "hair-trigger-invert",
       "game": null,
       "faceStyle": "XBOX",

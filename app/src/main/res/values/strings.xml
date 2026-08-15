@@ -2455,6 +2455,13 @@
     <string name="gamepad_layer_shift_title">Shift layer</string>
     <string name="gamepad_layer_shift_subtitle">Consumes the button: remaps the other buttons while held without opening the radial menu or haptic tick</string>
     <string name="gamepad_binding_turbo_title">Turbo</string>
+    <string name="gamepad_expr_chip">ƒx</string>
+    <string name="gamepad_expr_binding_desc">ƒx %1$s</string>
+    <string name="gamepad_expr_editor_title">Expression editor — %1$s</string>
+    <string name="gamepad_expr_field_label">Expression</string>
+    <string name="gamepad_expr_parse_error">Invalid expression: %1$s</string>
+    <string name="gamepad_expr_preview">Live value: %1$s</string>
+    <string name="gamepad_expr_insert_input">Insert input</string>
     <string name="gamepad_binding_modifier_more">⋯</string>
     <string name="gamepad_binding_modifier_title">Binding modifiers</string>
     <string name="gamepad_binding_modifier_invert_title">Invert axis</string>
@@ -2557,6 +2564,7 @@
     <string name="profile_catalog_previous_page">Previous</string>
     <string name="profile_catalog_next_page">Next</string>
     <string name="profile_summary_bindings">Bindings</string>
+    <string name="profile_summary_expr">Expressions</string>
     <string name="profile_summary_gyro">Gyro</string>
     <string name="profile_summary_layers">Layers</string>
     <string name="profile_summary_swipes">Swipes</string>

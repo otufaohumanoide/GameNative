@@ -468,6 +468,7 @@ private fun CatalogEntryDetail(
 /** Rótulo localizado de cada categoria do diff-resumo (E §1.3). */
 private fun summaryLabelRes(category: ProfileSummaryCategory): Int = when (category) {
     ProfileSummaryCategory.BINDINGS -> R.string.profile_summary_bindings
+    ProfileSummaryCategory.EXPR -> R.string.profile_summary_expr
     ProfileSummaryCategory.GYRO -> R.string.profile_summary_gyro
     ProfileSummaryCategory.LAYERS -> R.string.profile_summary_layers
     ProfileSummaryCategory.SWIPES -> R.string.profile_summary_swipes

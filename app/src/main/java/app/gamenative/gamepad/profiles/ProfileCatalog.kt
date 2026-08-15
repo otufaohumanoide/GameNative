@@ -3,6 +3,7 @@ package app.gamenative.gamepad.profiles
 import app.gamenative.gamepad.FaceStyle
 import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.remap.GamepadBindingCodec
+import app.gamenative.gamepad.remap.mod
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -39,7 +40,8 @@ data class CatalogEntry(
  * completam a cobertura dos campos reais do GamepadProfile (decisão registrada no
  * impl doc — um perfil só de rumble não pode renderizar resumo vazio).
  */
-enum class ProfileSummaryCategory { BINDINGS, GYRO, LAYERS, SWIPES, STICK, RUMBLE, TOUCHPAD }
+// J (spec 2026-08-16-J-expressions-dolphin, §2.4): EXPR = bindings de expressão.
+enum class ProfileSummaryCategory { BINDINGS, EXPR, GYRO, LAYERS, SWIPES, STICK, RUMBLE, TOUCHPAD }
 
 /** Resultado do parse: entries válidas + contagem de descartes (nunca exceção). */
 data class CatalogResult(
@@ -127,6 +129,13 @@ object ProfileCatalog {
         val categories = mutableListOf<ProfileSummaryCategory>()
         if (profile.layers.isNotEmpty() || profile.swapOkCancel != null) {
             categories += ProfileSummaryCategory.BINDINGS
+        }
+        // J1 §2.4: tokens expr: contam na categoria nova EXPR.
+        val hasExpressions = profile.layers.values.any { layer ->
+            layer.values.any { it.startsWith("expr:") }
+        }
+        if (hasExpressions) {
+            categories += ProfileSummaryCategory.EXPR
         }
         if (profile.gyroMode != null || profile.gyroSensitivity != null ||
             profile.gyroDeadzone != null || profile.gyroActivateButton != null ||
