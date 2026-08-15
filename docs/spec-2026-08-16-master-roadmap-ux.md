@@ -103,7 +103,7 @@ F0 → A → B → C → F → D → E
 | C | `spec-2026-08-16-C-device-card-input-viewer.md` | tests `*Gamepad*` + assemble | ✅ COMPLETO (2026-08-14) | `d5179c7b` |
 | F | `spec-2026-08-16-F-radial-v2-modeshift-turbo.md` | tests `*Radial* *LayerResolver* *Turbo*` + assemble | ✅ COMPLETO (2026-08-14) | `1068604f` |
 | D | `spec-2026-08-16-D-touchpad-swipes-macros.md` | tests `*Touchpad*` + assemble | ✅ COMPLETO (2026-08-16) | `96a3e872` |
-| E | `spec-2026-08-16-E-profile-catalog-comunitario.md` | determinismo do sync (2× → diff vazio) + tests `*ProfileCatalog*` + assemble | INCOMPLETO | — |
+| E | `spec-2026-08-16-E-profile-catalog-comunitario.md` | determinismo do sync (2× → diff vazio) + tests `*ProfileCatalog*` + assemble | ✅ COMPLETO (2026-08-16) | `c74e52dc` |
 
 Comandos de gate completos (prefixar sempre):
 ```
