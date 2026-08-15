@@ -307,16 +307,20 @@ private fun CatalogPageFooter(
         horizontalArrangement = Arrangement.End,
     ) {
         val prevInteraction = remember { MutableInteractionSource() }
+        // Guarda explícita: o onPreviewKeyEvent do gamepadSelectable não lê
+        // `enabled` (linha desabilitada nunca ganha foco via clickable desabilitado,
+        // mas o guarda no lambda torna o no-op À PROVA de estado).
+        val goPrev = { if (page > 0) onPageChange(ShaderPagingLogic.decidePage(page, -1, count, CATALOG_PAGE_SIZE)) }
         TextButton(
             enabled = page > 0,
             modifier = Modifier.gamepadSelectable(
                 selected = false,
                 enabled = page > 0,
-                onClick = { onPageChange(ShaderPagingLogic.decidePage(page, -1, count, CATALOG_PAGE_SIZE)) },
+                onClick = goPrev,
                 shape = RoundedCornerShape(8.dp),
                 interactionSource = prevInteraction,
             ),
-            onClick = { onPageChange(ShaderPagingLogic.decidePage(page, -1, count, CATALOG_PAGE_SIZE)) },
+            onClick = goPrev,
         ) {
             Text(stringResource(R.string.profile_catalog_previous_page))
         }
@@ -332,16 +336,17 @@ private fun CatalogPageFooter(
         )
         val nextInteraction = remember { MutableInteractionSource() }
         val hasNext = (page + 1) * CATALOG_PAGE_SIZE < count
+        val goNext = { if (hasNext) onPageChange(ShaderPagingLogic.decidePage(page, 1, count, CATALOG_PAGE_SIZE)) }
         TextButton(
             enabled = hasNext,
             modifier = Modifier.gamepadSelectable(
                 selected = false,
                 enabled = hasNext,
-                onClick = { onPageChange(ShaderPagingLogic.decidePage(page, 1, count, CATALOG_PAGE_SIZE)) },
+                onClick = goNext,
                 shape = RoundedCornerShape(8.dp),
                 interactionSource = nextInteraction,
             ),
-            onClick = { onPageChange(ShaderPagingLogic.decidePage(page, 1, count, CATALOG_PAGE_SIZE)) },
+            onClick = goNext,
         ) {
             Text(stringResource(R.string.profile_catalog_next_page))
         }
@@ -433,6 +438,8 @@ private fun CatalogEntryDetail(
         HorizontalDivider()
         Spacer(modifier = Modifier.height(10.dp))
         val applyInteraction = remember { MutableInteractionSource() }
+        // Guarda explícita no lambda (mesma razão do footer de paginação).
+        val applyGuard = { if (appId != null && !applied) onApply() }
         TextButton(
             enabled = appId != null && !applied,
             modifier = Modifier
@@ -440,11 +447,11 @@ private fun CatalogEntryDetail(
                 .gamepadSelectable(
                     selected = applied,
                     enabled = appId != null && !applied,
-                    onClick = onApply,
+                    onClick = applyGuard,
                     shape = RoundedCornerShape(10.dp),
                     interactionSource = applyInteraction,
                 ),
-            onClick = onApply,
+            onClick = applyGuard,
         ) {
             Text(
                 text = when {
