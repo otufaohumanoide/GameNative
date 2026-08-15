@@ -176,6 +176,16 @@ class GamepadProfileStore(private val file: File) {
                 gyroFusionEnabled = override.gyroFusionEnabled ?: base.gyroFusionEnabled,
                 gyroFusionKp = override.gyroFusionKp ?: base.gyroFusionKp,
                 gyroFusionKi = override.gyroFusionKi ?: base.gyroFusionKi,
+                // G (spec 2026-08-16-G-gyro-v2): mesmos null-preserva.
+                gyroSensitivityY = override.gyroSensitivityY ?: base.gyroSensitivityY,
+                gyroInvertX = override.gyroInvertX ?: base.gyroInvertX,
+                gyroInvertY = override.gyroInvertY ?: base.gyroInvertY,
+                gyroSmoothMinCutoff = override.gyroSmoothMinCutoff ?: base.gyroSmoothMinCutoff,
+                gyroSmoothBeta = override.gyroSmoothBeta ?: base.gyroSmoothBeta,
+                gyroStickMaxOutput = override.gyroStickMaxOutput ?: base.gyroStickMaxOutput,
+                gyroStickAntiDeadzone = override.gyroStickAntiDeadzone ?: base.gyroStickAntiDeadzone,
+                gyroActivateToggle = override.gyroActivateToggle ?: base.gyroActivateToggle,
+                gyroGripAngleDeg = override.gyroGripAngleDeg ?: base.gyroGripAngleDeg,
             )
         }
     }

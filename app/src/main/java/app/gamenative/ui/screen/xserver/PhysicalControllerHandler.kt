@@ -442,14 +442,25 @@ class PhysicalControllerHandler(
      * antigo integrava deltas e o stick permanecia no último valor. Escrito por cima
      * do stick físico (único escritor do campo: processJoystickInput pula os eixos do
      * right stick com CAMERA ativo). Chamado pela main thread (sink do hub — P2-7).
+     *
+     * G3/G4 (spec 2026-08-16-G-gyro-v2): sensibilidade POR EIXO (já com inversão
+     * aplicada pelo hub) + shaping da deflexão (maxOutput = teto, antiDeadzone =
+     * floor acima da deadzone — semântica SixMouseStick). Defaults = linear atual.
      */
-    fun applyCameraGyro(yawRadS: Float, pitchRadS: Float, sensitivity: Float) {
+    fun applyCameraGyro(
+        yawRadS: Float,
+        pitchRadS: Float,
+        sensX: Float,
+        sensY: Float,
+        maxOutput: Float,
+        antiDeadzone: Float,
+    ) {
         // F0 (spec 2026-08-15-input-core-avancado): t1 do caminho de sensor — par do
         // begin em GamepadHub.onSensorSample (invocado sincronamente pelo sink).
         LatencyTracker.end(LatencyTracker.Source.SENSOR, System.nanoTime())
         val state = profile?.gamepadState ?: return
-        state.thumbRX = GyroStickMapping.deflection(yawRadS, sensitivity)
-        state.thumbRY = GyroStickMapping.deflection(pitchRadS, sensitivity)
+        state.thumbRX = GyroStickMapping.deflection(yawRadS, sensX, maxOutput = maxOutput, antiDeadzone = antiDeadzone)
+        state.thumbRY = GyroStickMapping.deflection(pitchRadS, sensY, maxOutput = maxOutput, antiDeadzone = antiDeadzone)
         val winHandler = xServer?.winHandler
         if (winHandler != null) {
             winHandler.sendGamepadState()

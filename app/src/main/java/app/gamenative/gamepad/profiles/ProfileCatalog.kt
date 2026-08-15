@@ -130,7 +130,13 @@ object ProfileCatalog {
         if (profile.gyroMode != null || profile.gyroSensitivity != null ||
             profile.gyroDeadzone != null || profile.gyroActivateButton != null ||
             profile.gyroFusionEnabled != null || profile.gyroFusionKp != null ||
-            profile.gyroFusionKi != null
+            profile.gyroFusionKi != null ||
+            // G (spec 2026-08-16-G-gyro-v2): campos novos do gyro v2 idem.
+            profile.gyroSensitivityY != null || profile.gyroInvertX != null ||
+            profile.gyroInvertY != null || profile.gyroSmoothMinCutoff != null ||
+            profile.gyroSmoothBeta != null || profile.gyroStickMaxOutput != null ||
+            profile.gyroStickAntiDeadzone != null || profile.gyroActivateToggle != null ||
+            profile.gyroGripAngleDeg != null
         ) {
             categories += ProfileSummaryCategory.GYRO
         }

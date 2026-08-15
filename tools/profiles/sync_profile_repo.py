@@ -53,6 +53,10 @@ PROFILE_FIELDS = {
     "leftStickCurve", "rightStickCurve", "leftStickLut", "rightStickLut",
     "flickStickEnabled", "flickStickActivationRadius", "flickStickSnapAngle",
     "gyroFusionEnabled", "gyroFusionKp", "gyroFusionKi", "schemaVersion",
+    # G (spec 2026-08-16-G-gyro-v2): campos novos do gyro v2.
+    "gyroSensitivityY", "gyroInvertX", "gyroInvertY", "gyroSmoothMinCutoff",
+    "gyroSmoothBeta", "gyroStickMaxOutput", "gyroStickAntiDeadzone",
+    "gyroActivateToggle", "gyroGripAngleDeg",
 }
 ENTRY_FIELDS = {
     "id", "game", "faceStyle", "controller", "name", "author", "description",
@@ -119,12 +123,17 @@ def validate_profile(raw: dict, where: str) -> tuple:
         "rightTriggerDeadzone", "gyroSensitivity", "gyroDeadzone",
         "flickStickActivationRadius", "flickStickSnapAngle", "gyroFusionKp",
         "gyroFusionKi",
+        # G (spec 2026-08-16-G-gyro-v2): campos novos do gyro v2 (floats).
+        "gyroSensitivityY", "gyroSmoothMinCutoff", "gyroSmoothBeta",
+        "gyroStickMaxOutput", "gyroStickAntiDeadzone", "gyroGripAngleDeg",
     ):
         if field in raw and raw[field] is not None and not is_finite_number(raw[field]):
             errors.append(f"{field} não é número finito")
 
     for field in ("swapOkCancel", "touchpadDoubleTapRightClick", "flickStickEnabled",
-                  "gyroFusionEnabled"):
+                  "gyroFusionEnabled",
+                  # G: bools do gyro v2.
+                  "gyroInvertX", "gyroInvertY", "gyroActivateToggle"):
         if field in raw and raw[field] is not None and not isinstance(raw[field], bool):
             errors.append(f"{field} deve ser bool")
 

@@ -74,6 +74,24 @@ data class GamepadProfile(
     val gyroFusionEnabled: Boolean? = null,
     val gyroFusionKp: Float? = null,
     val gyroFusionKi: Float? = null,
+    // ── G (spec 2026-08-16-G-gyro-v2) — gyro v2 ──
+    // G3: sensibilidade por eixo (null = usa gyroSensitivity) e inversão
+    // (null = false). MOUSE aplica no hub; CAMERA estende o contrato do sink.
+    val gyroSensitivityY: Float? = null,
+    val gyroInvertX: Boolean? = null,
+    val gyroInvertY: Boolean? = null,
+    // G2: smoothing One Euro opt-in (MOUSE). AMBOS null = OFF (byte-identical);
+    // um só valor usa o default DS4Windows no outro (minCutoff 1.0 / beta 0.7).
+    val gyroSmoothMinCutoff: Float? = null,
+    val gyroSmoothBeta: Float? = null,
+    // G4: shaping do CAMERA — teto da deflexão (1.0 = completo) e floor acima da
+    // deadzone (0 = sem salto). Defaults = linear atual (byte-identical).
+    val gyroStickMaxOutput: Float? = null,
+    val gyroStickAntiDeadzone: Float? = null,
+    // G5: ativação por TOGGLE (null = hold atual — borda de descida flipa latch).
+    val gyroActivateToggle: Boolean? = null,
+    // G6: ângulo de pegada em graus (null = 0 = eixos atuais).
+    val gyroGripAngleDeg: Float? = null,
     // F3.3: versão do schema (export/import cloud-ready; chaves novas preservadas — V1).
     val schemaVersion: Int = 1,
 ) {
@@ -119,7 +137,17 @@ data class GamepadProfile(
             flickStickSnapAngle == null &&
             gyroFusionEnabled == null &&
             gyroFusionKp == null &&
-            gyroFusionKi == null
+            gyroFusionKi == null &&
+            // G (spec 2026-08-16-G-gyro-v2): mesmos null-defaults.
+            gyroSensitivityY == null &&
+            gyroInvertX == null &&
+            gyroInvertY == null &&
+            gyroSmoothMinCutoff == null &&
+            gyroSmoothBeta == null &&
+            gyroStickMaxOutput == null &&
+            gyroStickAntiDeadzone == null &&
+            gyroActivateToggle == null &&
+            gyroGripAngleDeg == null
 
     fun toJson(): String = json.encodeToString(GamepadProfile.serializer(), this)
 

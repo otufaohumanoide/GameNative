@@ -34,10 +34,14 @@ import app.gamenative.gamepad.processing.FlickStickState
 import app.gamenative.gamepad.processing.GyroFusion
 import app.gamenative.gamepad.processing.GyroFusionConfig
 import app.gamenative.gamepad.processing.GyroFusionState
+import app.gamenative.gamepad.processing.GyroActivation
 import app.gamenative.gamepad.processing.GyroConfig
+import app.gamenative.gamepad.processing.GyroMouseState
+import app.gamenative.gamepad.processing.GyroPixelAccumulator
 import app.gamenative.gamepad.processing.GyroState
 import app.gamenative.gamepad.processing.GyroProcessor
 import app.gamenative.gamepad.processing.GyroSample
+import app.gamenative.gamepad.processing.OneEuroFilter
 import app.gamenative.gamepad.processing.StickSample
 import app.gamenative.gamepad.profiles.GamepadProfile
 import app.gamenative.gamepad.profiles.GamepadProfileStore
@@ -158,7 +162,10 @@ class GamepadHub(context: Context) {
             val profile = profileFor(deviceId, appId)
             val layerState = layerStates.getOrPut(deviceId) { LayerState() }
             // O gyro re-arma pelo perfil novo (o emitLogical registra o activate).
+            // G5 (spec 2026-08-16-G-gyro-v2): o latch de toggle morre junto — a
+            // ativação reinicia fechada com o perfil novo (V6).
             gyroActivateHeld.remove(deviceId)
+            gyroActivateLatches.remove(deviceId)
             for (button in held.toList()) {
                 emitLogical(device, mapping, profile, layerState, InputEvent.ButtonDown(deviceId, button), deviceId)
             }
@@ -406,6 +413,15 @@ class GamepadHub(context: Context) {
                 gyroActivateHeld[deviceId] = activateButton
             } else if (activateButton != null && e is InputEvent.ButtonUp && e.button.name == activateButton) {
                 gyroActivateHeld.remove(deviceId)
+                // G5 (spec 2026-08-16-G-gyro-v2): borda de descida do botão de
+                // ativação flipa o latch por device (toggle). O recenter da borda
+                // off→on já existe no GyroProcessor — sai de graça.
+                if (profile.gyroActivateToggle == true) {
+                    gyroActivateLatches[deviceId] = GyroActivation.onReleaseButton(
+                        latch = gyroActivateLatches[deviceId] ?: false,
+                        toggle = true,
+                    )
+                }
             }
             logLogical(device, e)
             PluviaApp.events.emit(GamepadInputEvent(e))
@@ -476,11 +492,13 @@ class GamepadHub(context: Context) {
      *
      * Pipeline: perfil (cache M1) → GyroProcessor (puro, estado por device V6) →
      * evento lógico emitido (vocabulário V4) → injeção:
-     * - MOUSE → sink de mouse compartilhado (XServer injectPointerMoveDelta);
+     * - MOUSE → sink de mouse compartilhado (XServer injectPointerMoveDelta), com
+     *   OneEuro opt-in (G2) e acumulador sub-pixel (G1) — spec 2026-08-16-G-gyro-v2;
      * - CAMERA → `gyroCameraSink` (setado pelo XServerScreen — P1-1) com a
      *   VELOCIDADE angular (rad/s, P1-2 — padrão DS4Windows: deflexão = f(velocidade),
      *   não integral; o PhysicalControllerHandler mapeia no right stick do virtual
-     *   gamepad e zera quando a rotação para).
+     *   gamepad e zera quando a rotação para), sensibilidade por eixo + inversão (G3)
+     *   e shaping da deflexão (G4).
      */
     fun onSensorSample(
         deviceId: Int,
@@ -504,7 +522,12 @@ class GamepadHub(context: Context) {
         val output = GyroProcessor.process(
             sample = GyroSample(gyroX, gyroY, gyroZ, nowMs, accelX, accelY, accelZ),
             state = gyroState,
-            config = GyroConfig(deadzone = profile.gyroDeadzone ?: DEFAULT_GYRO_DEADZONE),
+            config = GyroConfig(
+                deadzone = profile.gyroDeadzone ?: DEFAULT_GYRO_DEADZONE,
+                // G6 (spec 2026-08-16-G-gyro-v2): grip angle do perfil (null = 0 =
+                // eixos atuais — byte-identical).
+                gripAngleDeg = profile.gyroGripAngleDeg ?: 0f,
+            ),
             activate = gyroActivateHeld(deviceId, profile),
         )
         // Evento lógico sempre emitido para device com gyro (consumidores futuros).
@@ -525,54 +548,94 @@ class GamepadHub(context: Context) {
             logLogical(device, event)
         }
         PluviaApp.events.emit(GamepadInputEvent(event))
-        if (!output.active) return
-
+        // G3 (spec 2026-08-16-G-gyro-v2): sensibilidade por eixo + inversão
+        // (null = usa gyroSensitivity; null = false — sinal já absorvido aqui).
         val sensitivity = profile.gyroSensitivity ?: 1f
+        val sensX = sensitivity * (if (profile.gyroInvertX == true) -1f else 1f)
+        val sensY = (profile.gyroSensitivityY ?: sensitivity) * (if (profile.gyroInvertY == true) -1f else 1f)
+        if (!output.active) {
+            // G2: o estado do OneEuro morre quando o gyro desativa — o próximo
+            // período ativo recomeça limpo (mesmo padrão do SixMouseReset do
+            // DS4Windows).
+            gyroSmoothStates.remove(deviceId)
+            // G3/G5: com CAMERA ativo, a amostra inativa (botão solto / toggle off)
+            // leva o REPOUSO ao stick — o branch existia no código antigo mas
+            // ficava ATRÁS deste return (morto: a deflexão congelava no último
+            // valor ao soltar; o toggle do G5 tornaria o congelamento visível a
+            // cada desligada).
+            if ((profile.gyroMode ?: GyroMode.OFF) == GyroMode.CAMERA) {
+                gyroCameraSink?.invoke(
+                    0f, 0f, sensX, sensY,
+                    profile.gyroStickMaxOutput ?: 1f,
+                    profile.gyroStickAntiDeadzone ?: 0f,
+                )
+            }
+            return
+        }
+
         when (profile.gyroMode ?: GyroMode.OFF) {
             GyroMode.MOUSE -> {
-                val dx = (output.deltaXRad * GYRO_PIXELS_PER_RADIAN * sensitivity).toInt()
-                val dy = (output.deltaYRad * GYRO_PIXELS_PER_RADIAN * sensitivity).toInt()
+                // G2: OneEuro opt-in — filtra deltaXRad/deltaYRad POR EIXO antes da
+                // conversão em pixels (ambos null = OFF → byte-identical, sem
+                // alocação de estado). Compõe com G1: o acumulador recebe o delta
+                // já filtrado.
+                var dxRad = output.deltaXRad
+                var dyRad = output.deltaYRad
+                val smooth = gyroSmoothFor(deviceId, profile, nowMs)
+                if (smooth != null) {
+                    dxRad = smooth.filterX.filter(dxRad, smooth.rateHz)
+                    dyRad = smooth.filterY.filter(dyRad, smooth.rateHz)
+                }
+                // G1: acumulador sub-pixel — emite a parte inteira e guarda a
+                // fração (o .toInt() antigo descartava o sub-pixel: giro lento
+                // podia nunca mover o cursor).
+                val (dx, dy) = GyroPixelAccumulator.accumulate(
+                    deltaXPx = dxRad * GYRO_PIXELS_PER_RADIAN * sensX,
+                    deltaYPx = dyRad * GYRO_PIXELS_PER_RADIAN * sensY,
+                    state = gyroMouseStates.getOrPut(deviceId) { GyroMouseState() },
+                )
                 if (dx != 0 || dy != 0) {
                     PluviaApp.xServerMouseSink.move(dx, dy)
                 }
             }
             GyroMode.CAMERA -> {
-                if (output.active) {
-                    // P1-2: velocidade angular (rad/s) morta pela deadzone — o sink
-                    // mapeia em deflexão (controle de taxa, padrão DS4Windows).
-                    // F1.3 (spec 2026-08-15-input-core-avancado): com a fusão Mahony
-                    // opt-in, o PITCH vem da fusão (corrigido pela gravidade — o accel
-                    // do device já é coletado, P2-3); o YAW permanece o do
-                    // GyroProcessor (recenter + calibração contínua — honestidade
-                    // técnica: sem magnetômetro não há referência de yaw). Desligado,
-                    // o caminho é byte-identical (a fusão nem é chamada).
-                    val pitch = if (profile.gyroFusionEnabled == true) {
-                        val fusionState = fusionStates.getOrPut(deviceId) { GyroFusionState() }
-                        val fusion = GyroFusion.update(
-                            gyroX = gyroX,
-                            gyroY = gyroY,
-                            gyroZ = gyroZ,
-                            accelX = accelX,
-                            accelY = accelY,
-                            accelZ = accelZ,
-                            nowMs = nowMs,
-                            state = fusionState,
-                            config = GyroFusionConfig(
-                                kp = profile.gyroFusionKp ?: DEFAULT_FUSION_KP,
-                                ki = profile.gyroFusionKi ?: 0f,
-                            ),
-                        )
-                        fusion.pitchRadS
-                    } else {
-                        output.pitchRadS
-                    }
-                    gyroCameraSink?.invoke(output.yawRadS, pitch, sensitivity)
+                // P1-2: velocidade angular (rad/s) morta pela deadzone — o sink
+                // mapeia em deflexão (controle de taxa, padrão DS4Windows).
+                // F1.3 (spec 2026-08-15-input-core-avancado): com a fusão Mahony
+                // opt-in, o PITCH vem da fusão (corrigido pela gravidade — o accel
+                // do device já é coletado, P2-3); o YAW permanece o do
+                // GyroProcessor (recenter + calibração contínua — honestidade
+                // técnica: sem magnetômetro não há referência de yaw). Desligado,
+                // o caminho é byte-identical (a fusão nem é chamada).
+                val pitch = if (profile.gyroFusionEnabled == true) {
+                    val fusionState = fusionStates.getOrPut(deviceId) { GyroFusionState() }
+                    val fusion = GyroFusion.update(
+                        gyroX = gyroX,
+                        gyroY = gyroY,
+                        gyroZ = gyroZ,
+                        accelX = accelX,
+                        accelY = accelY,
+                        accelZ = accelZ,
+                        nowMs = nowMs,
+                        state = fusionState,
+                        config = GyroFusionConfig(
+                            kp = profile.gyroFusionKp ?: DEFAULT_FUSION_KP,
+                            ki = profile.gyroFusionKi ?: 0f,
+                        ),
+                    )
+                    fusion.pitchRadS
                 } else {
-                    // Inativo (botão de ativação solto): garante o repouso do stick —
-                    // sem isto a deflexão congelava no último valor (o defeito do
-                    // modelo integral que o P1-2 elimina).
-                    gyroCameraSink?.invoke(0f, 0f, sensitivity)
+                    output.pitchRadS
                 }
+                // G3/G4: contrato do sink = (yaw, pitch, sensX, sensY, maxOutput,
+                // antiDeadzone) — a sensibilidade por eixo e o shaping (teto/floor
+                // da deflexão, G4) seguem juntos. Único call site:
+                // PhysicalControllerHandler.applyCameraGyro.
+                gyroCameraSink?.invoke(
+                    output.yawRadS, pitch, sensX, sensY,
+                    profile.gyroStickMaxOutput ?: 1f,
+                    profile.gyroStickAntiDeadzone ?: 0f,
+                )
             }
             GyroMode.OFF -> {}
         }
@@ -600,18 +663,54 @@ class GamepadHub(context: Context) {
     }
 
     /**
+     * G6 (spec 2026-08-16-G-gyro-v2): "Calibrar grip" do DeviceDiagnosticsCard —
+     * θ = atan2 do accel da última amostra processada (`state.lastSample`, já
+     * coletado P2-3) e salva no perfil do DEVICE (a pegada é propriedade física do
+     * usuário + hardware, não do jogo — o override por-jogo continua vencendo no
+     * merge). Sem lastSample (gyro nunca ativado) ou sem accel (0,0,0 —
+     * harness/device sem accel) = no-op: nunca grava θ=0 por cima de um grip real.
+     */
+    fun calibrateGrip(deviceId: Int) {
+        val device = deviceFor(deviceId) ?: return
+        val state = gyroStates[deviceId] ?: return
+        val sample = state.lastSample ?: return
+        if (sample.accelX == 0f && sample.accelY == 0f && sample.accelZ == 0f) return
+        val degrees = GyroProcessor.gripAngleFromAccel(sample.accelX, sample.accelZ)
+        val profile = deviceStore.load(device.mappingKey) ?: GamepadProfile()
+        deviceStore.save(device.mappingKey, profile.copy(gyroGripAngleDeg = degrees))
+        invalidateProfiles()
+    }
+
+    /**
      * Sink do CAMERA mode — setado pelo XServerScreen quando o container roda (P1-1;
-     * holder vivo, limpo no exit/onDispose). Contrato P1-2: (yawRadS, pitchRadS,
-     * sensitivity) — VELOCIDADE angular, não delta integral.
+     * holder vivo, limpo no exit/onDispose). Contrato G3/G4 (spec
+     * 2026-08-16-G-gyro-v2): (yawRadS, pitchRadS, sensX, sensY, maxOutput,
+     * antiDeadzone) — VELOCIDADE angular (não delta integral) + sensibilidade por
+     * eixo (já com inversão) + shaping da deflexão. Único call site:
+     * PhysicalControllerHandler.applyCameraGyro (atualizado junto).
      */
     @Volatile
-    var gyroCameraSink: ((yawRadS: Float, pitchRadS: Float, sensitivity: Float) -> Unit)? = null
+    var gyroCameraSink: ((
+        yawRadS: Float,
+        pitchRadS: Float,
+        sensX: Float,
+        sensY: Float,
+        maxOutput: Float,
+        antiDeadzone: Float,
+    ) -> Unit)? = null
 
     /** Fonte de sensores (U1) — injetada pelo PluviaApp; hotplug avisa o source. */
     var sensorSource: GamepadSensorSource? = null
 
     private val gyroStates = mutableMapOf<Int, GyroState>()
     private val gyroActivateHeld = mutableMapOf<Int, String>()
+    // G5 (spec 2026-08-16-G-gyro-v2): latch do toggle por device (V6 — morto no
+    // removeDevice; deviceId efêmero nunca vaza estado).
+    private val gyroActivateLatches = mutableMapOf<Int, Boolean>()
+    // G1/G2: estado sub-pixel e OneEuro do MOUSE mode por device (idem V6). Só
+    // existem com o modo ativo — OFF/outros modos ficam byte-identical.
+    private val gyroMouseStates = mutableMapOf<Int, GyroMouseState>()
+    private val gyroSmoothStates = mutableMapOf<Int, GyroSmoothState>()
 
     // F1.2 (spec 2026-08-15-input-core-avancado): estado do Flick Stick por device
     // (V6 — morto no removeDevice; deviceId efêmero).
@@ -634,7 +733,41 @@ class GamepadHub(context: Context) {
 
     private fun gyroActivateHeld(deviceId: Int, profile: GamepadProfile): Boolean {
         val buttonName = profile.gyroActivateButton ?: return true // sempre ativo
-        return gyroActivateHeld[deviceId] == buttonName
+        val toggle = profile.gyroActivateToggle == true
+        // G5 (spec 2026-08-16-G-gyro-v2): toggle lê o latch; hold lê o botão
+        // pressionado (decisão pura em GyroActivation — testada em JVM).
+        return GyroActivation.active(
+            held = gyroActivateHeld[deviceId] == buttonName,
+            latch = gyroActivateLatches[deviceId] ?: false,
+            toggle = toggle,
+        )
+    }
+
+    /**
+     * G2 (spec 2026-08-16-G-gyro-v2): estado do OneEuro do MOUSE mode — null = OFF
+     * (ambos os campos do perfil null → sem alocação, caminho byte-identical).
+     * rateHz = 1/dt da amostra (dt clampado 1..100 ms, o MESMO do GyroProcessor).
+     * Parâmetros re-lidos por amostra (salvar perfil novo com smoothing ligado vale
+     * sem reiniciar — padrão DS4Windows SetupLateOneEuroFilters).
+     */
+    private fun gyroSmoothFor(deviceId: Int, profile: GamepadProfile, nowMs: Long): GyroSmoothState? {
+        val minCutoff = profile.gyroSmoothMinCutoff
+        val beta = profile.gyroSmoothBeta
+        if (minCutoff == null && beta == null) return null
+        val state = gyroSmoothStates.getOrPut(deviceId) {
+            GyroSmoothState(
+                filterX = OneEuroFilter(),
+                filterY = OneEuroFilter(),
+                lastSampleMs = nowMs,
+            )
+        }
+        state.filterX.minCutoff = minCutoff ?: OneEuroFilter.DEFAULT_MIN_CUTOFF
+        state.filterX.beta = beta ?: OneEuroFilter.DEFAULT_BETA
+        state.filterY.minCutoff = minCutoff ?: OneEuroFilter.DEFAULT_MIN_CUTOFF
+        state.filterY.beta = beta ?: OneEuroFilter.DEFAULT_BETA
+        state.rateHz = 1f / ((nowMs - state.lastSampleMs).coerceIn(1L, 100L) / 1000f)
+        state.lastSampleMs = nowMs
+        return state
     }
 
     /** Traduz um KeyEvent cru e emite GamepadInputEvent no bus (gate-aware). */
@@ -822,6 +955,10 @@ class GamepadHub(context: Context) {
         // U1 (V6): estado do gyro morre junto; listener de sensor desregistrado (V3).
         gyroStates.remove(deviceId)
         gyroActivateHeld.remove(deviceId)
+        // G1/G2/G5 (V6): estados do gyro v2 morrem junto.
+        gyroMouseStates.remove(deviceId)
+        gyroSmoothStates.remove(deviceId)
+        gyroActivateLatches.remove(deviceId)
         // F1.2/F1.3 (V6): estados do Flick Stick e da fusão morrem junto.
         flickStickStates.remove(deviceId)
         fusionStates.remove(deviceId)
@@ -870,6 +1007,19 @@ class GamepadHub(context: Context) {
             hasAxisY = device.getMotionRange(MotionEvent.AXIS_Y) != null,
         )
     }
+}
+
+/**
+ * G2 (spec 2026-08-16-G-gyro-v2): par de filtros OneEuro + timestamp da última
+ * amostra — estado do smoothing do MOUSE mode por device (V6, morto no
+ * removeDevice). O rate é calculado no hub (mesmo dt clampado do GyroProcessor).
+ */
+private class GyroSmoothState(
+    val filterX: OneEuroFilter,
+    val filterY: OneEuroFilter,
+    var lastSampleMs: Long,
+) {
+    var rateHz: Float = 1f
 }
 
 /**
