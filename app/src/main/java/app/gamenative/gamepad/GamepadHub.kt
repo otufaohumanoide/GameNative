@@ -323,42 +323,59 @@ class GamepadHub(context: Context) {
         return LayerResolver.effectiveBindings(profile.layers, layerStates[deviceId]?.activeLayer)[button.name]
     }
 
-    /** U3 §1.3 (1): triggers resolvem no botão FÍSICO (antes do remap). */
+    /**
+     * U3 §1.3 (1): triggers resolvem no botão FÍSICO (antes do remap).
+     *
+     * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.3): retorna true quando o
+     * trigger é de camada SHIFT — o evento físico é CONSUMIDO (o chamador não chama
+     * emitLogical; o botão não chega ao jogo — camada comum é pass-through) e NÃO
+     * emite GamepadLayerEvent (não abre radial, não compete com triggers reais) nem
+     * tick háptico. A ativação em si é a MESMA (LayerResolver intacto — a mecânica
+     * U3 é preservada pelo branch).
+     */
     private fun resolveLayerTriggers(
         layerState: LayerState,
         profile: GamepadProfile,
         event: InputEvent,
-    ) {
+    ): Boolean {
         // F2.4 (spec 2026-08-15-input-core-avancado): sem foco de janela, ativação de
         // camada (e o tick dela) é no-op — nunca input fantasma durante perda de foco.
-        if (!windowFocused) return
+        if (!windowFocused) return false
         val (button, deviceId) = when (event) {
             is InputEvent.ButtonDown -> event.button to event.deviceId
             is InputEvent.ButtonUp -> event.button to event.deviceId
-            else -> return
+            else -> return false
         }
         val trigger = profile.layerTriggers.entries.firstOrNull { (_, spec) ->
             spec.button == button.name
-        } ?: return
+        } ?: return false
         val now = android.os.SystemClock.uptimeMillis()
         val change = when (event) {
             is InputEvent.ButtonDown -> LayerResolver.onButtonDown(layerState, trigger.key, trigger.value, now)
             is InputEvent.ButtonUp -> LayerResolver.onButtonUp(layerState, trigger.key, trigger.value, now)
             else -> null
         }
+        // F §1.3: camada de SHIFT suprime os eventos comuns (decisão PURA no
+        // LayerResolver — testada em JVM).
+        val shift = LayerResolver.suppressCommonEvents(trigger.value)
         // F2.3: tick háptico na ATIVAÇÃO da camada (LayerChange.Activated) — mesmo
         // gate global do rumble + toggle dedicado (GamepadHaptics.tickDevice).
         // F3.1: o evento de camada no bus é o gatilho do Radial Menu.
         when (change) {
             is LayerChange.Activated -> {
-                GamepadHaptics.tickDevice(deviceId)
-                PluviaApp.events.emit(GamepadLayerEvent(deviceId, change.layer, true))
+                if (!shift) {
+                    GamepadHaptics.tickDevice(deviceId)
+                    PluviaApp.events.emit(GamepadLayerEvent(deviceId, change.layer, true))
+                }
             }
             is LayerChange.Deactivated -> {
-                PluviaApp.events.emit(GamepadLayerEvent(deviceId, change.layer, false))
+                if (!shift) {
+                    PluviaApp.events.emit(GamepadLayerEvent(deviceId, change.layer, false))
+                }
             }
             else -> {}
         }
+        return shift
     }
 
     /**
@@ -412,7 +429,9 @@ class GamepadHub(context: Context) {
             else -> return listOf(event)
         }
         val token = bindings[button.name] ?: return listOf(event)
-        val binding = GamepadBindingCodec.decode(token) ?: return listOf(event)
+        // F §1.4: o flag turbo vive no token, mas o remap LÓGICO não pulsa — o
+        // turbo é aplicado na injeção física (PhysicalControllerHandler, caminho U4).
+        val binding = GamepadBindingCodec.decode(token)?.raw ?: return listOf(event)
         val down = event is InputEvent.ButtonDown
         return when (binding) {
             is RawBinding.Key -> {
@@ -624,8 +643,11 @@ class GamepadHub(context: Context) {
         val activateButton = profile.gyroActivateButton
         val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
         for (event in events) {
-            resolveLayerTriggers(layerState, profile, event)
-            emitLogical(device, mapping, profile, layerState, event, raw.deviceId)
+            // F §1.3: trigger SHIFT consome o evento físico (não emite lógico — o
+            // botão não chega ao jogo); camada comum segue pass-through.
+            if (!resolveLayerTriggers(layerState, profile, event)) {
+                emitLogical(device, mapping, profile, layerState, event, raw.deviceId)
+            }
         }
         return true
     }
@@ -666,8 +688,10 @@ class GamepadHub(context: Context) {
             }
             if (forward) {
                 // U3: triggers de camada (botão FÍSICO) + remap pela camada ativa.
-                resolveLayerTriggers(layerState, profile, event)
-                emitted = emitLogical(device, mapping, profile, layerState, event, raw.deviceId) || emitted
+                // F §1.3: trigger SHIFT consome o evento físico.
+                if (!resolveLayerTriggers(layerState, profile, event)) {
+                    emitted = emitLogical(device, mapping, profile, layerState, event, raw.deviceId) || emitted
+                }
             }
         }
         return emitted

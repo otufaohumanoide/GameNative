@@ -2,7 +2,9 @@ package app.gamenative.gamepad.layers
 
 import app.gamenative.gamepad.profiles.ActionLayer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -12,8 +14,8 @@ import org.junit.Test
  */
 class LayerResolverTest {
 
-    private fun trigger(button: String, mode: LayerTriggerMode, doubleTapMs: Int = 250) =
-        LayerTriggerSpec(button, mode, doubleTapMs)
+    private fun trigger(button: String, mode: LayerTriggerMode, doubleTapMs: Int = 250, isShift: Boolean = false) =
+        LayerTriggerSpec(button, mode, doubleTapMs, isShift)
 
     @Test
     fun `hold activates on down and deactivates on up`() {
@@ -88,6 +90,84 @@ class LayerResolverTest {
             LayerResolver.onButtonUp(state, "B", trigger("RIGHT_BUMPER", LayerTriggerMode.HOLD), 30),
         )
         assertNull(state.activeLayer)
+    }
+
+    // ── F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.3): camada de SHIFT ──
+
+    @Test
+    fun `shift hold trigger ativa e desativa igual a camada comum`() {
+        // Branch preserva a mecânica U3 — a ativação é IDÊNTICA; só o HUB suprime
+        // os eventos comuns (GamepadLayerEvent/tick) e consome o botão físico.
+        val state = LayerState()
+        assertEquals(
+            LayerChange.Activated("SHIFT"),
+            LayerResolver.onButtonDown(state, "SHIFT", trigger("LEFT_BUMPER", LayerTriggerMode.HOLD, isShift = true), 0),
+        )
+        assertEquals("SHIFT", state.activeLayer)
+        assertEquals(
+            LayerChange.Deactivated("SHIFT"),
+            LayerResolver.onButtonUp(state, "SHIFT", trigger("LEFT_BUMPER", LayerTriggerMode.HOLD, isShift = true), 100),
+        )
+        assertNull(state.activeLayer)
+    }
+
+    @Test
+    fun `shift toggle e double tap seguem a mecanica comum`() {
+        val state = LayerState()
+        assertEquals(
+            LayerChange.Activated("SHIFT"),
+            LayerResolver.onButtonDown(state, "SHIFT", trigger("RIGHT_STICK", LayerTriggerMode.TOGGLE, isShift = true), 0),
+        )
+        assertEquals(
+            LayerChange.Deactivated("SHIFT"),
+            LayerResolver.onButtonDown(state, "SHIFT", trigger("RIGHT_STICK", LayerTriggerMode.TOGGLE, isShift = true), 1000),
+        )
+        assertEquals(
+            LayerChange.None,
+            LayerResolver.onButtonDown(state, "SHIFT", trigger("FACE_TOP", LayerTriggerMode.DOUBLE_TAP, isShift = true), 0),
+        )
+        assertEquals(
+            LayerChange.Activated("SHIFT"),
+            LayerResolver.onButtonDown(state, "SHIFT", trigger("FACE_TOP", LayerTriggerMode.DOUBLE_TAP, isShift = true), 100),
+        )
+    }
+
+    @Test
+    fun `shift suprime eventos comuns e camada comum nao`() {
+        // Decisão PURA consumida pelo hub (resolveLayerTriggers): shift NÃO emite
+        // GamepadLayerEvent (não abre radial) e NÃO dá tick háptico.
+        assertTrue(LayerResolver.suppressCommonEvents(trigger("X", LayerTriggerMode.HOLD, isShift = true)))
+        assertFalse(LayerResolver.suppressCommonEvents(trigger("X", LayerTriggerMode.HOLD)))
+        assertFalse(LayerResolver.suppressCommonEvents(trigger("X", LayerTriggerMode.TOGGLE)))
+    }
+
+    @Test
+    fun `shift ativo resolve effectiveBindings pela camada shift`() {
+        // NENHUMA mudança no resolver comum — a camada shift remapeia pelo merge
+        // DEFAULT + ativa existente (mecânica U3).
+        val layers = mapOf(
+            ActionLayer.DEFAULT.name to mapOf("FACE_BOTTOM" to "key:96"),
+            "SHIFT" to mapOf("FACE_BOTTOM" to "key:97", "FACE_TOP" to "key:100"),
+        )
+        val withShift = LayerResolver.effectiveBindings(layers, "SHIFT")
+        assertEquals("key:97", withShift["FACE_BOTTOM"])
+        assertEquals("key:100", withShift["FACE_TOP"])
+    }
+
+    @Test
+    fun `trigger spec serializa isShift e default preserva v1`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val encoded = json.encodeToString(
+            LayerTriggerSpec.serializer(),
+            LayerTriggerSpec("FACE_BOTTOM", LayerTriggerMode.HOLD, isShift = true),
+        )
+        val decoded = json.decodeFromString<LayerTriggerSpec>(encoded)
+        assertTrue(decoded.isShift)
+        // JSON v1 (sem isShift) → false (degradação byte-identical).
+        val v1 = json.decodeFromString<LayerTriggerSpec>(
+            """{"button":"FACE_BOTTOM","mode":"HOLD","doubleTapMs":250}""",
+        )
+        assertFalse(v1.isShift)
     }
 
     @Test

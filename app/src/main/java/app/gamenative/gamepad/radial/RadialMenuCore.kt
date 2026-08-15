@@ -31,6 +31,19 @@ data class RadialSector(
     val keys: List<RadialMacroKey> = emptyList(),
     /** Índice na paleta de cores do overlay (0..7). */
     val colorIndex: Int = 0,
+    /**
+     * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.1): submenu aninhado —
+     * UM nível. Filhos NUNCA têm children (o parser zera recursivamente no load;
+     * nunca crash com JSON malformado). Setor com children abre a sub-roda em vez
+     * de executar macro.
+     */
+    val children: List<RadialSector> = emptyList(),
+    /**
+     * F §1.1: ícone da allowlist ([RadialMenuConfig.ICON_ALLOWLIST]) — nome fora
+     * da allowlist vira null no load (label só, nunca crash). A apresentação
+     * (Material icon) vive na UI ([RadialMenuIcons]); aqui só o nome semântico.
+     */
+    val iconKey: String? = null,
 )
 
 @Serializable
@@ -39,20 +52,75 @@ data class RadialMenuConfig(
     val triggerLayer: String? = null,
     /** 2..8 setores (índice = posição angular). */
     val sectors: List<RadialSector> = emptyList(),
-    val schemaVersion: Int = 1,
+    /**
+     * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.1): v2 = submenus/ícones/
+     * executeMode. JSON v1 antigo lê normal (campos novos têm default; o
+     * ignoreUnknownKeys preserva extras em builds antigos).
+     */
+    val schemaVersion: Int = 2,
+    /** F §1.1: TAP_RELEASE = v1 (executa e fecha); HOLD = painel persistente. */
+    val executeMode: ExecuteMode = ExecuteMode.TAP_RELEASE,
 ) {
     fun toJson(): String = json.encodeToString(RadialMenuConfig.serializer(), this)
+
+    /**
+     * F §1.1: sanitização NO LOAD (nunca exceção com JSON malformado — risco §6):
+     * - `iconKey` fora da allowlist vira null (label só);
+     * - `children` dos FILHOS são zerados recursivamente (submenu de 1 nível —
+     *   netos e além são descartados por completo).
+     * Idempotente: config válida passa incólume (roundtrip testado).
+     */
+    fun sanitized(): RadialMenuConfig = copy(
+        sectors = sectors.map { sector ->
+            sector.copy(
+                iconKey = sector.iconKey?.takeIf { it in ICON_ALLOWLIST },
+                children = sector.children.map { child ->
+                    child.copy(
+                        iconKey = child.iconKey?.takeIf { it in ICON_ALLOWLIST },
+                        children = emptyList(),
+                    )
+                },
+            )
+        },
+    )
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
 
         /** null = JSON inválido (degrade, nunca exceção — risco §6 do spec). */
         fun fromJson(text: String): RadialMenuConfig? =
-            runCatching { json.decodeFromString<RadialMenuConfig>(text) }.getOrNull()
+            runCatching { json.decodeFromString<RadialMenuConfig>(text) }
+                .getOrNull()
+                ?.sanitized()
 
         const val MAX_SECTORS = 8
         const val MIN_SECTORS = 2
+
+        /**
+         * F §1.1: allowlist de ícones (map nome → Material icon NO overlay, nunca
+         * asset). Nome fora da lista = ícone nulo (label só) — nunca crash.
+         */
+        val ICON_ALLOWLIST: Set<String> = setOf(
+            "sword", "potion", "map", "bag", "run", "gear", "heart", "star",
+            "home", "save", "load", "camera", "chat", "trade", "craft", "fight",
+        )
     }
+}
+
+/**
+ * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.1): modo de execução do menu.
+ */
+enum class ExecuteMode {
+    /** v1 — seleção executa ao SOLTAR (touch) / com A (stick) e o menu fecha. */
+    TAP_RELEASE,
+
+    /**
+     * O setor destacado executa SEM FECHAR enquanto o gatilho de camada estiver
+     * seguro (repetindo o macro a cada ativação de setor nova — anti-repeat de
+     * 120 ms); `GamepadLayerEvent(false)` é quem fecha. Resolve a deviação nº 6
+     * do impl doc 2026-08-15 (execução fechava o menu mesmo com HOLD segurado).
+     */
+    HOLD,
 }
 
 /** Geometria do overlay (pura — testada). */

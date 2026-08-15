@@ -14,12 +14,20 @@ import kotlinx.serialization.Serializable
  * - [LayerTriggerMode.HOLD]: segurar ativa; soltar desativa (ex.: segurar L2 = "Sprint").
  * - [LayerTriggerMode.TOGGLE]: cada pressionada inverte (ex.: click de L3 = "Sniper").
  * - [LayerTriggerMode.DOUBLE_TAP]: dois toques dentro de [doubleTapMs] invertem.
+ * [isShift]:
+ * - F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.3): camada de SHIFT (chord
+ *   Steam Input) — MESMO motor de ativação U3 (HOLD/TOGGLE/DOUBLE_TAP), mas o HUB
+ *   suprime o GamepadLayerEvent (não abre radial) e o tick háptico, e o botão
+ *   físico é CONSUMIDO (não chega ao jogo — camada comum é pass-through). O
+ *   remap continua pelo effectiveBindings (mecânica U3 existente, intacta).
+ *   Serializável com default false — JSON v1 preserva (degradação byte-identical).
  */
 @Serializable
 data class LayerTriggerSpec(
     val button: String,
     val mode: LayerTriggerMode,
     val doubleTapMs: Int = 250,
+    val isShift: Boolean = false,
 )
 
 enum class LayerTriggerMode { HOLD, TOGGLE, DOUBLE_TAP }

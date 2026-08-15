@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 import app.gamenative.PluviaApp
 import app.gamenative.events.GamepadLayerEvent
 import app.gamenative.gamepad.profiles.ActionLayer
+import app.gamenative.gamepad.radial.ExecuteMode
 import app.gamenative.gamepad.radial.RadialMenuConfig
 import app.gamenative.gamepad.radial.RadialMenuExecutor
 import app.gamenative.gamepad.radial.RadialMenuStore
@@ -37,12 +38,18 @@ class RadialMenuStateHolder {
  * O XServerScreen só guarda o holder e chama este composable dentro da Box
  * principal (mesma posição do LatencyDebugOverlay).
  *
- * Ciclo: camada de gatilho ATIVA → abre (pausa o jogo se nenhum outro overlay já
- * pausou — `pauseGame`/`resumeGame` são os callbacks do XServerScreen, que
- * reusam pauseForOverlayIfAllowed/resumeIfAllowedAfterOverlay e as políticas de
+ * Ciclo: camada de gatilho ATIVA → abre (TAP_RELEASE: pausa o jogo se nenhum outro
+ * overlay já pausou — `pauseGame`/`resumeGame` são os callbacks do XServerScreen,
+ * que reusam pauseForOverlayIfAllowed/resumeIfAllowedAfterOverlay e as políticas de
  * suspend) → seleção touch/stick → executa o macro E fecha (retoma) → camada
  * desativa → fecha (retoma). Pause/resume par-e-par: só retoma o que este host
  * pausou (QuickMenu/editor têm ciclo próprio — isOverlayPaused é compartilhado).
+ *
+ * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.2 — resolve a deviação nº 6 do
+ * impl doc 2026-08-15): `executeMode == HOLD` → o host NÃO pausa ao abrir (painel
+ * persistente sobre o jogo RODANDO — os macros executados no meio do jogo precisam
+ * chegar ao jogo) e a execução NÃO fecha nem retoma; `GamepadLayerEvent(false)` é
+ * quem fecha (já existia). TAP_RELEASE = caminho v1 byte-identical.
  */
 @Composable
 fun RadialMenuHost(
@@ -72,10 +79,17 @@ fun RadialMenuHost(
                     if (config.sectors.isNotEmpty()) {
                         state.deviceId = event.deviceId
                         state.open = true
-                        // Só pausa o que não estava pausado (QuickMenu/editor têm
-                        // ciclo próprio — isOverlayPaused é compartilhado).
-                        pausedByRadial = !PluviaApp.isOverlayPaused
-                        if (pausedByRadial) pauseGame()
+                        if (config.executeMode == ExecuteMode.HOLD) {
+                            // F §1.2: HOLD — painel persistente; o jogo CONTINUA
+                            // rodando (não pausa) e os macros executados chegam ao
+                            // jogo. Nada a retomar; o layer-off só fecha.
+                            pausedByRadial = false
+                        } else {
+                            // Só pausa o que não estava pausado (QuickMenu/editor têm
+                            // ciclo próprio — isOverlayPaused é compartilhado).
+                            pausedByRadial = !PluviaApp.isOverlayPaused
+                            if (pausedByRadial) pauseGame()
+                        }
                     }
                 } else if (state.open) {
                     state.open = false
@@ -95,11 +109,20 @@ fun RadialMenuHost(
             config = config,
             deviceId = state.deviceId,
             onExecute = { sector ->
-                state.open = false
-                if (pausedByRadial) resumeGame()
-                pausedByRadial = false
-                if (activity != null) {
-                    RadialMenuExecutor.execute(sector.keys, state.deviceId, activity)
+                val activitySnapshot = activity
+                if (config.executeMode == ExecuteMode.HOLD) {
+                    // F §1.2: HOLD — executa SEM fechar e SEM retomar (painel
+                    // persistente); GamepadLayerEvent(false) é quem fecha.
+                    if (activitySnapshot != null) {
+                        RadialMenuExecutor.execute(sector.keys, state.deviceId, activitySnapshot)
+                    }
+                } else {
+                    state.open = false
+                    if (pausedByRadial) resumeGame()
+                    pausedByRadial = false
+                    if (activitySnapshot != null) {
+                        RadialMenuExecutor.execute(sector.keys, state.deviceId, activitySnapshot)
+                    }
                 }
             },
             onCancel = {

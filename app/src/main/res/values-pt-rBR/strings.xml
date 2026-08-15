@@ -2279,6 +2279,20 @@
     <string name="radial_menu_capture">Capturar teclas</string>
     <string name="radial_menu_capture_running">Aperte as teclas… (BACK encerra)</string>
     <string name="radial_menu_clear_macro">Limpar</string>
+    <!-- F (spec 2026-08-16-F-radial-v2-modeshift-turbo): submenus, ícones, executeMode, shift, turbo -->
+    <string name="radial_menu_execute_mode_title">Modo de execução</string>
+    <string name="radial_menu_execute_mode_tap_release">Ao soltar</string>
+    <string name="radial_menu_execute_mode_hold">Segurar (repetir)</string>
+    <string name="radial_menu_icon_title">Ícone</string>
+    <string name="radial_menu_icon_none">Nenhum</string>
+    <string name="radial_menu_submenu_button">Transformar em submenu</string>
+    <string name="radial_menu_submenu_remove">Remover submenu</string>
+    <string name="radial_menu_submenu_child_label">Filho %d</string>
+    <string name="radial_menu_submenu_add_child">Adicionar filho</string>
+    <string name="radial_menu_submenu_remove_child">Remover</string>
+    <string name="gamepad_layer_shift_title">Camada de shift</string>
+    <string name="gamepad_layer_shift_subtitle">Consome o botão: remapeia os outros botões enquanto segurado, sem abrir o menu radial nem tick háptico</string>
+    <string name="gamepad_binding_turbo_title">Turbo</string>
 <string name="gamepad_layer_tick_title">Tick de ativação de camada</string>
     <string name="gamepad_layer_tick_subtitle">Clique háptico curto ao ativar uma camada (guardado pelo interruptor de vibração)</string>
 <string name="gamepad_rumble_title">Vibração do controle (menu)</string>

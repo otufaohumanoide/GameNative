@@ -3,6 +3,8 @@ package app.gamenative.ui.screen.xserver
 import timber.log.Timber
 
 import android.graphics.PointF
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -10,6 +12,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
+import app.gamenative.events.GamepadDeviceRemovedEvent
 import app.gamenative.gamepad.DeviceClass
 import app.gamenative.gamepad.GamepadButton
 import app.gamenative.gamepad.GyroMode
@@ -24,6 +27,7 @@ import app.gamenative.gamepad.processing.StickTransform
 import app.gamenative.gamepad.processing.StickTransformConfig
 import app.gamenative.gamepad.processing.GyroStickMapping
 import app.gamenative.gamepad.processing.StickSample
+import app.gamenative.gamepad.processing.TurboScheduler
 import app.gamenative.gamepad.remap.GamepadBindingCodec
 import com.winlator.inputcontrols.Binding
 import com.winlator.inputcontrols.ControlElement
@@ -50,6 +54,39 @@ class PhysicalControllerHandler(
     }
 
     private val TAG = "gncontrol"
+
+    /**
+     * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.4): estado de turbo por
+     * device — fonte = GamepadButton.name LÓGICO (a MESMA chave no caminho de tecla
+     * e no caminho de eixo — triggers digitais+analógicos não criam ciclo duplo) →
+     * fase + alvo + agendamento. V6: morto no removeDevice (listener abaixo);
+     * deviceId efêmero nunca vaza estado.
+     */
+    private class TurboToggleState(
+        /** 0 = solto (próximo toggle é DOWN); 1 = segurado (próximo toggle é UP). */
+        var phase: Int,
+        /** Alvo da injeção — o release limpo no cancel usa a MESMA disciplina U4. */
+        val target: Binding,
+        /** Agendamento pendente (cancelável no UP físico/cleanup/removeDevice). */
+        var pending: Runnable?,
+    )
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val turboStates = mutableMapOf<Int, MutableMap<String, TurboToggleState>>()
+
+    // F §1.4 (V6): estados de turbo morrem junto do device — o hub emite
+    // GamepadDeviceRemovedEvent no removeDevice; registrado UMA vez por handler
+    // (identity-registry do bus) e desregistrado no cleanup().
+    private val deviceRemovedListener: (GamepadDeviceRemovedEvent) -> Unit = { event ->
+        turboStates.remove(event.deviceId)?.values?.forEach { entry ->
+            entry.pending?.let { mainHandler.removeCallbacks(it) }
+        }
+    }
+
+    init {
+        PluviaApp.events.on<GamepadDeviceRemovedEvent, Unit>(deviceRemovedListener)
+    }
+
     private val mouseMoveOffset = PointF(0f, 0f)
     private var mouseMoveTimer: Timer? = null
     private var scrollRepeatTimer: Timer? = null
@@ -96,6 +133,16 @@ class PhysicalControllerHandler(
             handleInputEvent(binding, false, 0f)
         }
         remappedAxisBindings.clear()
+        // F §1.4: cancela ciclos de turbo pendentes + release lógico limpo (mesma
+        // disciplina do remappedAxisBindings — nunca botão preso no teardown).
+        for (sources in turboStates.values) {
+            for (entry in sources.values) {
+                entry.pending?.let { mainHandler.removeCallbacks(it) }
+                injectBinding(entry.target, false, 0f)
+            }
+        }
+        turboStates.clear()
+        PluviaApp.events.off<GamepadDeviceRemovedEvent, Unit>(deviceRemovedListener)
         mouseMoveTimer?.cancel()
         mouseMoveTimer = null
         mouseMoveOffset.set(0f, 0f)
@@ -181,11 +228,11 @@ class PhysicalControllerHandler(
             .firstOrNull { (_, b) -> b is RawBinding.Key && b.keyCode == event.keyCode }
             ?.key ?: return false
         val token = hub.layerBindingFor(event.deviceId, logical) ?: return false
-        val binding = GamepadBindingCodec.decode(token) ?: return false
+        val decoded = GamepadBindingCodec.decode(token) ?: return false
         val controller = profile?.getController(event.deviceId) ?: return false
         val isDown = event.action == KeyEvent.ACTION_DOWN
 
-        val targetKeyCode = when (binding) {
+        val targetKeyCode = when (val binding = decoded.raw) {
             is RawBinding.Key -> binding.keyCode
             is RawBinding.Axis -> ExternalControllerBinding.getKeyCodeForAxis(
                 binding.axis,
@@ -195,17 +242,24 @@ class PhysicalControllerHandler(
             is RawBinding.Hat -> return true
         }
         val targetBinding = controller.getControllerBinding(targetKeyCode)
+        // F §1.4: turbo — a FONTE lógica (mesma chave do caminho de eixo — triggers
+        // digitais+analógicos não criam ciclo duplo) é a chave do ciclo. DOWN físico
+        // inicia (DOWN imediato + toggles agendados); UP físico cancela + release.
+        if (decoded.turbo) {
+            if (targetBinding != null) {
+                if (isDown) {
+                    startTurbo(event.deviceId, logical.name, targetBinding.binding)
+                } else {
+                    stopTurbo(event.deviceId, logical.name)
+                }
+            }
+            return true
+        }
         if (targetBinding != null) {
             val offset = if (isDown &&
                 (targetBinding.binding == Binding.GAMEPAD_BUTTON_L2 || targetBinding.binding == Binding.GAMEPAD_BUTTON_R2)
             ) 1f else 0f
-            handleInputEvent(targetBinding.binding, isDown, offset)
-            val winHandler = xServer?.winHandler
-            val state = profile?.gamepadState
-            if (winHandler != null) {
-                winHandler.sendGamepadState()
-                winHandler.sendVirtualGamepadState(state)
-            }
+            injectBinding(targetBinding.binding, isDown, offset)
         }
         return true
     }
@@ -274,7 +328,7 @@ class PhysicalControllerHandler(
                         )
                     }
                 } else {
-                    handleRemappedAxis(controller, KeyEvent.KEYCODE_BUTTON_L2, controller.state.triggerL, l2Remap)
+                    handleRemappedAxis(controller, GamepadButton.LEFT_TRIGGER.name, KeyEvent.KEYCODE_BUTTON_L2, controller.state.triggerL, l2Remap)
                 }
 
                 if (r2Remap == null) {
@@ -287,7 +341,7 @@ class PhysicalControllerHandler(
                         )
                     }
                 } else {
-                    handleRemappedAxis(controller, KeyEvent.KEYCODE_BUTTON_R2, controller.state.triggerR, r2Remap)
+                    handleRemappedAxis(controller, GamepadButton.RIGHT_TRIGGER.name, KeyEvent.KEYCODE_BUTTON_R2, controller.state.triggerR, r2Remap)
                 }
 
                 // Process analog stick input
@@ -554,7 +608,7 @@ class PhysicalControllerHandler(
             if (logicalButton != null && PrefManager.gamepadUniversalEnabled) {
                 val token = PluviaApp.gamepadHub.layerBindingFor(controller.deviceId, logicalButton)
                 if (token != null) {
-                    handleRemappedAxis(controller, axes[i], values[i], token)
+                    handleRemappedAxis(controller, logicalButton.name, axes[i], values[i], token)
                     continue
                 }
             }
@@ -601,15 +655,22 @@ class PhysicalControllerHandler(
      * eixo), com o valor do eixo de origem. Libera quando o valor cai abaixo da
      * deadzone (release controlado por [remappedAxisBindings] — o eixo original não
      * passa pelo fluxo normal).
+     *
+     * F §1.4: com turbo no token, o ciclo é DONO da fonte enquanto ativo — o valor
+     * analógico contínuo só liga/desliga o ciclo (onda quadrada digital, período
+     * fixo 80 ms); pressed → [startTurbo] (DOWN imediato + toggles), released →
+     * [stopTurbo] (cancel + release limpo). [sourceKey] é o GamepadButton.name
+     * lógico — a MESMA chave do caminho de tecla (sem ciclo duplo nos triggers).
      */
     private fun handleRemappedAxis(
         controller: ExternalController,
+        sourceKey: String,
         sourceAxis: Int,
         value: Float,
         token: String,
     ) {
-        val binding = GamepadBindingCodec.decode(token) ?: return
-        val targetKeyCode = when (binding) {
+        val decoded = GamepadBindingCodec.decode(token) ?: return
+        val targetKeyCode = when (val binding = decoded.raw) {
             is RawBinding.Key -> binding.keyCode
             is RawBinding.Axis -> ExternalControllerBinding.getKeyCodeForAxis(
                 binding.axis,
@@ -618,6 +679,16 @@ class PhysicalControllerHandler(
             is RawBinding.Hat -> return
         }
         val target = controller.getControllerBinding(targetKeyCode) ?: return
+        if (decoded.turbo) {
+            val pressed = kotlin.math.abs(value) > ControlElement.STICK_DEAD_ZONE
+            val active = turboStates[controller.deviceId]?.get(sourceKey) != null
+            if (pressed && !active) {
+                startTurbo(controller.deviceId, sourceKey, target.binding)
+            } else if (!pressed && active) {
+                stopTurbo(controller.deviceId, sourceKey)
+            }
+            return
+        }
         val pressed = kotlin.math.abs(value) > ControlElement.STICK_DEAD_ZONE
         val wasPressed = remappedAxisBindings[sourceAxis] != null
         if (pressed) {
@@ -629,6 +700,76 @@ class PhysicalControllerHandler(
             handleInputEvent(target.binding, false, 0f)
             remappedAxisBindings.remove(sourceAxis)
         }
+    }
+
+    /**
+     * F §1.4: injeção compartilhada — binding no estado do virtual gamepad +
+     * envio imediato ao WinHandler. O ciclo de turbo reusa EXATAMENTE este caminho
+     * (o mesmo do U4 — nada de rota nova de injeção).
+     */
+    private fun injectBinding(binding: Binding, isDown: Boolean, offset: Float) {
+        handleInputEvent(binding, isDown, offset)
+        val winHandler = xServer?.winHandler
+        val state = profile?.gamepadState
+        if (winHandler != null) {
+            winHandler.sendGamepadState()
+            winHandler.sendVirtualGamepadState(state)
+        }
+    }
+
+    /**
+     * F §1.4: inicia o ciclo de turbo de uma fonte física — DOWN lógico imediato
+     * (fase 1) + agendamento do próximo toggle no Handler MAIN (mesmo relógio e
+     * mesmo caminho da injeção U4). Chamado no DOWN físico; o UP físico chama
+     * [stopTurbo]. Reiniciar com ciclo ativo substitui o agendamento (idempotente).
+     */
+    private fun startTurbo(deviceId: Int, sourceKey: String, targetBinding: Binding) {
+        val sources = turboStates.getOrPut(deviceId) { mutableMapOf() }
+        sources.remove(sourceKey)?.pending?.let { mainHandler.removeCallbacks(it) }
+        injectBinding(targetBinding, true, 1f)
+        sources[sourceKey] = TurboToggleState(
+            phase = 1,
+            target = targetBinding,
+            pending = scheduleTurboToggle(deviceId, sourceKey, targetBinding),
+        )
+    }
+
+    /**
+     * Agendamento recursivo do toggle: cada disparo alterna a fase (0→DOWN, 1→UP) e
+     * re-agenda meio período adiante (TurboScheduler — onda quadrada 50%, período
+     * fixo 80 ms). O Runnable se auto-remove do mapa quando o ciclo morre (UP
+     * físico/removeDevice/cleanup) — `entry == null` = no-op.
+     */
+    private fun scheduleTurboToggle(deviceId: Int, sourceKey: String, targetBinding: Binding): Runnable {
+        val runnable = object : Runnable {
+            override fun run() {
+                val entry = turboStates[deviceId]?.get(sourceKey) ?: return
+                val down = entry.phase == 0
+                injectBinding(targetBinding, down, if (down) 1f else 0f)
+                entry.phase = if (down) 1 else 0
+                entry.pending = this
+                val now = SystemClock.uptimeMillis()
+                val delay = (TurboScheduler.nextToggleAt(now, TurboScheduler.PERIOD_DEFAULT_MS, entry.phase) - now)
+                    .coerceAtLeast(0L)
+                mainHandler.postDelayed(this, delay)
+            }
+        }
+        val now = SystemClock.uptimeMillis()
+        val delay = (TurboScheduler.nextToggleAt(now, TurboScheduler.PERIOD_DEFAULT_MS, 1) - now)
+            .coerceAtLeast(0L)
+        mainHandler.postDelayed(runnable, delay)
+        return runnable
+    }
+
+    /**
+     * F §1.4: UP físico / fim do ciclo — cancela o agendamento pendente e garante o
+     * release lógico limpo (mesma disciplina do remappedAxisBindings — nunca botão
+     * preso). Sem ciclo ativo = no-op.
+     */
+    private fun stopTurbo(deviceId: Int, sourceKey: String) {
+        val entry = turboStates[deviceId]?.remove(sourceKey) ?: return
+        entry.pending?.let { mainHandler.removeCallbacks(it) }
+        injectBinding(entry.target, false, 0f)
     }
 
     /**

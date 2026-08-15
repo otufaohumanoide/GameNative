@@ -104,6 +104,14 @@ submenu abre/retorna; HOLD mantém o menu aberto executando por mudança de
 setor; shift consume o botão físico e remapeia sem abrir radial; turbo alterna
 no jogo enquanto segura e solta limpo.
 
+Nota do impl (condições de entrega, registradas no impl doc 2026-08-16): HOLD é
+um painel persistente — o host NÃO pausa o jogo ao abrir (os macros executados
+no meio do jogo precisam chegar ao jogo) e NÃO retoma ao executar;
+`GamepadLayerEvent(false)` é quem fecha. Turbo é onda quadrada digital (o ciclo
+é dono da fonte enquanto ativo; período fixo 80 ms). Em HOLD/turbo o
+stick/trigger continuam pass-through ao jogo (semântica de painel — a deviação
+nº 6 do impl doc 2026-08-15 segue valendo para camada comum).
+
 ## 4. Fora de escopo
 
 Mais de 1 nível de submenu, ícones custom do usuário (allowlist v2), turbo com

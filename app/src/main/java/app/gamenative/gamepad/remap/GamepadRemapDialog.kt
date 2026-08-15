@@ -287,17 +287,33 @@ fun GamepadRemapDialog(
 
     fun layerMap(layerName: String): Map<String, String> = layers[layerName] ?: emptyMap()
 
-    fun bindingFor(button: GamepadButton): RawBinding? {
+    fun bindingFor(button: GamepadButton): GamepadBindingCodec.LayerBinding? {
         val token = layerMap(selectedLayer)[button.name]
         if (token != null) return GamepadBindingCodec.decode(token)
         // A camada só sobrepõe o que define; DEFAULT mostra o binding do mapping.
-        if (selectedLayer == ActionLayer.DEFAULT.name) return mapping.buttons[button]
+        if (selectedLayer == ActionLayer.DEFAULT.name) return mapping.buttons[button]?.let {
+            GamepadBindingCodec.LayerBinding(it)
+        }
         return null
+    }
+
+    /**
+     * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.4): toggle Turbo do chip de
+     * binding da camada — re-encoda o token com/sem o sufixo `:turbo` (período fixo
+     * 80 ms v2). A captura NOVA zera o flag (default OFF = byte-identical).
+     */
+    fun setTurbo(button: GamepadButton, turbo: Boolean) {
+        val token = layerMap(selectedLayer)[button.name] ?: return
+        val decoded = GamepadBindingCodec.decode(token) ?: return
+        layers = layers + (
+            selectedLayer to (layerMap(selectedLayer) + (button.name to GamepadBindingCodec.encode(decoded.raw, turbo)))
+        )
+        status = null
     }
 
     fun commitBinding(button: GamepadButton, binding: RawBinding) {
         val conflict = GamepadButton.entries.any { other ->
-            other != button && bindingFor(other)?.let { GamepadBindingCodec.conflicts(it, binding) } == true
+            other != button && bindingFor(other)?.raw?.let { GamepadBindingCodec.conflicts(it, binding) } == true
         }
         if (conflict) {
             status = context.getString(R.string.gamepad_remap_conflict)
@@ -329,7 +345,7 @@ fun GamepadRemapDialog(
     /** B §1.3/§1.4: commit do mapa visual na camada DEFAULT do escopo selecionado. */
     fun commitVisualBinding(button: GamepadButton, binding: RawBinding) {
         val conflict = visualEffectiveDefault().entries.any { (name, token) ->
-            name != button.name && GamepadBindingCodec.decode(token)?.let {
+            name != button.name && GamepadBindingCodec.decode(token)?.raw?.let {
                 GamepadBindingCodec.conflicts(it, binding)
             } == true
         }
@@ -409,10 +425,15 @@ fun GamepadRemapDialog(
                                 if (conflict) {
                                     status = context.getString(R.string.gamepad_layer_trigger_conflict)
                                 } else {
+                                    // F §1.3: re-captura PRESERVA o isShift do trigger
+                                    // existente (capturar não reseta o modo de shift).
+                                    val existing = layerTriggers[selectedLayer]
                                     layerTriggers = layerTriggers + (
                                         selectedLayer to LayerTriggerSpec(
                                             button = logical.name,
                                             mode = pendingTriggerMode,
+                                            doubleTapMs = existing?.doubleTapMs ?: 250,
+                                            isShift = existing?.isShift ?: false,
                                         )
                                     )
                                     status = null
@@ -653,6 +674,51 @@ fun GamepadRemapDialog(
                             },
                             faceStyle = device.faceStyle,
                         )
+                        // F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.3):
+                        // toggle "Camada de shift" — o hub consome o botão físico,
+                        // não emite GamepadLayerEvent nem tick, e o remap continua
+                        // pelo effectiveBindings (mecânica U3 intacta).
+                        layerTriggers[selectedLayer]?.let { spec ->
+                            val shiftInteraction = remember { MutableInteractionSource() }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .gamepadSelectable(
+                                        selected = spec.isShift,
+                                        onClick = {
+                                            layerTriggers = layerTriggers + (
+                                                selectedLayer to spec.copy(isShift = !spec.isShift)
+                                            )
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        interactionSource = shiftInteraction,
+                                    )
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(R.string.gamepad_layer_shift_title),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.gamepad_layer_shift_subtitle),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = spec.isShift,
+                                    onCheckedChange = {
+                                        layerTriggers = layerTriggers + (
+                                            selectedLayer to spec.copy(isShift = it)
+                                        )
+                                    },
+                                    modifier = Modifier.focusProperties { canFocus = false },
+                                )
+                            }
+                        }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
@@ -780,10 +846,11 @@ fun GamepadRemapDialog(
                         }
 
                         GamepadButton.entries.forEach { button ->
+                            val rowBinding = bindingFor(button)
                             RemapRow(
                                 button = button,
                                 faceStyle = device.faceStyle,
-                                binding = bindingFor(button),
+                                binding = rowBinding,
                                 capturing = captureTarget == button,
                                 onClick = {
                                     captureTarget = if (captureTarget == button) null else button
@@ -791,6 +858,9 @@ fun GamepadRemapDialog(
                                     status = null
                                 },
                                 onClear = { clearBinding(button) },
+                                // F §1.4: toggle Turbo no chip de binding da camada
+                                // (período fixo 80 ms v2; OFF = byte-identical).
+                                onToggleTurbo = { setTurbo(button, !(rowBinding?.turbo ?: false)) },
                             )
                         }
                     }
@@ -1029,10 +1099,11 @@ fun GamepadRemapDialog(
 private fun RemapRow(
     button: GamepadButton,
     faceStyle: FaceStyle,
-    binding: RawBinding?,
+    binding: GamepadBindingCodec.LayerBinding?,
     capturing: Boolean,
     onClick: () -> Unit,
     onClear: () -> Unit,
+    onToggleTurbo: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val context = LocalContext.current
@@ -1057,11 +1128,23 @@ private fun RemapRow(
         )
         if (!capturing) {
             Text(
-                text = bindingDescription(binding, context),
+                text = bindingDescription(binding?.raw, context),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (binding != null) {
+                // F §1.4: chip Turbo — rapid-fire de 80 ms enquanto a fonte está
+                // segurada (OFF = token byte-identical ao v1).
+                TextButton(onClick = onToggleTurbo) {
+                    Text(
+                        text = stringResource(R.string.gamepad_binding_turbo_title),
+                        color = if (binding.turbo) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
                 TextButton(onClick = onClear) {
                     Text(stringResource(R.string.gamepad_remap_clear))
                 }

@@ -46,6 +46,15 @@ object LayerResolver {
         return base + active
     }
 
+    /**
+     * F (spec 2026-08-16-F-radial-v2-modeshift-turbo, §1.3): camada de SHIFT usa o
+     * MESMO motor U3 de ativação (nada muda aqui — branch preserva a mecânica), mas
+     * o HUB suprime os "eventos comuns" (GamepadLayerEvent — não abre radial — e o
+     * tick háptico) e consome o botão físico. A decisão fica PURA aqui (testável em
+     * JVM) e o hub só consulta o resultado.
+     */
+    fun suppressCommonEvents(spec: LayerTriggerSpec): Boolean = spec.isShift
+
     fun onButtonDown(
         state: LayerState,
         layerName: String,

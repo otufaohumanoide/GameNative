@@ -2411,6 +2411,20 @@
     <string name="radial_menu_capture">Capture keys</string>
     <string name="radial_menu_capture_running">Press keys… (BACK ends)</string>
     <string name="radial_menu_clear_macro">Clear</string>
+    <!-- F (spec 2026-08-16-F-radial-v2-modeshift-turbo): submenus, ícones, executeMode, shift, turbo -->
+    <string name="radial_menu_execute_mode_title">Execution mode</string>
+    <string name="radial_menu_execute_mode_tap_release">On release</string>
+    <string name="radial_menu_execute_mode_hold">Hold (repeat)</string>
+    <string name="radial_menu_icon_title">Icon</string>
+    <string name="radial_menu_icon_none">None</string>
+    <string name="radial_menu_submenu_button">Turn into submenu</string>
+    <string name="radial_menu_submenu_remove">Remove submenu</string>
+    <string name="radial_menu_submenu_child_label">Child %d</string>
+    <string name="radial_menu_submenu_add_child">Add child</string>
+    <string name="radial_menu_submenu_remove_child">Remove</string>
+    <string name="gamepad_layer_shift_title">Shift layer</string>
+    <string name="gamepad_layer_shift_subtitle">Consumes the button: remaps the other buttons while held without opening the radial menu or haptic tick</string>
+    <string name="gamepad_binding_turbo_title">Turbo</string>
 <string name="gamepad_layer_tick_title">Layer activation tick</string>
     <string name="gamepad_layer_tick_subtitle">Short haptic click when a layer activates (guarded by the rumble switch)</string>
 <string name="gamepad_rumble_title">Controller rumble (menu)</string>
