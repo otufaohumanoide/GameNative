@@ -148,6 +148,19 @@ fun GamepadRemapDialog(
     }
     var flickSnap by remember { mutableStateOf(profile.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP) }
     var gyroFusionEnabled by remember { mutableStateOf(profile.gyroFusionEnabled ?: false) }
+    // ── G (spec 2026-08-16-G-gyro-v2) — gyro v2 ──
+    var gyroSensitivityY by remember { mutableStateOf(profile.gyroSensitivityY ?: 1f) }
+    var gyroInvertX by remember { mutableStateOf(profile.gyroInvertX ?: false) }
+    var gyroInvertY by remember { mutableStateOf(profile.gyroInvertY ?: false) }
+    var gyroSmoothEnabled by remember {
+        mutableStateOf(profile.gyroSmoothMinCutoff != null || profile.gyroSmoothBeta != null)
+    }
+    var gyroSmoothMinCutoff by remember { mutableStateOf(profile.gyroSmoothMinCutoff ?: 1.0f) }
+    var gyroSmoothBeta by remember { mutableStateOf(profile.gyroSmoothBeta ?: 0.7f) }
+    var gyroStickMaxOutput by remember { mutableStateOf(profile.gyroStickMaxOutput ?: 1f) }
+    var gyroStickAntiDeadzone by remember { mutableStateOf(profile.gyroStickAntiDeadzone ?: 0f) }
+    var gyroActivateToggle by remember { mutableStateOf(profile.gyroActivateToggle ?: false) }
+    var gyroGripAngleDeg by remember { mutableStateOf(profile.gyroGripAngleDeg ?: 0f) }
     var status by remember { mutableStateOf<String?>(null) }
     // E (spec 2026-08-16-E-profile-catalog-comunitario, §1.3): browser do catálogo
     // aberto (janela própria por cima deste dialog); desliga o escopo de foco deste
@@ -203,6 +216,16 @@ fun GamepadRemapDialog(
         gyroFusionEnabled = if (gyroFusionEnabled) true else null,
         gyroFusionKp = null,
         gyroFusionKi = null,
+        // G (spec 2026-08-16-G-gyro-v2): defaults colapsam em null (política do store).
+        gyroSensitivityY = if (gyroSensitivityY == 1f) null else gyroSensitivityY,
+        gyroInvertX = if (gyroInvertX) true else null,
+        gyroInvertY = if (gyroInvertY) true else null,
+        gyroSmoothMinCutoff = if (gyroSmoothEnabled) gyroSmoothMinCutoff else null,
+        gyroSmoothBeta = if (gyroSmoothEnabled) gyroSmoothBeta else null,
+        gyroStickMaxOutput = if (gyroStickMaxOutput == 1f) null else gyroStickMaxOutput,
+        gyroStickAntiDeadzone = if (gyroStickAntiDeadzone == 0f) null else gyroStickAntiDeadzone,
+        gyroActivateToggle = if (gyroActivateToggle) true else null,
+        gyroGripAngleDeg = if (gyroGripAngleDeg == 0f) null else gyroGripAngleDeg,
     )
 
     /** Aplica um perfil importado (clipboard ou arquivo — F3.3) ao estado do editor. */
@@ -225,6 +248,17 @@ fun GamepadRemapDialog(
         flickRadius = imported.flickStickActivationRadius ?: DEFAULT_FLICK_RADIUS
         flickSnap = imported.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP
         gyroFusionEnabled = imported.gyroFusionEnabled ?: false
+        // G (spec 2026-08-16-G-gyro-v2): mesmos defaults do estado do editor.
+        gyroSensitivityY = imported.gyroSensitivityY ?: 1f
+        gyroInvertX = imported.gyroInvertX ?: false
+        gyroInvertY = imported.gyroInvertY ?: false
+        gyroSmoothEnabled = imported.gyroSmoothMinCutoff != null || imported.gyroSmoothBeta != null
+        gyroSmoothMinCutoff = imported.gyroSmoothMinCutoff ?: 1.0f
+        gyroSmoothBeta = imported.gyroSmoothBeta ?: 0.7f
+        gyroStickMaxOutput = imported.gyroStickMaxOutput ?: 1f
+        gyroStickAntiDeadzone = imported.gyroStickAntiDeadzone ?: 0f
+        gyroActivateToggle = imported.gyroActivateToggle ?: false
+        gyroGripAngleDeg = imported.gyroGripAngleDeg ?: 0f
     }
 
     // ── F1.1/F3.3: SAF (CreateDocument/OpenDocument) para LUT e perfil por arquivo ──
@@ -994,6 +1028,14 @@ fun GamepadRemapDialog(
                             range = 0.1f..3.0f,
                             onValueChange = { gyroSensitivity = it },
                         )
+                        // G3 (spec 2026-08-16-G-gyro-v2): sensibilidade vertical
+                        // (null = usa a de cima — 1.0 aqui = igual à horizontal).
+                        GyroSliderRow(
+                            title = stringResource(R.string.gamepad_gyro_sensitivity_y_title),
+                            value = gyroSensitivityY,
+                            range = 0.1f..3.0f,
+                            onValueChange = { gyroSensitivityY = it },
+                        )
                         // P2-4 (spec 2026-08-14-gamepad-upgrades-pendencias): a UI
                         // exibe a deadzone em °/s (unidade dos usuários — Dolphin/
                         // JoyShock/Steam Input); a persistência continua rad/s (sem
@@ -1050,6 +1092,86 @@ fun GamepadRemapDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        // G5 (spec 2026-08-16-G-gyro-v2): ativação por TOGGLE — a
+                        // borda de descida do botão flipa o latch (sem botão de
+                        // ativação o gyro é sempre ativo; o switch não aparece).
+                        if (gyroActivateButton != null) {
+                            GyroToggleRow(
+                                title = stringResource(R.string.gamepad_gyro_activate_toggle_title),
+                                subtitle = stringResource(R.string.gamepad_gyro_activate_toggle_subtitle),
+                                checked = gyroActivateToggle,
+                                onCheckedChange = { gyroActivateToggle = it },
+                            )
+                        }
+                        // G3 (spec 2026-08-16-G-gyro-v2): inversão por eixo (null = false).
+                        GyroToggleRow(
+                            title = stringResource(R.string.gamepad_gyro_invert_x_title),
+                            checked = gyroInvertX,
+                            onCheckedChange = { gyroInvertX = it },
+                        )
+                        GyroToggleRow(
+                            title = stringResource(R.string.gamepad_gyro_invert_y_title),
+                            checked = gyroInvertY,
+                            onCheckedChange = { gyroInvertY = it },
+                        )
+                        // G2 (spec 2026-08-16-G-gyro-v2): smoothing One Euro opt-in
+                        // (MOUSE) — off = ambos null = caminho byte-identical.
+                        GyroToggleRow(
+                            title = stringResource(R.string.gamepad_gyro_smooth_title),
+                            subtitle = stringResource(R.string.gamepad_gyro_smooth_subtitle),
+                            checked = gyroSmoothEnabled,
+                            onCheckedChange = { gyroSmoothEnabled = it },
+                        )
+                        if (gyroSmoothEnabled) {
+                            GyroSliderRow(
+                                title = stringResource(R.string.gamepad_gyro_smooth_min_cutoff_title),
+                                value = gyroSmoothMinCutoff,
+                                range = 0.1f..3.0f,
+                                format = { String.format(java.util.Locale.US, "%.1f Hz", it) },
+                                onValueChange = { gyroSmoothMinCutoff = it },
+                            )
+                            GyroSliderRow(
+                                title = stringResource(R.string.gamepad_gyro_smooth_beta_title),
+                                value = gyroSmoothBeta,
+                                range = 0.0f..2.0f,
+                                format = { String.format(java.util.Locale.US, "%.1f", it) },
+                                onValueChange = { gyroSmoothBeta = it },
+                            )
+                        }
+                        // G4 (spec 2026-08-16-G-gyro-v2): shaping do CAMERA — teto da
+                        // deflexão e floor acima da deadzone (só relevantes nesse modo).
+                        if (gyroMode == GyroMode.CAMERA) {
+                            GyroSliderRow(
+                                title = stringResource(R.string.gamepad_gyro_stick_max_output_title),
+                                value = gyroStickMaxOutput,
+                                range = 0.1f..1.0f,
+                                format = { String.format(java.util.Locale.US, "%.0f%%", it * 100f) },
+                                onValueChange = { gyroStickMaxOutput = it },
+                            )
+                            GyroSliderRow(
+                                title = stringResource(R.string.gamepad_gyro_stick_anti_deadzone_title),
+                                value = gyroStickAntiDeadzone,
+                                range = 0.0f..1.0f,
+                                format = { String.format(java.util.Locale.US, "%.0f%%", it * 100f) },
+                                onValueChange = { gyroStickAntiDeadzone = it },
+                            )
+                        }
+                        // G6 (spec 2026-08-16-G-gyro-v2): grip angle — rotação do par
+                        // (X, Z) no eixo longitudinal; calibrável também pelo botão do
+                        // card de diagnóstico (Settings → Gamepad).
+                        GyroSliderRow(
+                            title = stringResource(R.string.gamepad_gyro_grip_title),
+                            value = gyroGripAngleDeg,
+                            range = -90f..90f,
+                            format = { String.format(java.util.Locale.US, "%+.0f°", it) },
+                            onValueChange = { gyroGripAngleDeg = it },
+                        )
+                        Text(
+                            text = stringResource(R.string.gamepad_gyro_grip_subtitle),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                        )
                         // F1.3 (spec 2026-08-15-input-core-avancado): fusão Mahony
                         // opt-in — corrige pitch/roll pela gravidade; yaw permanece no
                         // recenter + calibração contínua. Desligado = byte-identical.
@@ -1597,6 +1719,53 @@ private fun LayerTriggerModeChip(
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
+        )
+    }
+}
+
+/**
+ * G (spec 2026-08-16-G-gyro-v2) — linha de switch da seção Gyro (toggle de
+ * ativação, inversão por eixo, smoothing) com navegação de gamepad no MESMO
+ * padrão da linha de fusão (gamepadSelectable + Switch sem foco próprio).
+ */
+@Composable
+private fun GyroToggleRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    subtitle: String? = null,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .gamepadSelectable(
+                selected = checked,
+                onClick = { onCheckedChange(!checked) },
+                shape = RoundedCornerShape(8.dp),
+                interactionSource = interactionSource,
+            )
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.focusProperties { canFocus = false },
         )
     }
 }

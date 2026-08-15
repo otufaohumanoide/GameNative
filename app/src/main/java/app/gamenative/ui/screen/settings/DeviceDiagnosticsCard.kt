@@ -272,6 +272,15 @@ fun DeviceDiagnosticsCard(
                         subtitle = stringResource(R.string.gamepad_diag_recenter_gyro_hint),
                         onClick = { PluviaApp.gamepadHub.recenterGyro(device.deviceId) },
                     )
+                    // G6 (spec 2026-08-16-G-gyro-v2): θ = atan2 do accel da última
+                    // amostra processada — salva o gyroGripAngleDeg no perfil do
+                    // DEVICE (a pegada é física, não do jogo). Sem amostra/accel
+                    // ainda = no-op.
+                    DiagButtonRow(
+                        title = stringResource(R.string.gamepad_diag_calibrate_grip_title),
+                        subtitle = stringResource(R.string.gamepad_diag_calibrate_grip_hint),
+                        onClick = { PluviaApp.gamepadHub.calibrateGrip(device.deviceId) },
+                    )
                 }
                 // "Todos os botões" — só instruções + o viewer acescendo (sem lógica).
                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
