@@ -97,7 +97,7 @@ F0 → A → B → C → F → D → E
 
 | Fase | Spec | Gate | Status | Commit |
 |---|---|---|---|---|
-| F0 | (este arquivo §3) | assemble | INCOMPLETO | — |
+| F0 | (este arquivo §3) | assemble | ✅ COMPLETO (2026-08-14) | `31002f42` (milestone `milestone-2026-08-14-focus-feedback-v2`) |
 | A | `spec-2026-08-16-A-rumble-fallback-usage-media.md` | tests `*RumblePhoneCurve* *GamepadProfileStore*` + assemble | INCOMPLETO | — |
 | B | `spec-2026-08-16-B-remap-visual-ppsspp.md` | tests `*ControllerVisual* *Gamepad*` + assemble | INCOMPLETO | — |
 | C | `spec-2026-08-16-C-device-card-input-viewer.md` | tests `*Gamepad*` + assemble | INCOMPLETO | — |
