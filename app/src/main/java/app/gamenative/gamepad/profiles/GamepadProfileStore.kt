@@ -36,6 +36,16 @@ class GamepadProfileStore(private val file: File) {
 
     fun load(key: String): GamepadProfile? = entries()[key]
 
+    /**
+     * E (spec 2026-08-16-E-profile-catalog-comunitario, §1.4): existe override
+     * persistido para [key]? Consulta LEVE — serve do cache em memória, que é
+     * invalidado no [save]/[clear] (mesma garantia do hot path M1).
+     */
+    fun hasOverrides(key: String): Boolean = entries().containsKey(key)
+
+    /** E §1.4: chaves com override (badge da Library — um read por visita à tela). */
+    fun overrideKeys(): Set<String> = entries().keys
+
     /** Persiste [profile] para [key]; um perfil default REMOVE a entrada (sem arquivo = sem preferência). */
     fun save(key: String, profile: GamepadProfile) {
         val current = entries().toMutableMap()

@@ -1,0 +1,22 @@
+{
+  "id": "silk-souls-layout",
+  "game": "silksong",
+  "faceStyle": "PLAYSTATION",
+  "controller": "DualShock 4 / DualSense",
+  "name": "Souls layout — attack on bumpers",
+  "author": "gamenative-seed",
+  "description": "Attack/dash on R1/L1 with face buttons for items — classic Souls layout. Turbo on FACE_BOTTOM for fast menu skipping.",
+  "downloads": 1830,
+  "profile": {
+    "faceStyle": "PLAYSTATION",
+    "swapOkCancel": true,
+    "layers": {
+      "DEFAULT": {
+        "RIGHT_BUMPER": "key:96",
+        "LEFT_BUMPER": "key:99",
+        "FACE_BOTTOM": "key:100:turbo"
+      }
+    },
+    "schemaVersion": 1
+  }
+}

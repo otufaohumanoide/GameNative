@@ -102,6 +102,10 @@ On-device (humano, "on-device pendente"): browser abre pelo remap com foco por
 gamepad; aplicar um perfil do catálogo muda o jogo NA HORA (F3.2 re-resolve);
 badge aparece/some no card do jogo; catálogo funciona 100% offline.
 
+Consolidado (fechamento 2026-08-16, §2 linha E — protocolo único do roadmap):
+browser offline; aplicar perfil muda o jogo na hora; badge na Library —
+evidência: log do store + badge no card. **Status: on-device pendente.**
+
 ## 4. Fora de escopo
 
 Download de perfis por URL no app (offline-first — o catálogo via APK), contas/

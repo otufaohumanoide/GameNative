@@ -234,6 +234,14 @@ private fun LibraryScreenContent(
         }
     }
 
+    // E (spec 2026-08-16-E, §1.4 — badge "personalizado"): um read por visita à
+    // tela (re-navegar recarrega; aplicar perfil em jogo reflete na próxima visita).
+    // Main thread: contrato M1 do GamepadProfileStore (cache em memória no hub).
+    var profileOverrideIds by remember { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(Unit) {
+        profileOverrideIds = PluviaApp.gamepadHub.profileOverrideGameIds()
+    }
+
     val gogOAuthLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -1078,6 +1086,7 @@ private fun LibraryScreenContent(
                             focusTargetListIndex = currentCarouselFocusTargetIndex(),
                             onFocusedIndexChanged = { carouselFocusTargetListIndex = it },
                             shaderEnabledIds = shaderEnabledIds.orEmpty(),
+                            profileOverrideIds = profileOverrideIds.orEmpty(),
                         )
                     } else {
                         LibraryListPane(
@@ -1094,6 +1103,7 @@ private fun LibraryScreenContent(
                             onRefresh = onRefresh,
                             modifier = Modifier.fillMaxSize(),
                             shaderEnabledIds = shaderEnabledIds.orEmpty(),
+                            profileOverrideIds = profileOverrideIds.orEmpty(),
                         )
                     }
                 }

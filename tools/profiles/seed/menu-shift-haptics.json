@@ -1,0 +1,22 @@
+{
+  "id": "menu-shift-haptics",
+  "game": null,
+  "faceStyle": "GENERIC",
+  "controller": "any controller",
+  "name": "Shift layer + menu haptics off",
+  "author": "gamenative-seed",
+  "description": "FACE_LEFT held = shift layer (consumed — remaps R1/L1 without opening the radial). Menu haptics disabled for quiet navigation.",
+  "downloads": 98,
+  "profile": {
+    "layerTriggers": {
+      "FACE_LEFT": {
+        "button": "FACE_LEFT",
+        "mode": "HOLD",
+        "isShift": true
+      }
+    },
+    "rumbleOnActivate": false,
+    "rumbleOnBack": false,
+    "schemaVersion": 1
+  }
+}

@@ -305,6 +305,14 @@ class GamepadHub(context: Context) {
         invalidateProfiles()
     }
 
+    /**
+     * E (spec 2026-08-16-E-profile-catalog-comunitario, §1.4): appIds com override
+     * de perfil — badge "personalizado" na Library (um read por visita à tela; o
+     * cache do store responde sem disco a partir do segundo read). Main thread
+     * apenas (contrato M1 do store).
+     */
+    fun profileOverrideGameIds(): Set<String> = gameStore.overrideKeys()
+
     // U3: estado de camadas por device (V6 — morto no removeDevice).
     private val layerStates = mutableMapOf<Int, LayerState>()
 

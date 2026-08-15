@@ -2379,4 +2379,33 @@
     <string name="gamepad_glyph_generic_face_top">Y</string>
     <string name="gamepad_glyph_generic_other">?</string>
 
+    <!-- E (spec 2026-08-16-E-profile-catalog-comunitario): catálogo de perfis -->
+    <string name="gamepad_profile_catalog">Importar do catálogo</string>
+    <string name="gamepad_profile_catalog_hint">Inicie um jogo para importar do catálogo</string>
+    <string name="gamepad_profile_catalog_applied">Perfil "%1$s" do catálogo aplicado ao jogo atual</string>
+    <string name="profile_catalog_title">Catálogo de perfis</string>
+    <string name="profile_catalog_search_placeholder">Buscar por jogo, nome ou controle</string>
+    <string name="profile_catalog_subtitle">%1$d perfis</string>
+    <string name="profile_catalog_empty">Nenhum perfil encontrado</string>
+    <string name="profile_catalog_back">Voltar</string>
+    <string name="profile_catalog_for_this_game">Este jogo</string>
+    <string name="profile_catalog_any_game">Qualquer jogo</string>
+    <string name="profile_catalog_by">por %1$s</string>
+    <string name="profile_catalog_downloads">%1$d downloads</string>
+    <string name="profile_catalog_touches">Este perfil toca em:</string>
+    <string name="profile_catalog_apply">Aplicar ao jogo atual</string>
+    <string name="profile_catalog_applied">Aplicado ✓</string>
+    <string name="profile_catalog_apply_disabled_hint">Inicie um jogo para aplicar</string>
+    <string name="profile_catalog_invalid_skipped">%1$d entradas do catálogo ignoradas (inválidas)</string>
+    <string name="profile_catalog_page">Página %1$d de %2$d</string>
+    <string name="profile_catalog_previous_page">Anterior</string>
+    <string name="profile_catalog_next_page">Próxima</string>
+    <string name="profile_summary_bindings">Bindings</string>
+    <string name="profile_summary_gyro">Gyro</string>
+    <string name="profile_summary_layers">Camadas</string>
+    <string name="profile_summary_swipes">Swipes</string>
+    <string name="profile_summary_stick">Analógico</string>
+    <string name="profile_summary_rumble">Vibração</string>
+    <string name="profile_summary_touchpad">Touchpad</string>
+    <string name="library_profile_override_active">Perfil de gamepad personalizado</string>
 </resources>

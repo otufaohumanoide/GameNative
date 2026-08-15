@@ -1,0 +1,39 @@
+{
+  "id": "ds4-swipes-radial",
+  "game": null,
+  "faceStyle": "PLAYSTATION",
+  "controller": "DualShock 4",
+  "name": "Touchpad swipes — radial + macros",
+  "author": "gamenative-seed",
+  "description": "Swipe right on the touchpad opens the radial menu; swipe up fires a two-key macro; swipe down taps the mode button.",
+  "downloads": 640,
+  "profile": {
+    "touchpadSwipes": {
+      "RIGHT": [
+        {
+          "keyCode": -1000,
+          "holdMs": 60,
+          "gapMs": 40
+        }
+      ],
+      "UP": [
+        {
+          "keyCode": 96
+        },
+        {
+          "keyCode": 99,
+          "holdMs": 80,
+          "gapMs": 60
+        }
+      ],
+      "DOWN": [
+        {
+          "keyCode": 110,
+          "holdMs": 120,
+          "gapMs": 40
+        }
+      ]
+    },
+    "schemaVersion": 1
+  }
+}

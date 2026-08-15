@@ -69,6 +69,7 @@ internal fun ListViewCard(
     gameStats: GameCardStats?,
     context: Context,
     hasShader: Boolean = false,
+    hasProfileOverrides: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isItemFocused by interactionSource.collectIsFocusedAsState()
@@ -138,13 +139,21 @@ internal fun ListViewCard(
                     imageModifier = Modifier.clip(RoundedCornerShape(10.dp)),
                     image = { iconUrl },
                 )
-                // M4 (spec 2026-08-12): shader-active badge on the icon's corner.
-                if (hasShader) {
-                    ShaderActiveBadge(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(2.dp),
-                    )
+                // M4 (spec 2026-08-12) + E (spec 2026-08-16-E): badges no canto do
+                // ícone — shader ativo + perfil personalizado (lado a lado, nunca
+                // sobrepostos).
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    if (hasShader) {
+                        ShaderActiveBadge()
+                    }
+                    if (hasProfileOverrides) {
+                        ProfileOverrideBadge()
+                    }
                 }
             }
 

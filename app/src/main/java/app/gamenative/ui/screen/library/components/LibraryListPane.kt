@@ -123,6 +123,7 @@ internal fun LibraryListPane(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     shaderEnabledIds: Set<String> = emptySet(),
+    profileOverrideIds: Set<String> = emptySet(),
 ) {
     val context = LocalContext.current
     val snackBarHost = remember { SnackbarHostState() }
@@ -299,6 +300,7 @@ internal fun LibraryListPane(
                                         compatibilityStatus = state.compatibilityMap[item.name],
                                         gameStats = state.statsFor(item),
                                         hasShader = item.appId in shaderEnabledIds,
+                                        hasProfileOverrides = item.appId in profileOverrideIds,
                                     )
                                 }
                             }

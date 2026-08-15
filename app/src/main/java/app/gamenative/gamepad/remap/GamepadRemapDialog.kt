@@ -75,6 +75,7 @@ import app.gamenative.gamepad.processing.ResponseCurve
 import app.gamenative.gamepad.processing.StickTransform
 import app.gamenative.gamepad.processing.SwipeDir
 import app.gamenative.gamepad.profiles.ActionLayer
+import app.gamenative.ui.component.ProfileCatalogBrowser
 import app.gamenative.gamepad.radial.RadialMacroKey
 import app.gamenative.gamepad.radial.SWIPE_OPEN_RADIAL
 import kotlinx.serialization.json.floatOrNull
@@ -148,6 +149,10 @@ fun GamepadRemapDialog(
     var flickSnap by remember { mutableStateOf(profile.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP) }
     var gyroFusionEnabled by remember { mutableStateOf(profile.gyroFusionEnabled ?: false) }
     var status by remember { mutableStateOf<String?>(null) }
+    // E (spec 2026-08-16-E-profile-catalog-comunitario, §1.3): browser do catálogo
+    // aberto (janela própria por cima deste dialog); desliga o escopo de foco deste
+    // dialog enquanto o browser está por cima (uma janela, um dono do input).
+    var catalogOpen by remember { mutableStateOf(false) }
     // ── B (spec 2026-08-16-B-remap-visual-ppsspp): mapa visual + escopo + flash ──
     val hub = PluviaApp.gamepadHub
     // appId do container ativo (holder do hub — lido ao abrir o dialog; null fora de
@@ -632,7 +637,7 @@ fun GamepadRemapDialog(
         // Enquanto captura, o escopo de foco fica OFF: todo input do controle é captura.
         GamepadFocusScope(
             enabled = captureTarget == null && !captureGyroActivate && !captureLayerTrigger &&
-                visualCapture == null && captureSwipe == null,
+                visualCapture == null && captureSwipe == null && !catalogOpen,
             backAction = onDismiss,
             initialFocusRequester = initialFocus,
         ) {
@@ -641,7 +646,7 @@ fun GamepadRemapDialog(
                     .fillMaxSize()
                     .then(
                         if (captureTarget == null && !captureGyroActivate && !captureLayerTrigger &&
-                            visualCapture == null && captureSwipe == null
+                            visualCapture == null && captureSwipe == null && !catalogOpen
                         ) {
                             Modifier.gamepadBackHandler(onDismiss)
                         } else {
@@ -1164,6 +1169,23 @@ fun GamepadRemapDialog(
                             }) {
                                 Text(stringResource(R.string.gamepad_profile_import_file))
                             }
+                            // E (spec 2026-08-16-E, §1.3): catálogo comunitário
+                            // (offline). Contexto = device ativo + jogo atual; sem
+                            // jogo o botão desabilita com hint (mesmo padrão do
+                            // escopo "Este jogo" de B §1.4).
+                            TextButton(
+                                enabled = appId != null,
+                                onClick = { catalogOpen = true },
+                            ) {
+                                Text(stringResource(R.string.gamepad_profile_catalog))
+                            }
+                            if (appId == null) {
+                                Text(
+                                    text = stringResource(R.string.gamepad_profile_catalog_hint),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                     Row(
@@ -1193,6 +1215,18 @@ fun GamepadRemapDialog(
                 }
             }
         }
+    }
+
+    // E (spec 2026-08-16-E, §1.3): browser do catálogo como JANELA PRÓPRIA por cima
+    // deste dialog (dialogs não compartilham escopo de foco — um dono por janela).
+    if (catalogOpen) {
+        ProfileCatalogBrowser(
+            appId = appId,
+            onApply = { entry ->
+                status = context.getString(R.string.gamepad_profile_catalog_applied, entry.name)
+            },
+            onDismiss = { catalogOpen = false },
+        )
     }
 }
 

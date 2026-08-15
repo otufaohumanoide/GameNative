@@ -95,6 +95,7 @@ internal fun GridViewCard(
     context: Context,
     animateStats: Boolean = true,
     hasShader: Boolean = false,
+    hasProfileOverrides: Boolean = false,
 ) {
     val aspectRatio = if (paneType == PaneType.GRID_CAPSULE) 2f / 3f else 460f / 215f
     val isCapsule = paneType == PaneType.GRID_CAPSULE
@@ -377,6 +378,9 @@ internal fun GridViewCard(
                     }
                     if (hasShader) {
                         ShaderActiveBadge()
+                    }
+                    if (hasProfileOverrides) {
+                        ProfileOverrideBadge()
                     }
                 }
             }

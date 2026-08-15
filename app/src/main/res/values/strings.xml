@@ -2511,4 +2511,33 @@
     <string name="gamepad_glyph_generic_face_top">Y</string>
     <string name="gamepad_glyph_generic_other">?</string>
 
+    <!-- E (spec 2026-08-16-E-profile-catalog-comunitario): catálogo de perfis -->
+    <string name="gamepad_profile_catalog">Import from catalog</string>
+    <string name="gamepad_profile_catalog_hint">Start a game to import from the catalog</string>
+    <string name="gamepad_profile_catalog_applied">Catalog profile "%1$s" applied to the current game</string>
+    <string name="profile_catalog_title">Profile catalog</string>
+    <string name="profile_catalog_search_placeholder">Search by game, name or controller</string>
+    <string name="profile_catalog_subtitle">%1$d profiles</string>
+    <string name="profile_catalog_empty">No profiles match the search</string>
+    <string name="profile_catalog_back">Back</string>
+    <string name="profile_catalog_for_this_game">This game</string>
+    <string name="profile_catalog_any_game">Any game</string>
+    <string name="profile_catalog_by">by %1$s</string>
+    <string name="profile_catalog_downloads">%1$d downloads</string>
+    <string name="profile_catalog_touches">This profile touches:</string>
+    <string name="profile_catalog_apply">Apply to current game</string>
+    <string name="profile_catalog_applied">Applied ✓</string>
+    <string name="profile_catalog_apply_disabled_hint">Start a game to apply</string>
+    <string name="profile_catalog_invalid_skipped">%1$d catalog entries skipped (invalid)</string>
+    <string name="profile_catalog_page">Page %1$d of %2$d</string>
+    <string name="profile_catalog_previous_page">Previous</string>
+    <string name="profile_catalog_next_page">Next</string>
+    <string name="profile_summary_bindings">Bindings</string>
+    <string name="profile_summary_gyro">Gyro</string>
+    <string name="profile_summary_layers">Layers</string>
+    <string name="profile_summary_swipes">Swipes</string>
+    <string name="profile_summary_stick">Stick</string>
+    <string name="profile_summary_rumble">Rumble</string>
+    <string name="profile_summary_touchpad">Touchpad</string>
+    <string name="library_profile_override_active">Custom gamepad profile</string>
 </resources>
