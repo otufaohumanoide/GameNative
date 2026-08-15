@@ -17,6 +17,10 @@ import app.gamenative.events.GamepadLayerEvent
 import app.gamenative.gamepad.layers.LayerChange
 import app.gamenative.gamepad.layers.LayerResolver
 import app.gamenative.gamepad.layers.LayerState
+import app.gamenative.gamepad.layers.LayerTriggerMode
+import app.gamenative.gamepad.layers.TriggerEngine
+import app.gamenative.gamepad.layers.TriggerEngineState
+import app.gamenative.gamepad.layers.TriggerOutcome
 import app.gamenative.gamepad.mapping.EventTranslator
 import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.MappingDatabase
@@ -184,6 +188,11 @@ class GamepadHub(context: Context) {
             // ativação reinicia fechada com o perfil novo (V6).
             gyroActivateHeld.remove(deviceId)
             gyroActivateLatches.remove(deviceId)
+            // I: triggers pendentes (long-press armado/sequência em curso) e emits
+            // retardados morrem na troca de container — a ativação reinicia fechada
+            // com o perfil novo (mesmo padrão G5/V6).
+            triggerEngineStates.remove(deviceId)
+            pendingEmits.remove(deviceId)
             for (button in held.toList()) {
                 emitLogical(device, mapping, profile, layerState, InputEvent.ButtonDown(deviceId, button), deviceId)
             }
@@ -341,6 +350,13 @@ class GamepadHub(context: Context) {
     // U3: estado de camadas por device (V6 — morto no removeDevice).
     private val layerStates = mutableMapOf<Int, LayerState>()
 
+    // I (spec 2026-08-16-I-trigger-engine-keymapper, §2.3): estado do engine por
+    // device (V6 — morto no removeDevice; limpo na troca de container) e a fila de
+    // emits retardados (disambiguação #1386): deviceId → botão → (eventos, prazo).
+    private val triggerEngineStates = mutableMapOf<Int, TriggerEngineState>()
+
+    private val pendingEmits = mutableMapOf<Int, MutableMap<String, PendingEmit>>()
+
     /** Camada ativa do device (U3/U4); null = DEFAULT. */
     fun activeLayerFor(deviceId: Int): String? = layerStates[deviceId]?.activeLayer
 
@@ -365,8 +381,18 @@ class GamepadHub(context: Context) {
      * emite GamepadLayerEvent (não abre radial, não compete com triggers reais) nem
      * tick háptico. A ativação em si é a MESMA (LayerResolver intacto — a mecânica
      * U3 é preservada pelo branch).
+     *
+     * I (spec 2026-08-16-I-trigger-engine-keymapper, §2.3): para LONG_PRESS/SEQUENCE
+     * o [TriggerEngine] é consultado ANTES do resolver — o botão do trigger é
+     * consumido desde o down (isShift implícito para os modos novos) e o Down lógico
+     * do 1º botão de uma sequência fica RETARDADO em [pendingEmits] até a resolução
+     * (disambiguação #1386). ConsumeDelay/ReleaseDelay só mexem na fila — o segundo
+     * vence por ordem determinística (ConsumeDelay primeiro: um completamento vence
+     * a morte da sequência sobreposta).
      */
     private fun resolveLayerTriggers(
+        device: GamepadDevice,
+        mapping: GamepadMapping,
         layerState: LayerState,
         profile: GamepadProfile,
         event: InputEvent,
@@ -379,10 +405,45 @@ class GamepadHub(context: Context) {
             is InputEvent.ButtonUp -> event.button to event.deviceId
             else -> return false
         }
+        val now = android.os.SystemClock.uptimeMillis()
+        // I: engine primeiro — consultado para botões dos specs novos E para TODO
+        // botão enquanto há sequência pendente (botão errado mata a sequência).
+        val engineState = triggerEngineStates.getOrPut(deviceId) { TriggerEngineState() }
+        var engineConsumed = false
+        val sequencesPending = engineState.seqProgress.isNotEmpty()
+        val engineOutcomes = mutableListOf<TriggerOutcome>()
+        for ((layerName, spec) in profile.layerTriggers) {
+            val isNewMode = spec.mode == LayerTriggerMode.LONG_PRESS ||
+                spec.mode == LayerTriggerMode.SEQUENCE
+            if (!isNewMode) continue
+            val involved = spec.button == button.name ||
+                spec.sequence.contains(button.name) ||
+                (sequencesPending && engineState.seqProgress.containsKey(layerName))
+            if (!involved) continue
+            engineOutcomes += when (event) {
+                is InputEvent.ButtonDown ->
+                    TriggerEngine.onButtonDown(engineState, profile.layerTriggers, layerName, spec, button.name, now)
+                is InputEvent.ButtonUp ->
+                    TriggerEngine.onButtonUp(engineState, profile.layerTriggers, layerName, spec, button.name, now)
+                else -> emptyList()
+            }
+        }
+        if (engineOutcomes.isNotEmpty()) {
+            // ConsumeDelay ANTES de ReleaseDelay: um completamento vence a morte da
+            // sequência sobreposta (o retardo é descartado, nunca liberado).
+            val ordered = engineOutcomes.sortedBy { if (it is TriggerOutcome.ConsumeDelay) 0 else 1 }
+            for (outcome in ordered) {
+                if (applyTriggerOutcome(outcome, event, device, mapping, layerState, profile, deviceId)) {
+                    engineConsumed = true
+                }
+            }
+        }
+        if (engineConsumed) return true
+
+        // Caminho existente (HOLD/TOGGLE/DOUBLE_TAP) — byte-identical.
         val trigger = profile.layerTriggers.entries.firstOrNull { (_, spec) ->
             spec.button == button.name
         } ?: return false
-        val now = android.os.SystemClock.uptimeMillis()
         val change = when (event) {
             is InputEvent.ButtonDown -> LayerResolver.onButtonDown(layerState, trigger.key, trigger.value, now)
             is InputEvent.ButtonUp -> LayerResolver.onButtonUp(layerState, trigger.key, trigger.value, now)
@@ -409,6 +470,128 @@ class GamepadHub(context: Context) {
             else -> {}
         }
         return shift
+    }
+
+    /**
+     * I §2.3: relógio do engine + liberação de emits retardados — SEM timer novo:
+     * o TOPO de onKey/onAxis/onSensorSample varre a fila minúscula do device
+     * (os eventos de input são o relógio; ~120 Hz de polling de stick). O
+     * [TriggerEngine.onClock] dispara LONG_PRESS no limiar e mata passos de
+     * sequência expirados; a varredura de prazo libera os Downs guardados vencidos
+     * (disambiguação #1386). Sem engine armado e fila vazia → retorno imediato
+     * (zero custo — byte-identical).
+     */
+    private fun flushTriggerClock(
+        deviceId: Int,
+        device: GamepadDevice,
+        mapping: GamepadMapping,
+        profile: GamepadProfile,
+        layerState: LayerState,
+    ) {
+        if (!windowFocused) return
+        val engineState = triggerEngineStates[deviceId]
+        val pending = pendingEmits[deviceId]
+        if (engineState == null && pending.isNullOrEmpty()) return
+        val now = android.os.SystemClock.uptimeMillis()
+        if (engineState != null) {
+            for (outcome in TriggerEngine.onClock(engineState, profile.layerTriggers, now)) {
+                applyTriggerOutcome(outcome, null, device, mapping, layerState, profile, deviceId)
+            }
+        }
+        pending?.let { entries ->
+            for ((button, entry) in entries.toList()) {
+                if (now >= entry.deadlineMs) {
+                    entries.remove(button)
+                    for (stored in entry.events) {
+                        emitLogical(device, mapping, profile, layerState, stored, deviceId)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * I §2.3: aplica um outcome do engine. Retorna true quando o EVENTO atual foi
+     * consumido pelo trigger. [event] é null nos outcomes do relógio (flush) — nesse
+     * caso só Activate/Deactivate/ReleaseDelay aparecem (nunca DelayEmit/Consume).
+     */
+    private fun applyTriggerOutcome(
+        outcome: TriggerOutcome,
+        event: InputEvent?,
+        device: GamepadDevice,
+        mapping: GamepadMapping,
+        layerState: LayerState,
+        profile: GamepadProfile,
+        deviceId: Int,
+    ): Boolean {
+        when (outcome) {
+            is TriggerOutcome.Activate -> {
+                if (layerState.activeLayer != outcome.layer) {
+                    layerState.activeLayer = outcome.layer
+                    val spec = profile.layerTriggers[outcome.layer]
+                    if (spec == null || !spec.isShift) {
+                        GamepadHaptics.tickDevice(deviceId)
+                        PluviaApp.events.emit(GamepadLayerEvent(deviceId, outcome.layer, true))
+                    }
+                }
+                return true
+            }
+            is TriggerOutcome.Deactivate -> {
+                if (layerState.activeLayer == outcome.layer) {
+                    layerState.activeLayer = null
+                    val spec = profile.layerTriggers[outcome.layer]
+                    if (spec == null || !spec.isShift) {
+                        PluviaApp.events.emit(GamepadLayerEvent(deviceId, outcome.layer, false))
+                    }
+                }
+                return true
+            }
+            is TriggerOutcome.DelayEmit -> {
+                if (event == null) return false
+                val entry = pendingEmits.getOrPut(deviceId) { mutableMapOf() }
+                    .getOrPut(outcome.button) { PendingEmit(mutableListOf(), 0L) }
+                // Só o Down DO PRÓPRIO botão retardado entra na fila (o re-estendimento
+                // de um passo avançado carrega o evento do passo, que é só consumido).
+                if (event is InputEvent.ButtonDown &&
+                    event.button.name == outcome.button &&
+                    entry.events.none { it is InputEvent.ButtonDown }
+                ) {
+                    entry.events += event
+                }
+                entry.deadlineMs = maxOf(entry.deadlineMs, outcome.untilMs)
+                return true
+            }
+            is TriggerOutcome.ReleaseDelay -> {
+                val entry = pendingEmits[deviceId]?.remove(outcome.button) ?: return false
+                for (stored in entry.events) {
+                    emitLogical(device, mapping, profile, layerState, stored, deviceId)
+                }
+                return false
+            }
+            is TriggerOutcome.ConsumeDelay -> {
+                pendingEmits[deviceId]?.remove(outcome.button)
+                return true
+            }
+            is TriggerOutcome.Consume -> {
+                if (event == null) return false
+                // Up de botão com Down consumido: se o Down está RETARDADO, o Up entra
+                // NA MESMA fila (o par Down/Up sai junto na liberação — nunca um Down
+                // fantasma sem Up); sem fila, o evento morre aqui (balanço).
+                val buttonName = when (event) {
+                    is InputEvent.ButtonDown -> event.button.name
+                    is InputEvent.ButtonUp -> event.button.name
+                    else -> null
+                }
+                val entry = buttonName?.let { pendingEmits[deviceId]?.get(it) }
+                if (entry != null && event is InputEvent.ButtonUp &&
+                    entry.events.none { it is InputEvent.ButtonUp }
+                ) {
+                    entry.events += event
+                }
+                return true
+            }
+            TriggerOutcome.None -> return false
+        }
     }
 
     /**
@@ -538,6 +721,15 @@ class GamepadHub(context: Context) {
         if (device.deviceClass != DeviceClass.CONTROLLER && device.deviceClass != DeviceClass.TOUCHPAD) return
         if (!device.hasGyro) return
         val profile = profileFor(deviceId, activeAppId)
+        // I §2.3: relógio do engine também no caminho de sensor (~50 Hz — suficiente
+        // para os vencimentos; o MOUSE/CAMERA é o único caminho que não vê teclas).
+        flushTriggerClock(
+            deviceId,
+            device,
+            mappingFor(device),
+            profile,
+            layerStates.getOrPut(deviceId) { LayerState() },
+        )
         val gyroState = gyroStates.getOrPut(deviceId) { GyroState() }
         val output = GyroProcessor.process(
             sample = GyroSample(gyroX, gyroY, gyroZ, nowMs, accelX, accelY, accelZ),
@@ -804,10 +996,13 @@ class GamepadHub(context: Context) {
         val profile = profileFor(raw.deviceId, activeAppId)
         val activateButton = profile.gyroActivateButton
         val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
+        // I (spec 2026-08-16-I, §2.3): relógio do engine + liberação de emits
+        // retardados — os eventos de input SÃO o relógio (sem timer/coroutine).
+        flushTriggerClock(raw.deviceId, device, mapping, profile, layerState)
         for (event in events) {
             // F §1.3: trigger SHIFT consome o evento físico (não emite lógico — o
             // botão não chega ao jogo); camada comum segue pass-through.
-            if (!resolveLayerTriggers(layerState, profile, event)) {
+            if (!resolveLayerTriggers(device, mapping, layerState, profile, event)) {
                 emitLogical(device, mapping, profile, layerState, event, raw.deviceId)
             }
         }
@@ -863,6 +1058,8 @@ class GamepadHub(context: Context) {
 
         // O tradutor descreve o ESTADO da amostra (hat/meia-eixo); o hub vira transição.
         val state = buttonStates.getOrPut(raw.deviceId) { mutableSetOf() }
+        // I §2.3: relógio do engine + liberação de emits retardados (eventos = relógio).
+        flushTriggerClock(raw.deviceId, device, mapping, profile, layerState)
         var emitted = false
         for (event in events) {
             val forward = when (event) {
@@ -874,7 +1071,7 @@ class GamepadHub(context: Context) {
             if (forward) {
                 // U3: triggers de camada (botão FÍSICO) + remap pela camada ativa.
                 // F §1.3: trigger SHIFT consome o evento físico.
-                if (!resolveLayerTriggers(layerState, profile, event)) {
+                if (!resolveLayerTriggers(device, mapping, layerState, profile, event)) {
                     emitted = emitLogical(device, mapping, profile, layerState, event, raw.deviceId) || emitted
                 }
             }
@@ -1135,6 +1332,9 @@ class GamepadHub(context: Context) {
         fusionStates.remove(deviceId)
         // U3 (V6): camadas ativas morrem junto (deviceId efêmero).
         layerStates.remove(deviceId)
+        // I (V6): estado do engine e fila de emits retardados morrem junto.
+        triggerEngineStates.remove(deviceId)
+        pendingEmits.remove(deviceId)
         sensorSource?.onDeviceRemoved(deviceId)
         val current = _connectedDevices.value
         if (deviceId !in current) return
@@ -1192,6 +1392,18 @@ private class GyroSmoothState(
 ) {
     var rateHz: Float = 1f
 }
+
+/**
+ * I (spec 2026-08-16-I-trigger-engine-keymapper, §2.3): fila de eventos lógicos de
+ * UM botão retardado (disambiguação #1386) — o Down do 1º botão de uma sequência
+ * pendente (e o Up, se o usuário soltar enquanto a decisão vive) aguardam o prazo;
+ * resolução libera (emite na ordem) ou descarta (consumido). Estado por device
+ * (V6 — morto no removeDevice).
+ */
+private class PendingEmit(
+    val events: MutableList<InputEvent>,
+    var deadlineMs: Long,
+)
 
 /**
  * Spec 2026-08-16-C §1.2: amostra do preview de gyro para o card de diagnóstico

@@ -61,6 +61,43 @@
       }
     },
     {
+      "id": "longpress-sequence-triggers",
+      "game": null,
+      "faceStyle": "PLAYSTATION",
+      "controller": "any controller",
+      "name": "Long-press sniper + sequence layer",
+      "author": "gamenative-seed",
+      "description": "LONG_PRESS of LEFT_STICK (600 ms) activates a SNIPER layer; SEQUENCE SELECT then SELECT then FACE_TOP activates a RADIAL layer (2 steps, 400 ms per step — trigger engine, spec 2026-08-16-I).",
+      "downloads": 31,
+      "profile": {
+        "layers": {
+          "DEFAULT": {},
+          "SNIPER": {
+            "LEFT_TRIGGER": "key:96",
+            "RIGHT_TRIGGER": "key:97"
+          },
+          "RADIAL": {}
+        },
+        "layerTriggers": {
+          "SNIPER": {
+            "button": "LEFT_STICK",
+            "mode": "LONG_PRESS",
+            "longPressMs": 600
+          },
+          "RADIAL": {
+            "button": "SELECT",
+            "mode": "SEQUENCE",
+            "sequence": [
+              "SELECT",
+              "FACE_TOP"
+            ],
+            "seqTimeoutMs": 400
+          }
+        },
+        "schemaVersion": 1
+      }
+    },
+    {
       "id": "menu-shift-haptics",
       "game": null,
       "faceStyle": "GENERIC",

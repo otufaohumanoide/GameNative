@@ -130,6 +130,9 @@ fun GamepadRemapDialog(
     var layerTriggers by remember { mutableStateOf(profile.layerTriggers) }
     var captureLayerTrigger by remember { mutableStateOf(false) }
     var pendingTriggerMode by remember { mutableStateOf(LayerTriggerMode.HOLD) }
+    // I (spec 2026-08-16-I-trigger-engine-keymapper, §2.4): captura encadeada da
+    // SEQUENCE — a lista começa no 1º botão e ganha até 2 passos (3 no total).
+    var sequenceDraft by remember { mutableStateOf<List<String>>(emptyList()) }
     // P2-6 (spec 2026-08-14-touchpad-drag-double-tap): duplo-toque do touchpad =
     // clique direito (opt-in por perfil; null = OFF — 2 cliques, comportamento U2).
     var touchpadDoubleTapRightClick by remember {
@@ -473,7 +476,7 @@ fun GamepadRemapDialog(
     // Captura via eventos do BUS cru enquanto captureTarget != null OU
     // captureGyroActivate (o escopo de foco fica desabilitado: TODO o input do
     // controle vira binding).
-    DisposableEffect(captureTarget, captureGyroActivate, captureLayerTrigger) {
+    DisposableEffect(captureTarget, captureGyroActivate, captureLayerTrigger, sequenceDraft) {
         val target = captureTarget
         if (target == null && !captureGyroActivate && !captureLayerTrigger) {
             return@DisposableEffect onDispose {}
@@ -488,6 +491,7 @@ fun GamepadRemapDialog(
                         captureTarget = null
                         captureGyroActivate = false
                         captureLayerTrigger = false
+                        sequenceDraft = emptyList()
                         status = context.getString(R.string.gamepad_remap_capture_cancelled)
                     }
                     else -> {
@@ -501,30 +505,77 @@ fun GamepadRemapDialog(
                                 // P3-3 (spec 2026-08-14-gamepad-upgrades-pendencias):
                                 // dois triggers no MESMO botão = comportamento
                                 // indefinido (o hub usa firstOrNull). Bloqueia com
-                                // erro inline — padrão key-mapper.
+                                // erro inline — padrão key-mapper. I §2.4: duas
+                                // SEQUÊNCIAS com o MESMO 1º botão = AVISO (o engine
+                                // resolve overlap — a mais longa que completar vence).
                                 val conflict = layerTriggers.entries.any { (layer, spec) ->
                                     layer != selectedLayer && spec.button == logical.name
                                 }
-                                if (conflict) {
-                                    status = context.getString(R.string.gamepad_layer_trigger_conflict)
-                                } else {
-                                    // F §1.3: re-captura PRESERVA o isShift do trigger
-                                    // existente (capturar não reseta o modo de shift).
-                                    val existing = layerTriggers[selectedLayer]
-                                    layerTriggers = layerTriggers + (
-                                        selectedLayer to LayerTriggerSpec(
-                                            button = logical.name,
-                                            mode = pendingTriggerMode,
-                                            doubleTapMs = existing?.doubleTapMs ?: 250,
-                                            isShift = existing?.isShift ?: false,
+                                val overlapOk = conflict &&
+                                    pendingTriggerMode == LayerTriggerMode.SEQUENCE &&
+                                    layerTriggers.entries.any { (layer, spec) ->
+                                        layer != selectedLayer &&
+                                            spec.button == logical.name &&
+                                            spec.mode == LayerTriggerMode.SEQUENCE
+                                    }
+                                val existing = layerTriggers[selectedLayer]
+                                when {
+                                    conflict && !overlapOk -> {
+                                        status = context.getString(R.string.gamepad_layer_trigger_conflict)
+                                        captureLayerTrigger = false
+                                        sequenceDraft = emptyList()
+                                    }
+                                    pendingTriggerMode == LayerTriggerMode.SEQUENCE -> {
+                                        // I §2.4: captura encadeada — 1ª tecla vira o
+                                        // button; as 2 seguintes viram os passos (na
+                                        // ordem). BACK/ESCAPE encerra.
+                                        val draft = sequenceDraft + logical.name
+                                        layerTriggers = layerTriggers + (
+                                            selectedLayer to LayerTriggerSpec(
+                                                button = draft.first(),
+                                                mode = LayerTriggerMode.SEQUENCE,
+                                                doubleTapMs = existing?.doubleTapMs ?: 250,
+                                                isShift = existing?.isShift ?: false,
+                                                longPressMs = existing?.longPressMs ?: 500,
+                                                sequence = draft.drop(1),
+                                                seqTimeoutMs = existing?.seqTimeoutMs ?: 400,
+                                            )
                                         )
-                                    )
-                                    status = null
+                                        sequenceDraft = draft
+                                        status = when {
+                                            overlapOk -> context.getString(R.string.gamepad_layer_sequence_overlap_warning)
+                                            draft.size >= 3 -> context.getString(R.string.gamepad_layer_sequence_captured)
+                                            else -> context.getString(
+                                                R.string.gamepad_layer_sequence_capture_progress,
+                                                draft.size + 1,
+                                            )
+                                        }
+                                        if (draft.size >= 3) {
+                                            captureLayerTrigger = false
+                                            sequenceDraft = emptyList()
+                                        }
+                                    }
+                                    else -> {
+                                        // F §1.3: re-captura PRESERVA o isShift do trigger
+                                        // existente (capturar não reseta o modo de shift).
+                                        layerTriggers = layerTriggers + (
+                                            selectedLayer to LayerTriggerSpec(
+                                                button = logical.name,
+                                                mode = pendingTriggerMode,
+                                                doubleTapMs = existing?.doubleTapMs ?: 250,
+                                                isShift = existing?.isShift ?: false,
+                                                longPressMs = existing?.longPressMs ?: 500,
+                                                sequence = emptyList(),
+                                                seqTimeoutMs = existing?.seqTimeoutMs ?: 400,
+                                            )
+                                        )
+                                        status = null
+                                        captureLayerTrigger = false
+                                    }
                                 }
                             } else {
                                 status = context.getString(R.string.gamepad_gyro_activate_unmapped)
                             }
-                            captureLayerTrigger = false
                         } else if (captureGyroActivate) {
                             // U1: o botão de ativação é um GamepadButton LÓGICO —
                             // converte o keycode cru via mapping reverso.
@@ -774,6 +825,13 @@ fun GamepadRemapDialog(
                     if (selectedLayer != ActionLayer.DEFAULT.name) {
                         LayerTriggerRow(
                             trigger = layerTriggers[selectedLayer],
+                            sequenceCaptureIndex = if (captureLayerTrigger &&
+                                pendingTriggerMode == LayerTriggerMode.SEQUENCE
+                            ) {
+                                sequenceDraft.size + 1
+                            } else {
+                                0
+                            },
                             onModeChange = { newMode ->
                                 pendingTriggerMode = newMode
                                 val existing = layerTriggers[selectedLayer]
@@ -782,9 +840,25 @@ fun GamepadRemapDialog(
                                         (selectedLayer to existing.copy(mode = newMode))
                                 }
                             },
+                            onLongPressMsChange = { ms ->
+                                val existing = layerTriggers[selectedLayer] ?: return@LayerTriggerRow
+                                layerTriggers = layerTriggers +
+                                    (selectedLayer to existing.copy(longPressMs = ms))
+                            },
+                            onSeqTimeoutMsChange = { ms ->
+                                val existing = layerTriggers[selectedLayer] ?: return@LayerTriggerRow
+                                layerTriggers = layerTriggers +
+                                    (selectedLayer to existing.copy(seqTimeoutMs = ms))
+                            },
                             capturing = captureLayerTrigger,
                             onCapture = {
-                                captureLayerTrigger = !captureLayerTrigger
+                                if (captureLayerTrigger) {
+                                    captureLayerTrigger = false
+                                    sequenceDraft = emptyList()
+                                } else {
+                                    captureLayerTrigger = true
+                                    sequenceDraft = emptyList()
+                                }
                                 captureTarget = null
                                 captureGyroActivate = false
                                 visualCapture = null
@@ -1822,27 +1896,41 @@ private fun LayerChip(
 @Composable
 private fun LayerTriggerRow(
     trigger: LayerTriggerSpec?,
+    sequenceCaptureIndex: Int,
     onModeChange: (LayerTriggerMode) -> Unit,
+    onLongPressMsChange: (Int) -> Unit,
+    onSeqTimeoutMsChange: (Int) -> Unit,
     capturing: Boolean,
     onCapture: () -> Unit,
     onClearTrigger: () -> Unit,
     faceStyle: FaceStyle,
 ) {
     val captureInteraction = remember { MutableInteractionSource() }
+    // I §2.4: SEQUENCE mostra a cadeia completa (A → B → C) — glifos na ordem.
+    @Composable
+    fun buttonLabel(name: String): String {
+        val button = runCatching { GamepadButton.valueOf(name) }.getOrNull()
+        return if (button != null) stringResource(GamepadGlyphProvider.labelRes(button, faceStyle)) else name
+    }
     val triggerLabel = if (trigger != null) {
-        val button = runCatching { GamepadButton.valueOf(trigger.button) }.getOrNull()
-        val buttonLabel = if (button != null) {
-            stringResource(GamepadGlyphProvider.labelRes(button, faceStyle))
-        } else {
-            trigger.button
-        }
-        "$buttonLabel · " + stringResource(
+        val modeLabel = stringResource(
             when (trigger.mode) {
                 LayerTriggerMode.HOLD -> R.string.gamepad_layer_mode_hold
                 LayerTriggerMode.TOGGLE -> R.string.gamepad_layer_mode_toggle
                 LayerTriggerMode.DOUBLE_TAP -> R.string.gamepad_layer_mode_double_tap
+                LayerTriggerMode.LONG_PRESS -> R.string.gamepad_layer_mode_long_press
+                LayerTriggerMode.SEQUENCE -> R.string.gamepad_layer_mode_sequence
             },
         )
+        if (trigger.mode == LayerTriggerMode.SEQUENCE && trigger.sequence.isNotEmpty()) {
+            val labels = mutableListOf<String>()
+            for (name in listOf(trigger.button) + trigger.sequence) {
+                labels += buttonLabel(name)
+            }
+            labels.joinToString(" → ") + " · $modeLabel"
+        } else {
+            "${buttonLabel(trigger.button)} · $modeLabel"
+        }
     } else {
         stringResource(R.string.gamepad_layer_no_trigger)
     }
@@ -1864,10 +1952,13 @@ private fun LayerTriggerRow(
             modifier = Modifier.weight(1f),
         )
         Text(
-            text = if (capturing) {
-                stringResource(R.string.gamepad_remap_press_to_bind)
-            } else {
-                triggerLabel
+            text = when {
+                capturing && sequenceCaptureIndex > 0 -> stringResource(
+                    R.string.gamepad_layer_sequence_capture_progress,
+                    sequenceCaptureIndex,
+                )
+                capturing -> stringResource(R.string.gamepad_remap_press_to_bind)
+                else -> triggerLabel
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1879,6 +1970,8 @@ private fun LayerTriggerRow(
         }
     }
     if (trigger != null && !capturing) {
+        // I §2.4: modos novos LONG_PRESS e SEQUENCE na MESMA fileira de chips
+        // (duas linhas — os chips de largura igual não cabem em cinco).
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1886,6 +1979,32 @@ private fun LayerTriggerRow(
             LayerTriggerModeChip(LayerTriggerMode.HOLD, trigger.mode == LayerTriggerMode.HOLD, Modifier.weight(1f)) { onModeChange(LayerTriggerMode.HOLD) }
             LayerTriggerModeChip(LayerTriggerMode.TOGGLE, trigger.mode == LayerTriggerMode.TOGGLE, Modifier.weight(1f)) { onModeChange(LayerTriggerMode.TOGGLE) }
             LayerTriggerModeChip(LayerTriggerMode.DOUBLE_TAP, trigger.mode == LayerTriggerMode.DOUBLE_TAP, Modifier.weight(1f)) { onModeChange(LayerTriggerMode.DOUBLE_TAP) }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            LayerTriggerModeChip(LayerTriggerMode.LONG_PRESS, trigger.mode == LayerTriggerMode.LONG_PRESS, Modifier.weight(1f)) { onModeChange(LayerTriggerMode.LONG_PRESS) }
+            LayerTriggerModeChip(LayerTriggerMode.SEQUENCE, trigger.mode == LayerTriggerMode.SEQUENCE, Modifier.weight(1f)) { onModeChange(LayerTriggerMode.SEQUENCE) }
+        }
+        // I §2.4: sliders dos modos novos (padrão gamepadAdjustableRow do dialog).
+        if (trigger.mode == LayerTriggerMode.LONG_PRESS) {
+            GyroSliderRow(
+                title = stringResource(R.string.gamepad_layer_long_press_ms_title),
+                value = trigger.longPressMs.toFloat(),
+                range = 200f..1500f,
+                format = { String.format(java.util.Locale.US, "%.0f ms", it) },
+                onValueChange = { onLongPressMsChange(it.roundToInt()) },
+            )
+        }
+        if (trigger.mode == LayerTriggerMode.SEQUENCE) {
+            GyroSliderRow(
+                title = stringResource(R.string.gamepad_layer_seq_timeout_title),
+                value = trigger.seqTimeoutMs.toFloat(),
+                range = 200f..1000f,
+                format = { String.format(java.util.Locale.US, "%.0f ms", it) },
+                onValueChange = { onSeqTimeoutMsChange(it.roundToInt()) },
+            )
         }
     }
 }
@@ -1916,6 +2035,8 @@ private fun LayerTriggerModeChip(
                     LayerTriggerMode.HOLD -> R.string.gamepad_layer_mode_hold
                     LayerTriggerMode.TOGGLE -> R.string.gamepad_layer_mode_toggle
                     LayerTriggerMode.DOUBLE_TAP -> R.string.gamepad_layer_mode_double_tap
+                    LayerTriggerMode.LONG_PRESS -> R.string.gamepad_layer_mode_long_press
+                    LayerTriggerMode.SEQUENCE -> R.string.gamepad_layer_mode_sequence
                 },
             ),
             style = MaterialTheme.typography.labelMedium,

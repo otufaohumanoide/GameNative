@@ -2292,6 +2292,13 @@
     <string name="gamepad_layer_mode_hold">Segurar</string>
     <string name="gamepad_layer_mode_toggle">Alternar</string>
     <string name="gamepad_layer_mode_double_tap">Duplo toque</string>
+    <string name="gamepad_layer_mode_long_press">Pressão longa</string>
+    <string name="gamepad_layer_mode_sequence">Sequência</string>
+    <string name="gamepad_layer_sequence_capture_progress">Botão %1$d/3 — voltar encerra</string>
+    <string name="gamepad_layer_sequence_captured">Sequência capturada</string>
+    <string name="gamepad_layer_sequence_overlap_warning">Mesmo 1º botão de outra sequência — vence a sequência mais longa que completar</string>
+    <string name="gamepad_layer_long_press_ms_title">Tempo de pressão longa</string>
+    <string name="gamepad_layer_seq_timeout_title">Timeout do passo</string>
             <string name="radial_menu_title">Menu Radial</string>
     <string name="radial_menu_editor_title">Editor do Menu Radial</string>
     <string name="radial_menu_trigger_layer_title">Camada de gatilho</string>

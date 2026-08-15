@@ -66,7 +66,7 @@ FACE_STYLES = {"XBOX", "PLAYSTATION", "NINTENDO", "GENERIC"}
 GYRO_MODES = {"OFF", "MOUSE", "CAMERA"}
 DEADZONE_MODES = {"RADIAL", "AXIAL"}
 RESPONSE_CURVES = {"LINEAR", "EXPONENTIAL", "SCURVE", "LUT"}
-LAYER_TRIGGER_MODES = {"HOLD", "TOGGLE", "DOUBLE_TAP"}
+LAYER_TRIGGER_MODES = {"HOLD", "TOGGLE", "DOUBLE_TAP", "LONG_PRESS", "SEQUENCE"}
 SWIPE_DIRECTIONS = {
     "UP", "UP_RIGHT", "RIGHT", "DOWN_RIGHT", "DOWN", "DOWN_LEFT", "LEFT", "UP_LEFT",
 }
@@ -228,6 +228,28 @@ def validate_profile(raw: dict, where: str) -> tuple:
                     errors.append(f"layerTriggers[{name}].doubleTapMs deve ser int")
                 if "isShift" in spec and not isinstance(spec["isShift"], bool):
                     errors.append(f"layerTriggers[{name}].isShift deve ser bool")
+                # I (spec 2026-08-16-I-trigger-engine-keymapper, §2.5): campos novos
+                # dos modos LONG_PRESS/SEQUENCE — ints e lista curta de strings.
+                if "longPressMs" in spec and (
+                    not isinstance(spec["longPressMs"], int) or isinstance(spec["longPressMs"], bool)
+                ):
+                    errors.append(f"layerTriggers[{name}].longPressMs deve ser int")
+                if "seqTimeoutMs" in spec and (
+                    not isinstance(spec["seqTimeoutMs"], int) or isinstance(spec["seqTimeoutMs"], bool)
+                ):
+                    errors.append(f"layerTriggers[{name}].seqTimeoutMs deve ser int")
+                if "sequence" in spec:
+                    seq = spec["sequence"]
+                    if not isinstance(seq, list) or not all(
+                        isinstance(s, str) and s for s in seq
+                    ):
+                        errors.append(
+                            f"layerTriggers[{name}].sequence deve ser lista de strings curtas"
+                        )
+                    elif len(seq) > 2:
+                        errors.append(
+                            f"layerTriggers[{name}].sequence deve ter no máximo 2 passos (2–3 botões no total)"
+                        )
 
     swipes = raw.get("touchpadSwipes")
     if swipes is not None:

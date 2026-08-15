@@ -2424,6 +2424,13 @@
     <string name="gamepad_layer_mode_hold">Hold</string>
     <string name="gamepad_layer_mode_toggle">Toggle</string>
     <string name="gamepad_layer_mode_double_tap">Double-tap</string>
+    <string name="gamepad_layer_mode_long_press">Long press</string>
+    <string name="gamepad_layer_mode_sequence">Sequence</string>
+    <string name="gamepad_layer_sequence_capture_progress">Button %1$d/3 — back ends</string>
+    <string name="gamepad_layer_sequence_captured">Sequence captured</string>
+    <string name="gamepad_layer_sequence_overlap_warning">Same first button as another sequence — the longer sequence that completes wins</string>
+    <string name="gamepad_layer_long_press_ms_title">Long press delay</string>
+    <string name="gamepad_layer_seq_timeout_title">Step timeout</string>
             <string name="radial_menu_title">Radial Menu</string>
     <string name="radial_menu_editor_title">Radial Menu editor</string>
     <string name="radial_menu_trigger_layer_title">Trigger layer</string>

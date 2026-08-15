@@ -94,6 +94,10 @@ object LayerResolver {
                     LayerChange.None // primeiro tap: arma a janela
                 }
             }
+            // I (spec 2026-08-16-I-trigger-engine-keymapper): LONG_PRESS/SEQUENCE
+            // NUNCA chegam aqui — o hub os roteia para o TriggerEngine ANTES do
+            // resolver. Branch de exaustividade do enum estendido (byte-identical).
+            else -> LayerChange.None
         }
     }
 
