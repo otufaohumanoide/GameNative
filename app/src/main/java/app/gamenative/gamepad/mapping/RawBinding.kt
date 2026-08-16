@@ -1,5 +1,7 @@
 package app.gamenative.gamepad.mapping
 
+import kotlinx.serialization.Serializable
+
 /**
  * ONDE um controle físico emite um botão/eixo (spec 2026-08-13, Parte I §4).
  *
@@ -10,8 +12,12 @@ package app.gamenative.gamepad.mapping
  * - [Hat]: hat N com bitmask SDL (1=up, 2=right, 4=down, 8=left) — ex.: `h0.4` = hat 0,
  *   máscara 4 (down). No Android o hat chega como AXIS_HAT_X/Y e o TRADUTOR converte.
  */
+@Serializable
 sealed interface RawBinding {
+    @Serializable
     data class Key(val keyCode: Int) : RawBinding
+    @Serializable
     data class Axis(val axis: Int, val direction: Int) : RawBinding
+    @Serializable
     data class Hat(val hat: Int, val mask: Int) : RawBinding
 }

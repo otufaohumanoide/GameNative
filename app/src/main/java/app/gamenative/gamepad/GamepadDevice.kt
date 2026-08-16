@@ -62,6 +62,7 @@ data class GamepadDevice(
 /**
  * Origem do mapping efetivo (spec 2026-08-16-K3, §1.5). Ordem de declaração = ordem
  * de prioridade da cadeia (regra de escalonamento do SDL, SDL_gamepad.c:2214-2221):
- * USER (fase K5, reservado) > MODEL > SDL_DB > CAPABILITIES > DEFAULT.
+ * USER (autoconfig salvo — spec 2026-08-16-K5, §1.2) > MODEL > SDL_DB >
+ * CAPABILITIES > DEFAULT.
  */
 enum class MappingSource { USER, MODEL, SDL_DB, CAPABILITIES, DEFAULT }

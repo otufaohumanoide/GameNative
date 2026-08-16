@@ -3,7 +3,9 @@ package app.gamenative.gamepad.mapping
 import app.gamenative.gamepad.FaceStyle
 import app.gamenative.gamepad.GamepadAxis
 import app.gamenative.gamepad.GamepadButton
+import kotlinx.serialization.Serializable
 
+@Serializable
 data class GamepadMapping(
     val mappingKey: String,
     val name: String,

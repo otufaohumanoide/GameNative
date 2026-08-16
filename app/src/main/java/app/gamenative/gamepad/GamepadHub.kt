@@ -25,7 +25,12 @@ import app.gamenative.gamepad.expressions.ChordLogic
 import app.gamenative.gamepad.expressions.ExprBindingProcessor
 import app.gamenative.gamepad.expressions.ExprState
 import app.gamenative.gamepad.mapping.AndroidConstants
+import app.gamenative.gamepad.mapping.AutoconfigCheck
+import app.gamenative.gamepad.mapping.AutoconfigSaveResult
+import app.gamenative.gamepad.mapping.AutoconfigValidation
 import app.gamenative.gamepad.mapping.CapabilityMapping
+import app.gamenative.gamepad.mapping.DeviceAutoconfig
+import app.gamenative.gamepad.mapping.DeviceMappingStore
 import app.gamenative.gamepad.mapping.DeviceQuirk
 import app.gamenative.gamepad.mapping.DeviceQuirks
 import app.gamenative.gamepad.mapping.EventTranslator
@@ -149,6 +154,15 @@ class GamepadHub(context: Context) {
         GamepadProfileStore(File(File(appContext.filesDir, "gamepad"), "game_profiles.json"))
 
     /**
+     * K5 (spec 2026-08-16-K5, §1.1): autoconfig por device (mapping RAW→LÓGICO —
+     * camada de BAIXO; NÃO é o perfil lógico do [GamepadProfileStore]). Um arquivo
+     * por controle em `<filesDir>/deviceMappings/<mappingKey>.json`; alimenta o
+     * tier USER da cadeia e a fase K6 (import/export SDL).
+     */
+    private val autoconfigStore =
+        DeviceMappingStore(File(appContext.filesDir, "deviceMappings"))
+
+    /**
      * Cache do perfil EFETIVO por (deviceId, appId) (spec 2026-08-14-onda2-pos-implementacao,
      * M1 — L1): o hot path (~120 Hz por stick + hats) não paga disco + JSON por evento.
      * Acesso só na main thread (dispatch + hotplug + save — nenhuma coroutine), então
@@ -249,6 +263,8 @@ class GamepadHub(context: Context) {
         buttonStates.clear()
         mappingCache.clear()
         quirkCache.clear()
+        // K5: base capturado morre junto (deviceId efêmero, padrão K3/K4).
+        baseMappingCache.clear()
         for (deviceId in alive) {
             PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)
             PluviaApp.events.emit(GamepadDeviceRemovedEvent(deviceId))
@@ -338,6 +354,86 @@ class GamepadHub(context: Context) {
         val device = deviceFor(deviceId) ?: return
         deviceStore.save(device.mappingKey, profile)
         invalidateProfiles()
+    }
+
+    /**
+     * K5 (spec 2026-08-16-K5, §1.3.2): valida o mapping BASE capturado no addDevice
+     * (port clean-room de configuration.c:8206-8233 — sem FACE_BOTTOM ou sem
+     * direção de dpad o perfil é inútil/navegável quebrado). Sem device = válido
+     * (o [saveAutoconfig] guarda o NoDevice — a UI nunca chega aqui sem device).
+     */
+    fun autoconfigCheck(deviceId: Int): AutoconfigCheck {
+        val device = deviceFor(deviceId) ?: return AutoconfigCheck.Valid
+        val base = baseMappingCache[device.deviceId] ?: resolveBaseMapping(device).first
+        return AutoconfigValidation.validate(base)
+    }
+
+    /** K5 §1.3: autoconfig salvo para o [mappingKey] (card — badge/restaurar). Main thread. */
+    fun savedAutoconfig(mappingKey: String): DeviceAutoconfig? = autoconfigStore.load(mappingKey)
+
+    /**
+     * K5 (spec 2026-08-16-K5, §1.3.1/§1.3.4): monta o [DeviceAutoconfig] do mapping
+     * EFETIVO (base PRÉ-quirk capturado no addDevice), valida (1.3.2), salva e
+     * RE-RESOLVE ao vivo — análogo ao reconect do RetroArch (após gravar o autoconf,
+     * o RA limpa binds manuais e reconecta para o perfil salvo já valer): o device
+     * conectado passa a usar o tier USER na hora, sem reconectar fisicamente.
+     */
+    fun saveAutoconfig(deviceId: Int): AutoconfigSaveResult {
+        val device = deviceFor(deviceId) ?: return AutoconfigSaveResult.NoDevice
+        val base = baseMappingCache[device.deviceId] ?: resolveBaseMapping(device).first
+        when (val check = AutoconfigValidation.validate(base)) {
+            is AutoconfigCheck.Invalid -> return AutoconfigSaveResult.Invalid(check.reason)
+            is AutoconfigCheck.Valid -> Unit
+        }
+        val overwrote = savedAutoconfig(device.mappingKey) != null
+        val config = DeviceAutoconfig(
+            mappingKey = device.mappingKey,
+            deviceName = device.name,
+            mapping = base,
+            faceStyle = base.faceStyle,
+            createdAtMs = System.currentTimeMillis(),
+        )
+        autoconfigStore.save(config)
+        reResolveAutoconfig(device.mappingKey)
+        Timber.d(
+            "gncontrol: autoconfig %s salvo — tier USER ativo no device %d (%s)",
+            device.mappingKey, deviceId, device.name,
+        )
+        return AutoconfigSaveResult.Saved(config, overwrote)
+    }
+
+    /**
+     * K5 §1.3.5: "Restaurar automático" — deleta o autoconfig do [mappingKey] e
+     * re-resolve (a cadeia volta a MODEL/SDL_DB/CAPABILITIES/DEFAULT na hora, sem
+     * reconexão física). Chave ausente = no-op.
+     */
+    fun deleteAutoconfig(mappingKey: String) {
+        if (autoconfigStore.load(mappingKey) == null) return
+        autoconfigStore.delete(mappingKey)
+        reResolveAutoconfig(mappingKey)
+        Timber.d(
+            "gncontrol: autoconfig %s removido — cadeia MODEL/SDL_DB/CAPABILITIES/DEFAULT",
+            mappingKey,
+        )
+    }
+
+    /**
+     * K5 §1.3.4: re-resolve AO VIVO dos devices conectados com o [mappingKey]
+     * (análogo ao reconect do RetroArch — o mapping USER passa a valer na hora).
+     * Invalida os caches por deviceId (K3/K4/K5) e atualiza o
+     * [GamepadDevice.mappingSource] no StateFlow (o card mostra o badge USER ao
+     * vivo). O hub não tem padrão de evento de "mapping changed"
+     * (Added/Removed/Input/Layer) — log + invalidação + StateFlow, como o spec pede.
+     */
+    private fun reResolveAutoconfig(mappingKey: String) {
+        for ((deviceId, device) in _connectedDevices.value) {
+            if (device.mappingKey != mappingKey) continue
+            mappingCache.remove(deviceId)
+            baseMappingCache.remove(deviceId)
+            val (_, source) = resolveMapping(device)
+            _connectedDevices.value = _connectedDevices.value +
+                (deviceId to device.copy(mappingSource = source))
+        }
     }
 
     /**
@@ -1344,10 +1440,12 @@ class GamepadHub(context: Context) {
     /**
      * K3 (spec 2026-08-16-K3, §1.5): cache do mapping EFETIVO por deviceId (par
      * mapping + origem). O resultado é determinístico por device (vid/pid + [GamepadCapabilities]
-     * imutáveis no [GamepadDevice]) e o hot path (~120 Hz por stick + hats) NÃO aloca
-     * mapping por evento (a síntese de capabilities custa mapas novos a cada chamada).
-     * Acesso só na main thread (dispatch + hotplug — contrato M1 do profileCache);
-     * invalidado em addDevice/removeDevice/stop (deviceId é efêmero).
+     * imutáveis no [GamepadDevice] + autoconfig USER) e o hot path (~120 Hz por
+     * stick + hats) NÃO aloca mapping por evento (a síntese de capabilities custa
+     * mapas novos a cada chamada). Acesso só na main thread (dispatch + hotplug —
+     * contrato M1 do profileCache); invalidado em addDevice/removeDevice/stop
+     * (deviceId é efêmero) e em save/delete de autoconfig (K5 — o tier USER muda o
+     * resultado SEM o device trocar).
      */
     private val mappingCache = mutableMapOf<Int, Pair<GamepadMapping, MappingSource>>()
 
@@ -1361,32 +1459,64 @@ class GamepadHub(context: Context) {
     private val quirkCache = mutableMapOf<Int, DeviceQuirk?>()
 
     /**
-     * Cadeia de prioridade do mapping (spec 2026-08-16-K3, §1.5): USER (K5, futuro) >
-     * MODEL (MappingDatabase) > SDL_DB (gamecontrollerdb) > CAPABILITIES (síntese) >
+     * K5 (spec 2026-08-16-K5, §1.3.1): mapping BASE (pré-quirk) capturado no
+     * addDevice — exatamente o que o tier vencedor produziu ANTES do quirk; é o
+     * que "Salvar perfil deste controle" grava, nunca re-derivado no clique (como o
+     * RetroArch grava o estado da CONEXÃO, não o momento do clique). Capturado
+     * DENTRO do [mappingCache] (mesmo ciclo de vida: main thread, deviceId efêmero,
+     * morto em removeDevice/stop/autoconfig).
+     */
+    private val baseMappingCache = mutableMapOf<Int, GamepadMapping>()
+
+    /**
+     * Cadeia de prioridade do mapping (spec 2026-08-16-K3, §1.5): USER (K5 — o
+     * autoconfig salvo do [DeviceMappingStore], spec 2026-08-16-K5 §1.2) > MODEL
+     * (MappingDatabase) > SDL_DB (gamecontrollerdb) > CAPABILITIES (síntese) >
      * DEFAULT (estático). A ORDEM da cadeia É a prioridade — regra de escalonamento
      * do SDL (SDL_gamepad.c:2214-2221, um tier só é sobrescrito por prioridade ≥).
-     * A origem volta junto para UI/log ([MappingSource]). K4 (spec 2026-08-16-K4,
-     * §1.3.1): o quirk do device (se houver) aplica DEPOIS, como pós-processamento
-     * do mapping escolhido — [DeviceQuirks.apply] devolve o MESMO objeto quando o
-     * fixup é nulo/vazio (degradação zero, sem alocação por evento; o cache por
-     * deviceId já amortiza a cópia única do hotplug).
+     * A origem volta junto para UI/log ([MappingSource]).
+     *
+     * K4 (spec 2026-08-16-K4, §1.3.1): o quirk do device (se houver) aplica DEPOIS,
+     * como pós-processamento do mapping escolhido — [DeviceQuirks.apply] devolve o
+     * MESMO objeto quando o fixup é nulo/vazio (degradação zero, sem alocação por
+     * evento; o cache por deviceId já amortiza a cópia única do hotplug).
+     *
+     * K5 (spec 2026-08-16-K5, §1.2): a ORDEM quirk-DEPOIS é invariante — o
+     * autoconfig salvo captura o mapping PRÉ-quirk ([baseMappingCache]): quirk é
+     * correção de TRANSPORTE, não preferência do usuário; firmware novo com quirk
+     * novo continua sendo corrigido por cima do USER (e um quirk removido deixa de
+     * aplicar sem re-salvar nada).
      */
     private fun resolveMapping(device: GamepadDevice): Pair<GamepadMapping, MappingSource> =
         mappingCache.getOrPut(device.deviceId) {
+            val base = resolveBaseMapping(device)
+            // K5 §1.3.1: captura do base PRÉ-quirk no addDevice — o save grava ESTE
+            // estado (nunca o pós-quirk).
+            baseMappingCache[device.deviceId] = base.first
+            DeviceQuirks.apply(base.first, quirkCache[device.deviceId]?.fixup) to base.second
+        }
+
+    /**
+     * Cadeia BASE (pré-quirk) — extraída de [resolveMapping] para o save do
+     * autoconfig (K5) capturar exatamente o que o tier vencedor produziu, sem
+     * quirk. USER primeiro: [DeviceMappingStore.load] devolve null quando não há
+     * autoconfig salvo (cache do store — sem custo no hot path).
+     */
+    private fun resolveBaseMapping(device: GamepadDevice): Pair<GamepadMapping, MappingSource> =
+        autoconfigStore.load(device.mappingKey)?.mapping
+            ?.let { it to MappingSource.USER }
             // F1.4 (spec 2026-08-15-input-core-avancado): fallback do DB pinado do
             // SDL_GameControllerDB (entradas Android). Load do asset UMA vez,
             // preguiçoso (o hotplug do device desconhecido esquenta o cache).
-            val base = MappingDatabase.mappingFor(device.vendorId, device.productId)
+            ?: MappingDatabase.mappingFor(device.vendorId, device.productId)
                 ?.let { it to MappingSource.MODEL }
-                ?: sdlDb()[device.mappingKey]?.let { it to MappingSource.SDL_DB }
-                ?: device.capabilities?.let { capabilities ->
-                    CapabilityMapping.synthesize(capabilities, device.faceStyle)?.let {
-                        it to MappingSource.CAPABILITIES
-                    }
+            ?: sdlDb()[device.mappingKey]?.let { it to MappingSource.SDL_DB }
+            ?: device.capabilities?.let { capabilities ->
+                CapabilityMapping.synthesize(capabilities, device.faceStyle)?.let {
+                    it to MappingSource.CAPABILITIES
                 }
-                ?: (MappingDatabase.defaultAndroidMapping(device.faceStyle) to MappingSource.DEFAULT)
-            DeviceQuirks.apply(base.first, quirkCache[device.deviceId]?.fixup) to base.second
-        }
+            }
+            ?: (MappingDatabase.defaultAndroidMapping(device.faceStyle) to MappingSource.DEFAULT)
 
     private fun mappingFor(device: GamepadDevice): GamepadMapping = resolveMapping(device).first
 
@@ -1531,6 +1661,8 @@ class GamepadHub(context: Context) {
         mappingCache.remove(deviceId)
         // K4: o quirk do device morre junto (mesma regra do mappingCache).
         quirkCache.remove(deviceId)
+        // K5: o base capturado (pré-quirk) morre junto (mesma regra).
+        baseMappingCache.remove(deviceId)
         // U2 (V6): estado do touchpad→mouse morre junto com o device (mesmo padrão
         // buttonStates — o deviceId efêmero pode ser reusado por outro hardware).
         PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)

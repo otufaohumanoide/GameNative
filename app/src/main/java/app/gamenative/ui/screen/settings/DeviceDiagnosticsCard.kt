@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -32,12 +34,16 @@ import app.gamenative.events.GamepadInputEvent
 import app.gamenative.gamepad.GamepadDevice
 import app.gamenative.gamepad.GyroPreview
 import app.gamenative.gamepad.TouchpadPreview
+import app.gamenative.gamepad.mapping.AutoconfigCheck
+import app.gamenative.gamepad.mapping.AutoconfigValidation
 import app.gamenative.gamepad.mapping.ControllerVisualLayout
 import app.gamenative.gamepad.processing.RumblePhoneCurve
 import app.gamenative.ui.component.GamepadHaptics
 import app.gamenative.ui.component.gamepadSelectable
 import app.gamenative.ui.component.remap.ControllerVisualView
 import app.gamenative.ui.component.remap.VisualControlState
+import java.text.DateFormat
+import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
 
@@ -97,6 +103,14 @@ fun DeviceDiagnosticsCard(
             rumbleResult = null
         }
     }
+
+    // K5 (spec 2026-08-16-K5, §1.3): estado dos diálogos do autoconfig — motivo da
+    // recusa (1.3.2) e confirmação de sobrescrita (1.3.3). O mapping em si NUNCA é
+    // re-derivado no clique: a validação opera sobre o base capturado no addDevice.
+    var autoconfigError by rememberSaveable(device.deviceId) {
+        mutableStateOf<AutoconfigValidation.Reason?>(null)
+    }
+    var showOverwriteConfirm by rememberSaveable(device.deviceId) { mutableStateOf(false) }
 
     val headerInteraction = remember { MutableInteractionSource() }
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -309,6 +323,43 @@ fun DeviceDiagnosticsCard(
                         onClick = { PluviaApp.gamepadHub.calibrateGrip(device.deviceId) },
                     )
                 }
+                // K5 (spec 2026-08-16-K5, §1.3): "Salvar perfil deste controle" —
+                // grava o autoconfig (mapping BASE pré-quirk capturado no addDevice)
+                // e re-resolve ao vivo (tier USER). O clique NÃO re-deriva o mapping:
+                // validação/confirmação operam sobre o estado resolvido no hotplug
+                // (padrão RetroArch — o autoconf grava a conexão, não o clique).
+                val savedAutoconfig = PluviaApp.gamepadHub.savedAutoconfig(device.mappingKey)
+                DiagButtonRow(
+                    title = stringResource(R.string.gamepad_autoconfig_save_title),
+                    subtitle = if (savedAutoconfig != null) {
+                        stringResource(
+                            R.string.gamepad_autoconfig_saved_format,
+                            savedAutoconfig.deviceName,
+                            formatAutoconfigDate(savedAutoconfig.createdAtMs),
+                        )
+                    } else {
+                        stringResource(R.string.gamepad_autoconfig_save_hint)
+                    },
+                    onClick = {
+                        when (val check = PluviaApp.gamepadHub.autoconfigCheck(device.deviceId)) {
+                            is AutoconfigCheck.Invalid -> autoconfigError = check.reason
+                            is AutoconfigCheck.Valid -> {
+                                if (PluviaApp.gamepadHub.savedAutoconfig(device.mappingKey) != null) {
+                                    showOverwriteConfirm = true
+                                } else {
+                                    PluviaApp.gamepadHub.saveAutoconfig(device.deviceId)
+                                }
+                            }
+                        }
+                    },
+                )
+                if (savedAutoconfig != null) {
+                    DiagButtonRow(
+                        title = stringResource(R.string.gamepad_autoconfig_restore_title),
+                        subtitle = stringResource(R.string.gamepad_autoconfig_restore_hint),
+                        onClick = { PluviaApp.gamepadHub.deleteAutoconfig(device.mappingKey) },
+                    )
+                }
                 // "Todos os botões" — só instruções + o viewer acescendo (sem lógica).
                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
                     Text(
@@ -326,7 +377,68 @@ fun DeviceDiagnosticsCard(
             }
         }
     }
+
+    // K5 §1.3.2: recusa SEM salvar — diálogo de erro com o motivo exato.
+    autoconfigError?.let { reason ->
+        AlertDialog(
+            onDismissRequest = { autoconfigError = null },
+            title = { Text(stringResource(R.string.gamepad_autoconfig_error_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        when (reason) {
+                            AutoconfigValidation.Reason.MISSING_CONFIRM ->
+                                R.string.gamepad_autoconfig_error_missing_confirm
+                            AutoconfigValidation.Reason.MISSING_DIRECTION ->
+                                R.string.gamepad_autoconfig_error_missing_direction
+                        },
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { autoconfigError = null }) {
+                    Text(stringResource(R.string.gamepad_autoconfig_dismiss))
+                }
+            },
+        )
+    }
+    // K5 §1.3.3: sobrescreve autoconfig existente? Mostra nome + data do atual.
+    if (showOverwriteConfirm) {
+        val existing = PluviaApp.gamepadHub.savedAutoconfig(device.mappingKey)
+        AlertDialog(
+            onDismissRequest = { showOverwriteConfirm = false },
+            title = { Text(stringResource(R.string.gamepad_autoconfig_confirm_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.gamepad_autoconfig_confirm_message,
+                        existing?.deviceName ?: "",
+                        existing?.let { formatAutoconfigDate(it.createdAtMs) } ?: "",
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showOverwriteConfirm = false
+                        PluviaApp.gamepadHub.saveAutoconfig(device.deviceId)
+                    },
+                ) {
+                    Text(stringResource(R.string.gamepad_autoconfig_overwrite))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showOverwriteConfirm = false }) {
+                    Text(stringResource(R.string.gamepad_autoconfig_cancel))
+                }
+            },
+        )
+    }
 }
+
+/** K5 §1.3.3: data/hora do autoconfig no locale do device — APENAS display (nunca chave). */
+private fun formatAutoconfigDate(createdAtMs: Long): String =
+    DateFormat.getDateTimeInstance().format(Date(createdAtMs))
 
 /** Badge de capacidade (mesmo visual do CapabilityBadge antigo do SettingsGroupGamepad). */
 @Composable
