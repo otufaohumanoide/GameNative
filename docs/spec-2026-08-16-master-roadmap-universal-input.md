@@ -149,6 +149,11 @@ JAVA_HOME=/home/annapaula/android-studio/jbr ./gradlew :app:testModernDebugUnitT
 JAVA_HOME=/home/annapaula/android-studio/jbr ./gradlew :app:assembleModernDebug
 ```
 
+
+> **FECHADO (2026-08-16):** 8/8 fases ✅ — roadmap universal input completo.
+> Checkpoint final: `docs/spec-2026-08-16-universal-input-fechamento-impl.md`;
+> milestone `milestone-2026-08-16-universal-input-completo` (docs/MILESTONES.md);
+> dívida on-device consolidada no protocolo v2 (sessões A/B/C — humano).
 ## 8. Como rodar (sugestão para o humano — Prime Agent)
 
 **Opção A — UM goal para tudo (recomendado):**

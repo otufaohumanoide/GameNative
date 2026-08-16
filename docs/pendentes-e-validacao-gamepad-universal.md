@@ -108,3 +108,19 @@ Se o VID/PID não for de DS4 legítimo, o fluxo cai em `SdlControllerDb` (F1.4, 
 pinado) → auto-mapeamento ou default. Aí o teste nº 1 é o que diz se vale a pena:
 **badges e bateria aparecem = capacidades expostas = features funcionam; não
 aparecem = o Android não expõe no HID desse pad, e nenhum código do fork muda isso.**
+
+
+---
+
+## 4. Fechamento (2026-08-16 — roadmap universal input COMPLETO)
+
+Status final do roadmap universal input (master §7 — 8/8 ✅; fechamento em
+`docs/spec-2026-08-16-universal-input-fechamento-impl.md`):
+
+- As linhas ✅ acima permanecem como HISTÓRICO da sessão 2026-08-14 (não reabrir).
+- A linha ⏳ **nº 7 (rumble via USB)** NÃO virou resultado de sessão A — o
+  protocolo on-device consolidado v2 (`docs/spec-2026-08-16-protocolo-on-device-
+  consolidado-v2.md`, sessões A/B/C) é o dono da dívida: re-testar em BT está na
+  agenda do humano. Regra anti-acúmulo: nenhuma linha "pendente" sem dono.
+- As fases NOVAS (F0/K3/K4/K5/K6/K2/K1/K7) têm cada uma sua §4 "on-device
+  pendente" no impl doc da fase — todas centralizadas no protocolo v2.
