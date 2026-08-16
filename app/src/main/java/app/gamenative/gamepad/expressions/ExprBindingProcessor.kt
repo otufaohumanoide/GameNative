@@ -19,6 +19,8 @@ object ExprBindingProcessor {
         val source: String,
         val ast: ExprAst,
         val index: Int,
+        /** J2 §3: chord do source (cadeia top-level de `+` com InputRefs puros). */
+        val chord: ChordLogic.Chord? = null,
     )
 
     /** Tokens `expr:` dos bindings efetivos → bindings parseados (erros pulados). */
@@ -31,7 +33,7 @@ object ExprBindingProcessor {
             val button = GamepadButton.entries.firstOrNull { it.name == name } ?: continue
             val ast = runCatching { ExprParser.parse(source) }.getOrNull() ?: continue
             val axis = GamepadAxis.entries.firstOrNull { it.name == name }
-            result += Parsed(button, axis, source, ast, index++)
+            result += Parsed(button, axis, source, ast, index++, chord = ChordLogic.parseChord(source))
         }
         return result
     }
@@ -41,9 +43,20 @@ object ExprBindingProcessor {
         effectiveBindings.values.any { it.startsWith("expr:") }
 
     /**
+     * Chords do conjunto de bindings (J2 §3 — registro por perfil, derivado do
+     * cache de parse; sem chord ⇒ lista vazia).
+     */
+    fun chordsOf(bindings: List<Parsed>): List<ChordLogic.Chord> =
+        bindings.mapNotNull { it.chord }
+
+    /**
      * Avalia TODOS os bindings e devolve os eventos lógicos a emitir. O nível
      * emitido por binding vive em `expr<idx>|out` (transições); eixos emitem
      * AxisMotion só quando o valor muda.
+     *
+     * J2 §3: binding de CHORD avalia via [ChordLogic.chordValue] (o AST é só a
+     * forma sintática); o evento SIMPLES do botão final de um chord armado é
+     * SUPRIMIDO aqui (o chord é o dono) — a supressão do caminho FÍSICO é do hub.
      */
     fun evaluate(
         bindings: List<Parsed>,
@@ -52,10 +65,21 @@ object ExprBindingProcessor {
         dtMs: Long,
         nowMs: Long,
         deviceId: Int,
+        heldButtons: Set<String> = emptySet(),
+        chords: List<ChordLogic.Chord> = emptyList(),
     ): List<InputEvent> {
         val events = mutableListOf<InputEvent>()
         for (binding in bindings) {
-            val value = ExprEvaluator.eval(binding.ast, reader, state, dtMs, nowMs)
+            // Supressão do binding simples: botão final de chord armado não emite
+            // por conta própria (o chord emite).
+            if (binding.chord == null &&
+                ChordLogic.suppressFinal(chords, heldButtons, binding.button.name.lowercase())
+            ) {
+                continue
+            }
+            val value = binding.chord?.let { chord ->
+                ChordLogic.chordValue(chord, heldButtons, chords)
+            } ?: ExprEvaluator.eval(binding.ast, reader, state, dtMs, nowMs)
             val outKey = "expr${binding.index}|out"
             val out = state.funcs.getOrPut(outKey) { FuncState() }
             val level = if (value > ExprFuncs.THRESHOLD) 1f else 0f

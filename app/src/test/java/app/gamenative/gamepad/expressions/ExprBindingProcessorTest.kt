@@ -4,6 +4,7 @@ import app.gamenative.gamepad.GamepadAxis
 import app.gamenative.gamepad.GamepadButton
 import app.gamenative.gamepad.InputEvent
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -81,6 +82,59 @@ class ExprBindingProcessorTest {
         )
         assertTrue(ExprBindingProcessor.parseBindings(effective).isEmpty())
         assertTrue(ExprBindingProcessor.hasExpressionTokens(effective))
+    }
+
+    @Test
+    fun `chord emite quando todos os botoes seguram e suprime o final simples`() {
+        val effective = mapOf(
+            "FACE_TOP" to "expr:face_bottom + face_right",
+            "FACE_RIGHT" to "expr:face_right", // binding simples do FINAL
+        )
+        val bindings = ExprBindingProcessor.parseBindings(effective)
+        assertEquals(2, bindings.size)
+        assertTrue(bindings[0].chord != null)
+        val state = ExprState()
+        val chords = ExprBindingProcessor.chordsOf(bindings)
+
+        // A (modificador) segurado, B solto: nada emite (chord 0; B simples não
+        // está suprimido ainda mas vale 0).
+        val held = setOf("face_bottom")
+        val events = ExprBindingProcessor.evaluate(
+            bindings, reader(mapOf("face_bottom" to 1f)), state, 50L, 1000L, deviceId = 3, held, chords,
+        )
+        assertTrue(events.isEmpty())
+
+        // B também segurado: o CHORD emite; o binding simples de B é suprimido.
+        val both = ExprBindingProcessor.evaluate(
+            bindings,
+            reader(mapOf("face_bottom" to 1f, "face_right" to 1f)),
+            state,
+            50L,
+            1100L,
+            deviceId = 3,
+            setOf("face_bottom", "face_right"),
+            chords,
+        )
+        assertTrue(both.contains(InputEvent.ButtonDown(3, GamepadButton.FACE_TOP)))
+        assertFalse(both.any { it is InputEvent.ButtonDown && it.button == GamepadButton.FACE_RIGHT })
+    }
+
+    @Test
+    fun `superset de chords vence`() {
+        val effective = mapOf(
+            "FACE_TOP" to "expr:face_bottom + face_right",
+            "FACE_LEFT" to "expr:face_bottom + face_right + face_top",
+        )
+        val bindings = ExprBindingProcessor.parseBindings(effective)
+        val state = ExprState()
+        val chords = ExprBindingProcessor.chordsOf(bindings)
+        val held = setOf("face_bottom", "face_right", "face_top")
+        val events = ExprBindingProcessor.evaluate(
+            bindings, reader(mapOf("face_bottom" to 1f, "face_right" to 1f, "face_top" to 1f)), state, 50L, 1000L, deviceId = 3, held, chords,
+        )
+        // Só o MAIOR emite (o menor é suprimido por superconjunto).
+        assertTrue(events.contains(InputEvent.ButtonDown(3, GamepadButton.FACE_LEFT)))
+        assertFalse(events.any { it is InputEvent.ButtonDown && it.button == GamepadButton.FACE_TOP })
     }
 
     @Test

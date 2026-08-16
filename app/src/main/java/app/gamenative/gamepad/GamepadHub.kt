@@ -21,6 +21,7 @@ import app.gamenative.gamepad.layers.LayerTriggerMode
 import app.gamenative.gamepad.layers.TriggerEngine
 import app.gamenative.gamepad.layers.TriggerEngineState
 import app.gamenative.gamepad.layers.TriggerOutcome
+import app.gamenative.gamepad.expressions.ChordLogic
 import app.gamenative.gamepad.expressions.ExprBindingProcessor
 import app.gamenative.gamepad.expressions.ExprState
 import app.gamenative.gamepad.mapping.EventTranslator
@@ -545,13 +546,13 @@ class GamepadHub(context: Context) {
         profile: GamepadProfile,
         layerState: LayerState,
         events: List<InputEvent>,
-    ) {
-        if (profile.layers.isEmpty()) return
+    ): ExprFlush? {
+        if (profile.layers.isEmpty()) return null
         val effective = LayerResolver.effectiveBindings(profile.layers, layerState.activeLayer)
-        if (effective.isEmpty()) return
+        if (effective.isEmpty()) return null
         val bindings = exprBindingCache.getOrPut(deviceId) { mutableMapOf() }
             .getOrPut(effective) { ExprBindingProcessor.parseBindings(effective) }
-        if (bindings.isEmpty()) return
+        if (bindings.isEmpty()) return null
         // Dobra o evento atual ANTES da avaliação (o próprio input não sofre lag).
         val inputState = logicalInputState.getOrPut(deviceId) { mutableMapOf() }
         for (event in events) {
@@ -567,15 +568,31 @@ class GamepadHub(context: Context) {
         exprLastEvalMs[deviceId] = now
         val dtMs = (now - lastEval).coerceIn(1L, 100L)
         val state = exprStates.getOrPut(deviceId) { ExprState() }
+        // J2 (spec 2026-08-16-J, §3): registro de chords do perfil + botões
+        // segurados — o chord avalia pelo registro e a supressão do binding
+        // simples do botão final usa os modificadores segurados.
+        val chords = ExprBindingProcessor.chordsOf(bindings)
+        val held = inputState.filterValues { it > 0.5f }.keys
         // Os nomes já vêm normalizados do parser (GamepadButton.name lowercased /
         // axis:left_x) — o leitor só consulta o estado vivo.
         val reader: (String, Boolean) -> Float = { name, axis ->
             inputState[if (axis) "axis:$name" else name.lowercase()] ?: 0f
         }
-        for (event in ExprBindingProcessor.evaluate(bindings, reader, state, dtMs, now, deviceId)) {
+        for (event in ExprBindingProcessor.evaluate(bindings, reader, state, dtMs, now, deviceId, held, chords)) {
             logLogical(device, event)
             PluviaApp.events.emit(GamepadInputEvent(event))
         }
+        return ExprFlush(held, chords)
+    }
+
+    /** J2 §3: o botão é o FINAL de um chord com os modificadores segurados. */
+    private fun isChordSuppressed(flush: ExprFlush, event: InputEvent): Boolean {
+        val button = when (event) {
+            is InputEvent.ButtonDown -> event.button.name.lowercase()
+            is InputEvent.ButtonUp -> event.button.name.lowercase()
+            else -> return false
+        }
+        return ChordLogic.suppressFinal(flush.chords, flush.held, button)
     }
 
     /**
@@ -1067,14 +1084,17 @@ class GamepadHub(context: Context) {
         // J1 (spec 2026-08-16-J, §2.2): expressões do perfil efetivo avaliadas NO
         // MESMO flush de eventos — o evento atual é dobrado no estado lógico ANTES
         // da avaliação (sem lag de 1 evento para o próprio input).
-        flushExpressions(raw.deviceId, device, mapping, profile, layerState, events)
+        val exprFlush = flushExpressions(raw.deviceId, device, mapping, profile, layerState, events)
         // I (spec 2026-08-16-I, §2.3): relógio do engine + liberação de emits
         // retardados — os eventos de input SÃO o relógio (sem timer/coroutine).
         flushTriggerClock(raw.deviceId, device, mapping, profile, layerState)
         for (event in events) {
+            // J2 §3: o botão FINAL de um chord armado não emite o binding simples
+            // (o chord é o dono do evento — triggers de camada continuam físicos).
+            val chordSuppressed = exprFlush != null && isChordSuppressed(exprFlush, event)
             // F §1.3: trigger SHIFT consome o evento físico (não emite lógico — o
             // botão não chega ao jogo); camada comum segue pass-through.
-            if (!resolveLayerTriggers(device, mapping, layerState, profile, event)) {
+            if (!resolveLayerTriggers(device, mapping, layerState, profile, event) && !chordSuppressed) {
                 emitLogical(device, mapping, profile, layerState, event, raw.deviceId)
             }
         }
@@ -1131,7 +1151,7 @@ class GamepadHub(context: Context) {
         // O tradutor descreve o ESTADO da amostra (hat/meia-eixo); o hub vira transição.
         val state = buttonStates.getOrPut(raw.deviceId) { mutableSetOf() }
         // J1 §2.2: expressões no mesmo flush (evento atual dobrado antes da avaliação).
-        flushExpressions(raw.deviceId, device, mapping, profile, layerState, events)
+        val exprFlush = flushExpressions(raw.deviceId, device, mapping, profile, layerState, events)
         // I §2.3: relógio do engine + liberação de emits retardados (eventos = relógio).
         flushTriggerClock(raw.deviceId, device, mapping, profile, layerState)
         var emitted = false
@@ -1143,9 +1163,11 @@ class GamepadHub(context: Context) {
                 else -> false
             }
             if (forward) {
+                // J2 §3: supressão do binding simples do botão final de chord armado.
+                val chordSuppressed = exprFlush != null && isChordSuppressed(exprFlush, event)
                 // U3: triggers de camada (botão FÍSICO) + remap pela camada ativa.
                 // F §1.3: trigger SHIFT consome o evento físico.
-                if (!resolveLayerTriggers(device, mapping, layerState, profile, event)) {
+                if (!resolveLayerTriggers(device, mapping, layerState, profile, event) && !chordSuppressed) {
                     emitted = emitLogical(device, mapping, profile, layerState, event, raw.deviceId) || emitted
                 }
             }
@@ -1474,6 +1496,16 @@ private class GyroSmoothState(
 ) {
     var rateHz: Float = 1f
 }
+
+/**
+ * J2 (spec 2026-08-16-J, §3): resultado do flush de expressões — botões segurados
+ * (> 0.5) e o registro de chords do perfil efetivo (supressão do binding simples
+ * do botão final no caminho físico).
+ */
+private class ExprFlush(
+    val held: Set<String>,
+    val chords: List<ChordLogic.Chord>,
+)
 
 /**
  * I (spec 2026-08-16-I-trigger-engine-keymapper, §2.3): fila de eventos lógicos de
