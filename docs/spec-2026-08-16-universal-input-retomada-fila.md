@@ -68,7 +68,7 @@ K6 → K2 → K1 → K7
 | Fase | Spec | Gate | Status | Commit |
 |---|---|---|---|---|
 | K6 | `spec-2026-08-16-K6-intercambio-mapping-sdl.md` | §4 acima | ✅ 2026-08-16 | `99609ae1` |
-| K2 | `spec-2026-08-16-K2-modo-mouse-universal.md` | §4 acima | ⬜ | — |
+| K2 | `spec-2026-08-16-K2-modo-mouse-universal.md` | §4 acima | ✅ 2026-08-16 | `f64df99e` |
 | K1 | `spec-2026-08-16-K1-gamepad-virtual-toque.md` | §4 acima | ⬜ | — |
 | K7 | `spec-2026-08-16-K7-calibracao-stick-visual.md` | §4 acima | ⬜ | — |
 

@@ -139,7 +139,7 @@ corrigir o checkout é housekeeping opcional, não fase.
 | K4 | `spec-2026-08-16-K4-quirks-vidpid.md` | tests `*Quirk* *Gamepad*` + assemble | ✅ 2026-08-16 | `5a12bd7e` |
 | K5 | `spec-2026-08-16-K5-autoconfig-save-dispositivo.md` | tests `*Autoconfig* *DeviceMapping* *Gamepad*` + assemble | ✅ 2026-08-16 | `4af898ed` |
 | K6 | `spec-2026-08-16-K6-intercambio-mapping-sdl.md` | tests `*Sdl* *Mapping* *Gamepad*` + assemble | ✅ 2026-08-16 | `99609ae1` |
-| K2 | `spec-2026-08-16-K2-modo-mouse-universal.md` | tests `*MouseMode* *Gamepad*` + assemble | ⬜ | — |
+| K2 | `spec-2026-08-16-K2-modo-mouse-universal.md` | tests `*MouseMode* *Gamepad*` + assemble | ✅ 2026-08-16 | `f64df99e` |
 | K1 | `spec-2026-08-16-K1-gamepad-virtual-toque.md` | tests `*Virtual* *TouchGamepad* *Gamepad*` + assemble | ⬜ | — |
 | K7 | `spec-2026-08-16-K7-calibracao-stick-visual.md` | tests `*Stick* *Curve* *Gamepad*` + assemble | ⬜ | — |
 
