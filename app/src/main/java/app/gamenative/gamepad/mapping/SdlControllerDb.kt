@@ -123,6 +123,22 @@ object SdlControllerDb {
     }
 
     /**
+     * K6 (spec 2026-08-16-K6, §1.2): campo `platform:` da string — a validação do
+     * import usa (ausente = desktop = bloqueio; o spec §1.2 manda bloquear string
+     * desktop com explicação). null = campo ausente/vazio.
+     */
+    fun platformOf(line: String): String? {
+        for (field in line.split(',')) {
+            val trimmed = field.trim()
+            if (!trimmed.startsWith("platform:")) continue
+            val value = trimmed.substringAfter(':').trim()
+            if (value.isNotEmpty()) return value
+            return null
+        }
+        return null
+    }
+
+    /**
      * FaceStyle inferido do vendor (glyphs + swap OK/Cancel; só visual/semântico).
      *
      * K3 §1.3: [usesButtonLabels] (hint `SDL_GAMECONTROLLER_USE_BUTTON_LABELS:=1`)

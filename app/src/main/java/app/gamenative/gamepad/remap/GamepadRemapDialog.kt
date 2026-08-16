@@ -67,6 +67,8 @@ import app.gamenative.gamepad.GamepadButton
 import app.gamenative.gamepad.GamepadDevice
 import app.gamenative.gamepad.glyphs.GamepadGlyphProvider
 import app.gamenative.gamepad.mapping.AndroidConstants
+import app.gamenative.gamepad.mapping.AutoconfigSaveResult
+import app.gamenative.gamepad.mapping.AutoconfigValidation
 import app.gamenative.gamepad.mapping.ControllerVisualLayout
 import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.RawBinding
@@ -77,6 +79,8 @@ import app.gamenative.gamepad.processing.StickTransform
 import app.gamenative.gamepad.processing.SwipeDir
 import app.gamenative.gamepad.profiles.ActionLayer
 import app.gamenative.ui.component.ProfileCatalogBrowser
+import app.gamenative.ui.component.SdlMappingExportDialog
+import app.gamenative.ui.component.SdlMappingImportDialog
 import app.gamenative.gamepad.radial.RadialMacroKey
 import app.gamenative.gamepad.radial.SWIPE_OPEN_RADIAL
 import kotlinx.serialization.json.floatOrNull
@@ -177,6 +181,12 @@ fun GamepadRemapDialog(
     // aberto (janela própria por cima deste dialog); desliga o escopo de foco deste
     // dialog enquanto o browser está por cima (uma janela, um dono do input).
     var catalogOpen by remember { mutableStateOf(false) }
+    // K6 (spec 2026-08-16-K6, §1.2/§1.3): diálogos de import/export SDL por cima
+    // deste dialog (mesmo padrão de janela-própria do catálogo). O export usa o
+    // mapping BASE (pré-quirk) do hub — este dialog recebe o EFETIVO para o remap;
+    // o diff do import compara contra o EFETIVO.
+    var showSdlExport by remember { mutableStateOf(false) }
+    var showSdlImport by remember { mutableStateOf(false) }
     // ── B (spec 2026-08-16-B-remap-visual-ppsspp): mapa visual + escopo + flash ──
     val hub = PluviaApp.gamepadHub
     // appId do container ativo (holder do hub — lido ao abrir o dialog; null fora de
@@ -1474,6 +1484,22 @@ fun GamepadRemapDialog(
                             }
                         }
                     }
+                    // K6 (spec 2026-08-16-K6, §1.2/§1.3): intercâmbio no formato
+                    // SDL — o "menu overflow" do remap (o dialog não tem overflow;
+                    // os botões ficam nesta linha, separados do perfil lógico que é
+                    // um formato DIFERENTE — o export/import acima é do perfil
+                    // LÓGICO, estes são do mapping RAW→LÓGICO do device).
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = { showSdlExport = true }) {
+                            Text(stringResource(R.string.gamepad_sdl_export_title))
+                        }
+                        TextButton(onClick = { showSdlImport = true }) {
+                            Text(stringResource(R.string.gamepad_sdl_import_title))
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
@@ -1532,6 +1558,48 @@ fun GamepadRemapDialog(
                 status = context.getString(R.string.gamepad_profile_catalog_applied, entry.name)
             },
             onDismiss = { catalogOpen = false },
+        )
+    }
+    // K6 §1.3: export SDL do mapping BASE (pré-quirk — racional do K5).
+    if (showSdlExport) {
+        val base = hub.baseMappingFor(device.deviceId)
+        if (base == null) {
+            showSdlExport = false
+        } else {
+            SdlMappingExportDialog(
+                device = device,
+                mapping = base,
+                onDismiss = { showSdlExport = false },
+            )
+        }
+    }
+    // K6 §1.2: import SDL — diff contra o mapping EFETIVO deste dialog; inválido
+    // (validação RetroArch) → status na barra do dialog (mesmo padrão dos erros).
+    if (showSdlImport) {
+        SdlMappingImportDialog(
+            device = device,
+            current = mapping,
+            onImport = { imported ->
+                when (val result = hub.importAutoconfig(device.deviceId, imported)) {
+                    is AutoconfigSaveResult.Invalid -> {
+                        status = context.getString(
+                            when (result.reason) {
+                                AutoconfigValidation.Reason.MISSING_CONFIRM ->
+                                    R.string.gamepad_autoconfig_error_missing_confirm
+                                AutoconfigValidation.Reason.MISSING_DIRECTION ->
+                                    R.string.gamepad_autoconfig_error_missing_direction
+                            },
+                        )
+                        AutoconfigSaveResult.Invalid(result.reason)
+                    }
+                    is AutoconfigSaveResult.Saved -> {
+                        status = context.getString(R.string.gamepad_sdl_imported)
+                        result
+                    }
+                    AutoconfigSaveResult.NoDevice -> AutoconfigSaveResult.NoDevice
+                }
+            },
+            onDismiss = { showSdlImport = false },
         )
     }
 }

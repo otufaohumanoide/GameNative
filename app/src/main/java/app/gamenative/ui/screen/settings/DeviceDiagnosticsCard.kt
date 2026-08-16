@@ -35,10 +35,13 @@ import app.gamenative.gamepad.GamepadDevice
 import app.gamenative.gamepad.GyroPreview
 import app.gamenative.gamepad.TouchpadPreview
 import app.gamenative.gamepad.mapping.AutoconfigCheck
+import app.gamenative.gamepad.mapping.AutoconfigSaveResult
 import app.gamenative.gamepad.mapping.AutoconfigValidation
 import app.gamenative.gamepad.mapping.ControllerVisualLayout
 import app.gamenative.gamepad.processing.RumblePhoneCurve
 import app.gamenative.ui.component.GamepadHaptics
+import app.gamenative.ui.component.SdlMappingExportDialog
+import app.gamenative.ui.component.SdlMappingImportDialog
 import app.gamenative.ui.component.gamepadSelectable
 import app.gamenative.ui.component.remap.ControllerVisualView
 import app.gamenative.ui.component.remap.VisualControlState
@@ -111,6 +114,17 @@ fun DeviceDiagnosticsCard(
         mutableStateOf<AutoconfigValidation.Reason?>(null)
     }
     var showOverwriteConfirm by rememberSaveable(device.deviceId) { mutableStateOf(false) }
+    // K6 (spec 2026-08-16-K6): estado dos diálogos de import/export SDL + status
+    // transitório do import (auto-limpa ~3 s, padrão do rumbleResult).
+    var showSdlExport by rememberSaveable(device.deviceId) { mutableStateOf(false) }
+    var showSdlImport by rememberSaveable(device.deviceId) { mutableStateOf(false) }
+    var sdlStatus by rememberSaveable(device.deviceId) { mutableStateOf<String?>(null) }
+    if (sdlStatus != null) {
+        LaunchedEffect(sdlStatus) {
+            delay(3000)
+            sdlStatus = null
+        }
+    }
 
     val headerInteraction = remember { MutableInteractionSource() }
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -360,6 +374,28 @@ fun DeviceDiagnosticsCard(
                         onClick = { PluviaApp.gamepadHub.deleteAutoconfig(device.mappingKey) },
                     )
                 }
+                // K6 (spec 2026-08-16-K6, §1.2/§1.3): import/export no formato SDL —
+                // o export serializa o mapping BASE (pré-quirk — quirk é correção de
+                // transporte, não identidade do controle, racional do K5); o diff do
+                // import usa o mapping EFETIVO (o que o controle usa AGORA).
+                DiagButtonRow(
+                    title = stringResource(R.string.gamepad_sdl_export_title),
+                    subtitle = stringResource(R.string.gamepad_sdl_export_hint),
+                    onClick = { showSdlExport = true },
+                )
+                DiagButtonRow(
+                    title = stringResource(R.string.gamepad_sdl_import_title),
+                    subtitle = stringResource(R.string.gamepad_sdl_import_hint),
+                    onClick = { showSdlImport = true },
+                )
+                sdlStatus?.let { status ->
+                    Text(
+                        text = status,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
                 // "Todos os botões" — só instruções + o viewer acescendo (sem lógica).
                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
                     Text(
@@ -433,6 +469,48 @@ fun DeviceDiagnosticsCard(
                 }
             },
         )
+    }
+    // K6 §1.3: export no formato SDL — mapping BASE (pré-quirk) do hub.
+    if (showSdlExport) {
+        val base = PluviaApp.gamepadHub.baseMappingFor(device.deviceId)
+        if (base == null) {
+            showSdlExport = false
+        } else {
+            SdlMappingExportDialog(
+                device = device,
+                mapping = base,
+                onDismiss = { showSdlExport = false },
+            )
+        }
+    }
+    // K6 §1.2: import no formato SDL — diff contra o mapping EFETIVO; o resultado
+    // inválido (1.3.2 do K5) reaproveita o diálogo de erro do autoconfig.
+    if (showSdlImport) {
+        val current = PluviaApp.gamepadHub.effectiveMappingFor(device.deviceId)
+        if (current == null) {
+            showSdlImport = false
+        } else {
+            // Capturada FORA do lambda de import (stringResource é composable).
+            val importedLabel = stringResource(R.string.gamepad_sdl_imported)
+            SdlMappingImportDialog(
+                device = device,
+                current = current,
+                onImport = { mapping ->
+                    when (val result = PluviaApp.gamepadHub.importAutoconfig(device.deviceId, mapping)) {
+                        is AutoconfigSaveResult.Invalid -> {
+                            autoconfigError = result.reason
+                            AutoconfigSaveResult.Invalid(result.reason)
+                        }
+                        is AutoconfigSaveResult.Saved -> {
+                            sdlStatus = importedLabel
+                            result
+                        }
+                        AutoconfigSaveResult.NoDevice -> AutoconfigSaveResult.NoDevice
+                    }
+                },
+                onDismiss = { showSdlImport = false },
+            )
+        }
     }
 }
 

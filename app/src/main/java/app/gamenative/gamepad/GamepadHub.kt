@@ -418,6 +418,59 @@ class GamepadHub(context: Context) {
     }
 
     /**
+     * K6 (spec 2026-08-16-K6, §1.2): import de um mapping já DECODADO (parse do
+     * [SdlControllerDb] na UI — o hub NÃO parseia strings). Escreve o tier USER
+     * exatamente como o save do K5 ([DeviceMappingStore] + re-resolve ao vivo) e
+     * valida com a MESMA regra do RetroArch ([AutoconfigValidation]) — uma string
+     * de fórum sem botão de confirmação/navegação deixaria o controle inutilizável
+     * nos menus. `mapping.name` = nome da string (display no mapping); o
+     * [DeviceAutoconfig.deviceName] continua sendo o nome do DEVICE (K5).
+     */
+    fun importAutoconfig(deviceId: Int, mapping: GamepadMapping): AutoconfigSaveResult {
+        val device = deviceFor(deviceId) ?: return AutoconfigSaveResult.NoDevice
+        when (val check = AutoconfigValidation.validate(mapping)) {
+            is AutoconfigCheck.Invalid -> return AutoconfigSaveResult.Invalid(check.reason)
+            is AutoconfigCheck.Valid -> Unit
+        }
+        val overwrote = savedAutoconfig(device.mappingKey) != null
+        val config = DeviceAutoconfig(
+            mappingKey = device.mappingKey,
+            deviceName = device.name,
+            mapping = mapping,
+            faceStyle = mapping.faceStyle,
+            createdAtMs = System.currentTimeMillis(),
+        )
+        autoconfigStore.save(config)
+        reResolveAutoconfig(device.mappingKey)
+        Timber.d(
+            "gncontrol: autoconfig %s importado (formato SDL) — tier USER ativo no device %d (%s)",
+            device.mappingKey, deviceId, device.name,
+        )
+        return AutoconfigSaveResult.Saved(config, overwrote)
+    }
+
+    /**
+     * K6 (spec 2026-08-16-K6, §1.3): mapping BASE (pré-quirk) do device — o que o
+     * export no formato SDL serializa (quirk é correção de TRANSPORTE, não
+     * identidade do controle — mesmo racional do save do K5). Main thread; null =
+     * sem device conectado com esse id.
+     */
+    fun baseMappingFor(deviceId: Int): GamepadMapping? {
+        val device = deviceFor(deviceId) ?: return null
+        return baseMappingCache[device.deviceId] ?: resolveBaseMapping(device).first
+    }
+
+    /**
+     * K6 (spec 2026-08-16-K6, §1.2): mapping EFETIVO (pós-quirk) do device — a
+     * referência do DIFF do preview de import ("o que muda em relação ao que o
+     * controle usa AGORA"). Main thread; null = sem device.
+     */
+    fun effectiveMappingFor(deviceId: Int): GamepadMapping? {
+        val device = deviceFor(deviceId) ?: return null
+        return resolveMapping(device).first
+    }
+
+    /**
      * K5 §1.3.4: re-resolve AO VIVO dos devices conectados com o [mappingKey]
      * (análogo ao reconect do RetroArch — o mapping USER passa a valer na hora).
      * Invalida os caches por deviceId (K3/K4/K5) e atualiza o
