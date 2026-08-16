@@ -6,7 +6,7 @@
 inline pelo orquestrador).
 **Base:** fases H (`10526ba5`) e I (`92512ed4`) commitadas.
 **Resultado:** implementado, gate completo verde. J2 (chords, §3) executado em
-seguida (stretch). On-device pendente (humano).
+seguida (stretch) — commit `be4bc6ec`. On-device pendente (humano).
 
 ## 1. O que foi feito (por seção do spec)
 
@@ -140,3 +140,37 @@ python3 tools/profiles/sync_profile_repo.py ×2 → md5 267a4982… idêntico (d
 5. **RemapRow**: o chip ƒx aparece em TODAS as linhas (inclusive sem binding — o
    token `expr:` é materializado na camada); Turbo/⋯ continuam só para bindings
    físicos.
+
+## 6. J2 (stretch) — chords com suppression (spec §3)
+
+- `gamepad/expressions/ChordLogic.kt` (NOVO, puro): `Chord(buttons)`,
+  `parseChord` (file:36) — cadeia TOP-LEVEL de `+` com InputRefs de BOTÃO puros
+  (≥ 2) vira chord; qualquer outro operando (número/eixo/outro operador)
+  desqualifica e a expressão é avaliada como soma normal (conflito resolvido
+  como no Dolphin); `chordValue` (file:56) — 1 só com TODOS os botões > 0.5, e o
+  SUPERCONJUNTO totalmente segurado suprime o menor (o maior conjunto vence —
+  HotkeySuppressions); `suppressFinal` (file:70) — o binding simples do botão
+  FINAL é suprimido enquanto os modificadores estão segurados.
+- `ExprBindingProcessor`: `Parsed.chord` (parse-time, no cache M1 do hub);
+  `chordsOf(bindings)`; `evaluate` ganha (heldButtons, chords) — binding de chord
+  avalia via `chordValue`; o binding simples de expressão do final é suprimido
+  dentro da avaliação.
+- `GamepadHub`: `flushExpressions` devolve `ExprFlush(held, chords)` (assinatura
+  file:549; classe em file:1505) — null quando não há expressões (byte-identical);
+  `isChordSuppressed` (file:589) e o caminho FÍSICO (onKey/onAxis, file:1094/
+  1167) suprime o evento simples do botão final de chord armado ANTES do
+  `emitLogical` (triggers de camada continuam físicos — a supressão é só da
+  emissão lógica).
+- Testes: `ChordLogicTest` 5/5 + `ExprBindingProcessorTest` +2 (7): chord emite
+  quando todos seguram e suprime o final simples; superset vence (só o maior
+  emite). Gate J2: tests `*Expr* *Gamepad*` + assemble verdes; sync sem drift.
+
+### Desvios J2
+
+1. **Supersupressão do final é independente de superset** — a supressão do
+   binding simples do botão final vale para QUALQUER chord armado que termina
+   nele; o superconjunto regula apenas QUAL chord binding emite (o maior). No
+   Dolphin o `m_is_blocked` também desbloqueia o final quando o maior solta —
+   mantido simples e previsível aqui.
+2. **Modificadores NÃO são suprimidos** (só o final) — os modificadores disparam
+   seus próprios bindings normalmente (comportamento de modificador).
