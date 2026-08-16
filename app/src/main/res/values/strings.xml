@@ -2544,6 +2544,11 @@
     <string name="gamepad_mouse_mode_card_title">Mouse mode (hold START 750 ms)</string>
     <string name="gamepad_mouse_mode_card_on">Enabled — hold START and release to toggle</string>
     <string name="gamepad_mouse_mode_card_off">Disabled — the left stick stays a stick</string>
+    <!-- K1 (spec 2026-08-16-K1): gamepad virtual de toque no pipeline do fork -->
+    <string name="gamepad_settings_virtual_pipeline_title">Virtual touch gamepad pipeline</string>
+    <string name="gamepad_settings_virtual_pipeline_subtitle">The touch overlay becomes a virtual controller in the universal pipeline (layers, expressions, radial, turbo, per-game profiles). Requires the universal gamepad toggle. Mouse/keys of the overlay stay as-is.</string>
+
+    <string name="gamepad_virtual_pipeline_quick_title">Virtual gamepad</string>
     <string name="gamepad_diag_all_buttons_title">All buttons</string>
     <string name="gamepad_diag_all_buttons_hint">Press any button or move the sticks and triggers to see them light up above.</string>
 <string name="gamepad_glyph_dpad_up">↑</string>

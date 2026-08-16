@@ -11,6 +11,7 @@ import android.graphics.Rect;
 
 import androidx.core.graphics.ColorUtils;
 
+import app.gamenative.PrefManager;
 import com.winlator.core.CubicBezierInterpolator;
 import com.winlator.math.Mathf;
 import com.winlator.widget.InputControlsView;
@@ -1087,6 +1088,27 @@ public class ControlElement {
         return !toggleSwitch && (binding == Binding.GAMEPAD_BUTTON_L3 || binding == Binding.GAMEPAD_BUTTON_R3);
     }
 
+    /**
+     * K1 (spec 2026-08-16-K1, §1.2): ponto de emissão do elemento de overlay —
+     * com o pipeline virtual ON (virtualGamepadPipeline + gamepadUniversalEnabled)
+     * os bindings de GAMEPAD vão para o TouchGamepadSource (device virtual no
+     * hub — camadas/expressões/radial/turbo do pipeline universal) em vez do
+     * caminho legado (GamepadState direto). NUNCA os dois: teclas/mouse seguem o
+     * caminho legado (TouchMouse/teclado ficam — não-meta do spec §5).
+     */
+    private void emitBinding(Binding binding, boolean isActionDown, float offset) {
+        if (PrefManager.INSTANCE.getVirtualGamepadPipeline() &&
+            PrefManager.INSTANCE.getGamepadUniversalEnabled() && binding.isGamepad()) {
+            app.gamenative.gamepad.virtual.TouchGamepadSource.emitBinding(binding, isActionDown, offset);
+        } else {
+            inputControlsView.handleInputEvent(binding, isActionDown, offset);
+        }
+    }
+
+    private void emitBinding(Binding binding, boolean isActionDown) {
+        emitBinding(binding, isActionDown, 0);
+    }
+
     public boolean handleTouchDown(int pointerId, float x, float y) {
         if (currentPointerId == -1 && containsPoint(x, y)) {
             currentPointerId = pointerId;
@@ -1096,8 +1118,8 @@ public class ControlElement {
                 if (isKeepButtonPressedAfterMinTime()) touchTime = System.currentTimeMillis();
                 if (!toggleSwitch || !selected) {
                     currentPointerActivatedButtonBindings = !selected;
-                    inputControlsView.handleInputEvent(getBindingAt(0), true);
-                    inputControlsView.handleInputEvent(getBindingAt(1), true);
+                    emitBinding(getBindingAt(0), true);
+                    emitBinding(getBindingAt(1), true);
                 }
                 inputControlsView.invalidate();
                 return true;
@@ -1167,12 +1189,12 @@ public class ControlElement {
                     Binding binding = getBindingAt(i);
                     if (binding.isGamepad()) {
                         value = Mathf.clamp(Math.max(0, Math.abs(value) - 0.01f) * Mathf.sign(value) * STICK_SENSITIVITY, -1, 1);
-                        inputControlsView.handleInputEvent(binding, true, value);
+                        emitBinding(binding, true, value);
                         this.states[i] = true;
                     }
                     else {
                         boolean state = binding.isMouseMove() ? (states[i] || states[(i+2)%4]) : states[i];
-                        inputControlsView.handleInputEvent(binding, state, value);
+                        emitBinding(binding, state, value);
                         this.states[i] = state;
                     }
                 }
@@ -1192,7 +1214,7 @@ public class ControlElement {
                         if (Math.abs(value) > TRACKPAD_ACCELERATION_THRESHOLD) value *= STICK_SENSITIVITY;
                         interpolator.set(0.075f, 0.95f, 0.45f, 0.95f);
                         float interpolatedValue = interpolator.getInterpolation(Math.min(1.0f, Math.abs(value / TRACKPAD_MAX_SPEED)));
-                        inputControlsView.handleInputEvent(binding, true, Mathf.clamp(interpolatedValue * Mathf.sign(value), -1, 1));
+                        emitBinding(binding, true, Mathf.clamp(interpolatedValue * Mathf.sign(value), -1, 1));
                         this.states[i] = true;
                     }
                     else {
@@ -1204,7 +1226,7 @@ public class ControlElement {
                             cursorDy = Mathf.roundPoint(value);
                         }
                         else {
-                            inputControlsView.handleInputEvent(binding, states[i], value);
+                            emitBinding(binding, states[i], value);
                             this.states[i] = states[i];
                         }
                     }
@@ -1221,13 +1243,13 @@ public class ControlElement {
                 for (byte i = 0; i < 4; i++) {
                     float value = i == 1 || i == 3 ? deltaX : deltaY;
                     if (this.states[i] && !states[i]) {
-                        inputControlsView.handleInputEvent(getBindingAt(i), false, value);
+                        emitBinding(getBindingAt(i), false, value);
                     }
                 }
 
                 for (byte i = 0; i < 4; i++) {
                     float value = i == 1 || i == 3 ? deltaX : deltaY;
-                    if (states[i]) inputControlsView.handleInputEvent(getBindingAt(i), true, value);
+                    if (states[i]) emitBinding(getBindingAt(i), true, value);
                     this.states[i] = states[i];
                 }
 
@@ -1249,15 +1271,15 @@ public class ControlElement {
                 if (isKeepButtonPressedAfterMinTime() && touchTime != null) {
                     selected = (System.currentTimeMillis() - (long)touchTime) > BUTTON_MIN_TIME_TO_KEEP_PRESSED;
                     if (!selected) {
-                        inputControlsView.handleInputEvent(getBindingAt(0), false);
-                        inputControlsView.handleInputEvent(getBindingAt(1), false);
+                        emitBinding(getBindingAt(0), false);
+                        emitBinding(getBindingAt(1), false);
                     }
                     touchTime = null;
                     inputControlsView.invalidate();
                 }
                 else if (!toggleSwitch || selected) {
-                    inputControlsView.handleInputEvent(getBindingAt(0), false);
-                    inputControlsView.handleInputEvent(getBindingAt(1), false);
+                    emitBinding(getBindingAt(0), false);
+                    emitBinding(getBindingAt(1), false);
                 }
 
                 if (toggleSwitch) {
@@ -1271,7 +1293,7 @@ public class ControlElement {
             }
             else if (type == Type.RANGE_BUTTON || type == Type.D_PAD || type == Type.STICK || type == Type.TRACKPAD) {
                 for (byte i = 0; i < states.length; i++) {
-                    if (states[i]) inputControlsView.handleInputEvent(getBindingAt(i), false);
+                    if (states[i]) emitBinding(getBindingAt(i), false);
                     states[i] = false;
                 }
 
@@ -1301,15 +1323,15 @@ public class ControlElement {
 
         if (type == Type.BUTTON) {
             if (currentPointerActivatedButtonBindings) {
-                inputControlsView.handleInputEvent(getBindingAt(0), false);
-                inputControlsView.handleInputEvent(getBindingAt(1), false);
+                emitBinding(getBindingAt(0), false);
+                emitBinding(getBindingAt(1), false);
             }
             currentPointerActivatedButtonBindings = false;
             touchTime = null;
         }
         else if (type == Type.RANGE_BUTTON || type == Type.D_PAD || type == Type.STICK || type == Type.TRACKPAD) {
             for (byte i = 0; i < states.length; i++) {
-                if (states[i]) inputControlsView.handleInputEvent(getBindingAt(i), false);
+                if (states[i]) emitBinding(getBindingAt(i), false);
                 states[i] = false;
             }
             if (type == Type.RANGE_BUTTON) scroller.handleTouchUp();

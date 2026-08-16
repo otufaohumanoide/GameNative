@@ -13,8 +13,13 @@ import android.view.MotionEvent
 import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
 import app.gamenative.events.GamepadDeviceRemovedEvent
+import app.gamenative.events.GamepadInputEvent
 import app.gamenative.gamepad.DeviceClass
 import app.gamenative.gamepad.GamepadButton
+import app.gamenative.gamepad.InputEvent
+import app.gamenative.gamepad.virtual.TouchGamepadBridge
+import app.gamenative.gamepad.virtual.TouchGamepadConstants
+import app.gamenative.gamepad.virtual.TouchGamepadSource
 import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.mapping.MappingDatabase
 import app.gamenative.gamepad.mapping.RawBinding
@@ -85,8 +90,50 @@ class PhysicalControllerHandler(
         }
     }
 
+    /**
+     * K1 (spec 2026-08-16-K1, §1.3): o device VIRTUAL de toque injeta os eventos
+     * LÓGICOS do pipeline no jogo pelo MESMO caminho U4 (handleInputEvent +
+     * sendGamepadState) — a "injeção via PhysicalControllerHandler" do spec. Só o
+     * deviceId virtual entra (os físicos já injetam os crus no caminho legado).
+     */
+    private val virtualGamepadListener: (GamepadInputEvent) -> Boolean = { event ->
+        if (event.input.deviceId != TouchGamepadConstants.DEVICE_ID) {
+            false
+        } else {
+            injectVirtualEvent(event.input)
+            true
+        }
+    }
+
     init {
         PluviaApp.events.on<GamepadDeviceRemovedEvent, Unit>(deviceRemovedListener)
+        PluviaApp.events.on<GamepadInputEvent, Boolean>(virtualGamepadListener)
+    }
+
+    /** K1 §1.3: evento lógico do device virtual → Binding do overlay → injeção U4. */
+    private fun injectVirtualEvent(input: InputEvent) {
+        when (input) {
+            is InputEvent.ButtonDown -> {
+                val binding = TouchGamepadBridge.bindingFor(input.button) ?: return
+                injectBinding(binding, true, 1f)
+            }
+            is InputEvent.ButtonUp -> {
+                val binding = TouchGamepadBridge.bindingFor(input.button) ?: return
+                injectBinding(binding, false, 0f)
+            }
+            is InputEvent.AxisMotion -> {
+                val pair = TouchGamepadBridge.axisBindingsFor(input.axis) ?: return
+                val negative = input.value < 0f
+                val binding = if (negative) pair.first else pair.second
+                val magnitude = if (negative) -input.value else input.value
+                if (magnitude > 0.01f) {
+                    injectBinding(binding, true, magnitude.coerceAtMost(1f))
+                } else {
+                    injectBinding(binding, false, 0f)
+                }
+            }
+            else -> Unit
+        }
     }
 
     private val mouseMoveOffset = PointF(0f, 0f)
@@ -145,6 +192,11 @@ class PhysicalControllerHandler(
         }
         turboStates.clear()
         PluviaApp.events.off<GamepadDeviceRemovedEvent, Unit>(deviceRemovedListener)
+        // K1 §1.3: listener do device virtual morre junto + o virtual sai do hub
+        // (overlay destruído — "remoção quando o XServer é destruído"); o próximo
+        // toque re-registra (lazy, idempotente).
+        PluviaApp.events.off<GamepadInputEvent, Boolean>(virtualGamepadListener)
+        TouchGamepadSource.unregister()
         mouseMoveTimer?.cancel()
         mouseMoveTimer = null
         mouseMoveOffset.set(0f, 0f)

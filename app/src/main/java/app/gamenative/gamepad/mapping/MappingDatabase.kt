@@ -22,6 +22,13 @@ import app.gamenative.gamepad.GamepadButton
 object MappingDatabase {
 
     private val entries: Map<String, GamepadMapping> = buildMap {
+        // K1 (spec 2026-08-16-K1, §1.1): entry fixa do device VIRTUAL de toque
+        // (vid/pid 0 — nunca colide com hardware real; o TouchGamepadSource
+        // registra o device com mappingKey "00000000"). O overlay fala em botões
+        // LÓGICOS (FACE_BOTTOM etc.), então o mapping raw→lógico é a IDENTIDADE
+        // dos pads normalizados (os keycodes Android canônicos 96-110/19-22 mapeiam
+        // para os próprios semânticos). Quirks nunca aplicam (não há transport).
+        put("00000000", defaultAndroidMapping(FaceStyle.XBOX))
         // ── Pads normalizados pelo Android (.kl entrega 96-110/19-22) ──
         put("054c09cc", defaultAndroidMapping(FaceStyle.PLAYSTATION)) // DualShock 4
         put("054c05c4", defaultAndroidMapping(FaceStyle.PLAYSTATION)) // DualShock 4 (2013)

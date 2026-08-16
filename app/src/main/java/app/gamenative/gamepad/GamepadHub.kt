@@ -1268,9 +1268,10 @@ class GamepadHub(context: Context) {
     fun onKey(raw: RawKeyInput): Boolean {
         if (!PrefManager.gamepadUniversalEnabled) return false
         val device = deviceFor(raw.deviceId) ?: return false
-        // Só CONTROLLER emite lógico: TOUCHPAD continua sendo gate do MainActivity
-        // (spec 2026-08-13-onda2 §1.2 — correção 3 da validação).
-        if (device.deviceClass != DeviceClass.CONTROLLER) return false
+        // Só CONTROLLER (e o VIRTUAL do K1) emite lógico: TOUCHPAD continua sendo
+        // gate do MainActivity (spec 2026-08-13-onda2 §1.2 — correção 3 da
+        // validação). O virtual de toque entra no MESMO pipeline (K1 §1.1).
+        if (device.deviceClass != DeviceClass.CONTROLLER && device.deviceClass != DeviceClass.VIRTUAL) return false
         val mapping = mappingFor(device)
         // K4 (spec 2026-08-16-K4, §1.3.2): alias de scanCode ANTES da tradução —
         // keyCode KEYCODE_UNKNOWN (device sem .kl) + scanCode na tabela do quirk
@@ -1421,7 +1422,8 @@ class GamepadHub(context: Context) {
     fun onAxis(raw: RawAxisInput): Boolean {
         if (!PrefManager.gamepadUniversalEnabled) return false
         val device = deviceFor(raw.deviceId) ?: return false
-        if (device.deviceClass != DeviceClass.CONTROLLER) return false
+        // K1: o VIRTUAL de toque entra no MESMO pipeline (só CONTROLLER + VIRTUAL).
+        if (device.deviceClass != DeviceClass.CONTROLLER && device.deviceClass != DeviceClass.VIRTUAL) return false
         val mapping = mappingFor(device)
         val profile = profileFor(raw.deviceId, activeAppId)
         val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
@@ -1894,6 +1896,36 @@ class GamepadHub(context: Context) {
         invalidateProfiles()
         PluviaApp.events.emit(GamepadDeviceRemovedEvent(deviceId))
         Timber.d("GamepadHub: removed %d", deviceId)
+    }
+
+    /**
+     * K1 (spec 2026-08-16-K1, §1.1) — registro do device VIRTUAL de toque: não há
+     * InputDevice real (o TouchGamepadSource chama ANTES do primeiro evento, lazy —
+     * "dispositivo fantasma na UI de settings é ruído", spec §1.1). Mesmo contrato
+     * do addDevice físico: caches invalidados, mapping resolvido pela cadeia
+     * (entry `00000000` do MODEL), mappingSource no StateFlow e
+     * [GamepadDeviceAddedEvent] emitido (o card de diagnóstico o enxerga).
+     */
+    fun registerVirtualDevice(device: GamepadDevice) {
+        val deviceId = device.deviceId
+        if (_connectedDevices.value.containsKey(deviceId)) return // idempotente
+        mappingCache.remove(deviceId)
+        baseMappingCache.remove(deviceId)
+        quirkCache[deviceId] = null
+        val (_, mappingSource) = resolveMapping(device)
+        val stored = device.copy(mappingSource = mappingSource)
+        _connectedDevices.value = _connectedDevices.value + (deviceId to stored)
+        refreshActive()
+        invalidateProfiles()
+        sensorSource?.onDeviceAdded(deviceId)
+        PluviaApp.events.emit(GamepadDeviceAddedEvent(stored))
+        Timber.d("GamepadHub: virtual touch gamepad registrado (device %d)", deviceId)
+    }
+
+    /** K1 §1.1: remoção do device virtual (overlay destruído — cleanup do handler). */
+    fun unregisterVirtualDevice(deviceId: Int) {
+        if (!_connectedDevices.value.containsKey(deviceId)) return
+        removeDevice(deviceId)
     }
 
     private fun refreshDevice(deviceId: Int) {

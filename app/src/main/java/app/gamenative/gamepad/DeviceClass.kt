@@ -10,4 +10,4 @@ package app.gamenative.gamepad
  * - [SENSOR]: device virtual (inclui HIDs só de sensores) — nunca emitido no hot path.
  * - [UNKNOWN]: teclado, mouse, resto.
  */
-enum class DeviceClass { CONTROLLER, TOUCHPAD, SENSOR, UNKNOWN }
+enum class DeviceClass { CONTROLLER, TOUCHPAD, SENSOR, UNKNOWN, VIRTUAL }

@@ -1483,6 +1483,16 @@ object PrefManager {
         get() = getPref(GAMEPAD_SWAP_OK_CANCEL, false)
         set(value) { setPref(GAMEPAD_SWAP_OK_CANCEL, value) }
 
+    /* K1 (spec 2026-08-16-K1, §1.4): gamepad virtual de toque no pipeline do fork.
+       Default OFF — comportamento atual intacto (overlay injeta direto no X, caminho
+       legado). ON → o overlay de toque vira um device VIRTUAL no hub (camadas/
+       expressões/radial/turbo do pipeline universal) e a injeção final é o MESMO
+       caminho U4 do físico. */
+    private val VIRTUAL_GAMEPAD_PIPELINE = booleanPreferencesKey("virtualGamepadPipeline")
+    var virtualGamepadPipeline: Boolean
+        get() = getPref(VIRTUAL_GAMEPAD_PIPELINE, false)
+        set(value) { setPref(VIRTUAL_GAMEPAD_PIPELINE, value) }
+
     /* U2 (spec 2026-08-14-gamepad-u2-touchpad-mouse): touchpad do controle → mouse.
        Default OFF — opt-in; com OFF o caminho é byte-identical (V10). */
     private val GAMEPAD_TOUCHPAD_MOUSE_ENABLED = booleanPreferencesKey("gamepadTouchpadMouseEnabled")

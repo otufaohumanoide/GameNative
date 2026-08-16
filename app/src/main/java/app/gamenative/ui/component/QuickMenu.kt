@@ -1852,6 +1852,26 @@ private fun PerformanceHudQuickMenuTab(
             )
         }
 
+        // K1 (spec 2026-08-16-K1, §1.4): toggle do pipeline do gamepad virtual de
+        // toque sem sair do jogo (liga/desliga o overlay→hub na hora; desligar
+        // remove o device virtual do hub).
+        Spacer(modifier = Modifier.height(8.dp))
+        QuickMenuSectionHeader(title = stringResource(R.string.gamepad_virtual_pipeline_quick_title))
+        var virtualPipeline by remember { mutableStateOf(PrefManager.virtualGamepadPipeline) }
+        QuickMenuToggleRow(
+            title = stringResource(R.string.gamepad_settings_virtual_pipeline_title),
+            subtitle = stringResource(R.string.gamepad_settings_virtual_pipeline_subtitle),
+            enabled = virtualPipeline,
+            onToggle = {
+                virtualPipeline = !virtualPipeline
+                PrefManager.virtualGamepadPipeline = virtualPipeline
+                if (!virtualPipeline) {
+                    app.gamenative.gamepad.virtual.TouchGamepadSource.unregister()
+                }
+            },
+            accentColor = accentColor,
+        )
+
         Spacer(modifier = Modifier.height(12.dp))
     }
 }

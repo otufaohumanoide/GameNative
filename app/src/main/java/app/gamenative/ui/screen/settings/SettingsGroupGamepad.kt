@@ -149,6 +149,27 @@ fun SettingsGroupGamepad() {
             },
         )
         GamepadSettingsDivider()
+        // K1 (spec 2026-08-16-K1, §1.4): pipeline do gamepad virtual de toque —
+        // o overlay de toque vira um device no hub (camadas/expressões/radial/
+        // turbo por jogo). Default OFF — byte-identical. Requer o universal ON
+        // para agir (o ControlElement só roteia com as DUAS flags).
+        var virtualPipelineEnabled by rememberSaveable {
+            mutableStateOf(if (isPreview) false else PrefManager.virtualGamepadPipeline)
+        }
+        GamepadSettingsSwitchRow(
+            title = stringResource(R.string.gamepad_settings_virtual_pipeline_title),
+            subtitle = stringResource(R.string.gamepad_settings_virtual_pipeline_subtitle),
+            checked = virtualPipelineEnabled,
+            onCheckedChange = {
+                virtualPipelineEnabled = it
+                PrefManager.virtualGamepadPipeline = it
+                if (!it) {
+                    // Desligar remove o virtual do hub na hora (se registrado).
+                    app.gamenative.gamepad.virtual.TouchGamepadSource.unregister()
+                }
+            },
+        )
+        GamepadSettingsDivider()
         GamepadSettingsSwitchRow(
             title = stringResource(R.string.gamepad_swap_ok_cancel),
             subtitle = stringResource(R.string.gamepad_swap_ok_cancel_subtitle),
