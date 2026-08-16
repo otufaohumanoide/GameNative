@@ -55,6 +55,32 @@ import kotlinx.coroutines.delay
 private const val FLASH_DURATION_MS = 600L
 
 /**
+ * Rótulo amigável da ORIGEM do mapping (spec 2026-08-16-K3, §1.5) para o card —
+ * os valores técnicos do enum viram palavras que qualquer usuário entende
+ * ("recognized as: your saved layout" em vez de "Mapping: USER").
+ */
+@Composable
+private fun mappingSourceLabel(source: app.gamenative.gamepad.MappingSource, hasQuirk: Boolean): String {
+    val base = when (source) {
+        app.gamenative.gamepad.MappingSource.USER ->
+            stringResource(R.string.gamepad_diag_mapping_user)
+        app.gamenative.gamepad.MappingSource.MODEL ->
+            stringResource(R.string.gamepad_diag_mapping_model)
+        app.gamenative.gamepad.MappingSource.SDL_DB ->
+            stringResource(R.string.gamepad_diag_mapping_community)
+        app.gamenative.gamepad.MappingSource.CAPABILITIES ->
+            stringResource(R.string.gamepad_diag_mapping_capabilities)
+        app.gamenative.gamepad.MappingSource.DEFAULT ->
+            stringResource(R.string.gamepad_diag_mapping_default)
+    }
+    return if (hasQuirk) {
+        stringResource(R.string.gamepad_diag_mapping_with_fix, base)
+    } else {
+        base
+    }
+}
+
+/**
  * Cartão de diagnóstico por device (spec 2026-08-16-C-device-card-input-viewer, §1.1):
  * substitui o ConnectedDeviceRow na composição do [SettingsGroupGamepad] — header
  * IDÊNTICO ao row antigo quando recolhido (nome/bateria/badges GYRO/TOUCHPAD,
@@ -225,13 +251,16 @@ fun DeviceDiagnosticsCard(
                 )
 
                 // K3 (spec 2026-08-16-K3, §1.5): origem (tier) do mapping efetivo —
-                // MODEL / SDL_DB / CAPABILITIES / DEFAULT / USER. null = não
+                // USER / MODEL / SDL_DB / CAPABILITIES / DEFAULT. null = não
                 // resolvido → linha escondida (byte-identical). K4 (spec
-                // 2026-08-16-K4, §1.4): com quirk ativo a label ganha o sufixo
-                // "+QUIRK" (ex.: "SDL_DB+QUIRK").
-                device.mappingSourceLabel?.let { label ->
+                // 2026-08-16-K4, §1.4): com quirk ativo o rótulo ganha o sufixo
+                // "· auto fix applied" (ex.: "community database · auto fix applied").
+                device.mappingSource?.let { source ->
                     Text(
-                        text = stringResource(R.string.gamepad_diag_mapping_source, label),
+                        text = stringResource(
+                            R.string.gamepad_diag_mapping_source,
+                            mappingSourceLabel(source, device.quirkName != null),
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -240,7 +269,8 @@ fun DeviceDiagnosticsCard(
                 }
 
                 // K4 (spec 2026-08-16-K4, §1.4): label do quirk ativo no card do
-                // device — nome do quirk (ex.: "DS4 non-standard (RX/RY triggers)").
+                // device — nome do quirk (ex.: "DS4 non-standard (RX/RY triggers)"),
+                // agora sob o rótulo amigável "Automatic fix: …".
                 device.quirkName?.let { quirk ->
                     Text(
                         text = stringResource(R.string.gamepad_diag_quirk, quirk),

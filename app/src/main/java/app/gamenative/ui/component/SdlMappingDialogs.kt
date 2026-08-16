@@ -191,7 +191,7 @@ fun SdlMappingImportDialog(
         val guid = input.substringBefore(',').trim()
         val key = SdlControllerDb.mappingKeyFromGuid(guid)
         if (key.isNotEmpty() && key != device.mappingKey) {
-            stringResource(R.string.gamepad_sdl_import_warn_affinity_format, guid, device.mappingKey)
+            stringResource(R.string.gamepad_sdl_import_warn_affinity_format)
         } else {
             null
         }

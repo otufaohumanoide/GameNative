@@ -2325,8 +2325,8 @@
     <string name="gamepad_visual_badge_auto">A</string>
     <string name="gamepad_visual_state_auto">AUTO</string>
     <string name="gamepad_visual_state_override">OVERRIDE</string>
-    <string name="gamepad_visual_legend_auto">AUTO — controller’s default mapping</string>
-    <string name="gamepad_visual_legend_override">OVERRIDE — remapped in this scope</string>
+    <string name="gamepad_visual_legend_auto">AUTO — what the controller does by default</string>
+    <string name="gamepad_visual_legend_override">OVERRIDE — your change in this scope</string>
     <string name="gamepad_visual_restore_control">Restore auto</string>
     <string name="gamepad_visual_restore_all">Restore all</string>
     <string name="gamepad_visual_capture_prompt">Press the button for %1$s… (B = cancel)</string>
@@ -2335,17 +2335,17 @@
 <!-- ══════════ Gamepad settings (spec 2026-08-14 — onda2 pos-implementação, M2/M3) ══════════ -->
     <string name="settings_gamepad_title">Gamepad</string>
     <string name="gamepad_settings_universal_title">Universal gamepad support</string>
-    <string name="gamepad_settings_universal_subtitle">Translate any controller into logical gamepad events (menu + in-game)</string>
+    <string name="gamepad_settings_universal_subtitle">Any controller works in the menus and in the game. Buttons and sticks are recognized automatically.</string>
     <string name="gamepad_swap_ok_cancel">Swap OK/Cancel buttons</string>
-    <string name="gamepad_swap_ok_cancel_subtitle">Equivalent to RetroArch\'s menu_swap_ok_cancel_buttons</string>
+    <string name="gamepad_swap_ok_cancel_subtitle">With a PlayStation pad, ✕ confirms and ◯ goes back — like on a PlayStation console.</string>
     <string name="gamepad_deadzone_stick_title">Stick deadzone (in-game)</string>
     <string name="gamepad_deadzone_menu_stick_title">Stick deadzone (menu)</string>
     <string name="gamepad_deadzone_subtitle">Ignore stick movement below this threshold</string>
     <string name="gamepad_settings_remap_title">Remap controls</string>
-    <string name="gamepad_settings_remap_subtitle">Rebind %1$s buttons (default layer)</string>
+    <string name="gamepad_settings_remap_subtitle">Choose what each button of %1$s does.</string>
     <string name="gamepad_settings_remap_no_device">Connect a controller to remap it</string>
     <string name="gamepad_touchpad_mouse_title">Controller touchpad → mouse</string>
-    <string name="gamepad_touchpad_mouse_subtitle">Move the cursor with the DS4/DualSense touchpad; tap to click (in-game)</string>
+    <string name="gamepad_touchpad_mouse_subtitle">Slide your finger on the pad to move the cursor; tap to click (in-game)</string>
     <string name="gamepad_touchpad_sensitivity_title">Touchpad sensitivity</string>
     <string name="gamepad_touchpad_sensitivity_subtitle">Cursor speed for touchpad movement</string>
     <string name="gamepad_gyro_title">Gyro</string>
@@ -2363,13 +2363,13 @@
     <string name="gamepad_gyro_invert_x_title">Invert X</string>
     <string name="gamepad_gyro_invert_y_title">Invert Y</string>
     <string name="gamepad_gyro_smooth_title">Smoothing (One Euro)</string>
-    <string name="gamepad_gyro_smooth_subtitle">Filters each axis before pixel conversion — slow moves get smoother, fast ones pass through</string>
+    <string name="gamepad_gyro_smooth_subtitle">Steadies slow aim moves without slowing down fast flicks.</string>
     <string name="gamepad_gyro_smooth_min_cutoff_title">Min cutoff</string>
     <string name="gamepad_gyro_smooth_beta_title">Speed coefficient (beta)</string>
     <string name="gamepad_gyro_stick_max_output_title">Max output</string>
     <string name="gamepad_gyro_stick_anti_deadzone_title">Anti-deadzone</string>
     <string name="gamepad_gyro_grip_title">Grip angle</string>
-    <string name="gamepad_gyro_grip_subtitle">Rotation around the pad\'s long axis — calibrate in Settings → Gamepad → diagnostics</string>
+    <string name="gamepad_gyro_grip_subtitle">Use it if the aim tilts sideways; calibrate it in Settings → Gamepad → diagnostics</string>
     <string name="gamepad_layer_default">Default</string>
     <string name="gamepad_layer_trigger_title">Layer trigger</string>
     <string name="gamepad_layer_no_trigger">No trigger (layer never activates)</string>
@@ -2378,7 +2378,7 @@
     <string name="gamepad_touchpad_double_tap_subtitle">Two quick taps send the right button (off: two left clicks)</string>
     <!-- D (spec 2026-08-16-D-touchpad-swipes-macros): swipes direcionais do touchpad -->
     <string name="gamepad_touchpad_swipes_title">Swipes</string>
-    <string name="gamepad_touchpad_swipes_subtitle">Flick the touchpad (quick swipe) to trigger a macro — slow drags and still taps keep working</string>
+    <string name="gamepad_touchpad_swipes_subtitle">A quick flick on the touchpad triggers a shortcut — slow drags and simple taps keep working</string>
     <string name="gamepad_touchpad_swipe_up">Up</string>
     <string name="gamepad_touchpad_swipe_up_right">Up-right</string>
     <string name="gamepad_touchpad_swipe_right">Right</string>
@@ -2411,6 +2411,7 @@
     <string name="gamepad_stick_lut_imported">LUT imported</string>
     <string name="gamepad_flick_stick_title">Flick Stick</string>
     <string name="gamepad_flick_stick_toggle_title">Right stick = Flick Stick</string>
+    <string name="gamepad_flick_stick_toggle_subtitle">Flick the right stick to turn the camera instantly; hold it to keep aiming. Great for shooting games.</string>
     <string name="gamepad_flick_stick_threshold_title">Activation radius</string>
     <string name="gamepad_flick_stick_snap_title">Snap angle</string>
     <string name="gamepad_gyro_fusion_title">Sensor fusion (experimental)</string>
@@ -2428,7 +2429,7 @@
     <string name="gamepad_layer_mode_sequence">Sequence</string>
     <string name="gamepad_layer_sequence_capture_progress">Button %1$d/3 — back ends</string>
     <string name="gamepad_layer_sequence_captured">Sequence captured</string>
-    <string name="gamepad_layer_sequence_overlap_warning">Same first button as another sequence — the longer sequence that completes wins</string>
+    <string name="gamepad_layer_sequence_overlap_warning">Two sequences start with the same button — the one that finishes wins; the other one does not fire.</string>
     <string name="gamepad_layer_long_press_ms_title">Long press delay</string>
     <string name="gamepad_layer_seq_timeout_title">Step timeout</string>
             <string name="radial_menu_title">Radial Menu</string>
@@ -2453,25 +2454,25 @@
     <string name="radial_menu_submenu_add_child">Add child</string>
     <string name="radial_menu_submenu_remove_child">Remove</string>
     <string name="gamepad_layer_shift_title">Shift layer</string>
-    <string name="gamepad_layer_shift_subtitle">Consumes the button: remaps the other buttons while held without opening the radial menu or haptic tick</string>
+    <string name="gamepad_layer_shift_subtitle">While you hold this button, the other buttons act as the layer\'s layout. The held button itself is not sent to the game.</string>
     <string name="gamepad_binding_turbo_title">Turbo</string>
     <string name="gamepad_expr_chip">ƒx</string>
-    <string name="gamepad_expr_binding_desc">ƒx %1$s</string>
-    <string name="gamepad_expr_editor_title">Expression editor — %1$s</string>
-    <string name="gamepad_expr_field_label">Expression</string>
-    <string name="gamepad_expr_parse_error">Invalid expression: %1$s</string>
+    <string name="gamepad_expr_binding_desc">Custom: %1$s</string>
+    <string name="gamepad_expr_editor_title">Custom action for %1$s</string>
+    <string name="gamepad_expr_field_label">Custom action</string>
+    <string name="gamepad_expr_parse_error">Invalid custom action: %1$s</string>
     <string name="gamepad_expr_preview">Live value: %1$s</string>
     <string name="gamepad_expr_insert_input">Insert input</string>
     <string name="gamepad_binding_modifier_more">⋯</string>
-    <string name="gamepad_binding_modifier_title">Binding modifiers</string>
-    <string name="gamepad_binding_modifier_invert_title">Invert axis</string>
-    <string name="gamepad_binding_modifier_full_axis_title">Full axis (trigger)</string>
+    <string name="gamepad_binding_modifier_title">Fine-tune this control</string>
+    <string name="gamepad_binding_modifier_invert_title">Reverse direction</string>
+    <string name="gamepad_binding_modifier_full_axis_title">Trigger full range</string>
     <string name="gamepad_binding_modifier_scale_title">Sensitivity</string>
     <string name="gamepad_binding_modifier_deadzone_title">Dead zone</string>
 <string name="gamepad_layer_tick_title">Layer activation tick</string>
-    <string name="gamepad_layer_tick_subtitle">Short haptic click when a layer activates (guarded by the rumble switch)</string>
+    <string name="gamepad_layer_tick_subtitle">A short vibration confirms each shortcut change (only when controller vibration is on).</string>
 <string name="gamepad_rumble_title">Controller rumble (menu)</string>
-    <string name="gamepad_rumble_subtitle">Vibrate the controller on menu confirmations (per-device effects in the remap profile)</string>
+    <string name="gamepad_rumble_subtitle">The controller vibrates when you confirm things in the menus.</string>
     <string name="gamepad_phone_rumble_fallback_title">Phone rumble fallback</string>
     <string name="gamepad_phone_rumble_fallback_subtitle">Vibrate the phone when the controller has no vibration (guarded by the rumble switch)</string>
     <string name="gamepad_rumble_test_title">Test vibration</string>
@@ -2487,17 +2488,23 @@
     <string name="gamepad_diag_gyro_readout">Gyro: yaw %1$s · pitch %2$s rad/s</string>
     <string name="gamepad_diag_touchpad_readout">Touchpad: x %1$s · y %2$s</string>
     <string name="gamepad_diag_touchpad_touching">touching</string>
-    <string name="gamepad_diag_mapping_source">Mapping: %1$s</string>
-    <string name="gamepad_diag_quirk">Quirk: %1$s</string>
+    <string name="gamepad_diag_mapping_source">Recognized as: %1$s</string>
+    <string name="gamepad_diag_mapping_user">your saved layout</string>
+    <string name="gamepad_diag_mapping_model">official device profile</string>
+    <string name="gamepad_diag_mapping_community">community database</string>
+    <string name="gamepad_diag_mapping_capabilities">detected from its buttons</string>
+    <string name="gamepad_diag_mapping_default">standard layout</string>
+    <string name="gamepad_diag_mapping_with_fix">%1$s · auto fix applied</string>
+    <string name="gamepad_diag_quirk">Automatic fix: %1$s</string>
     <string name="gamepad_diag_recenter_gyro_title">Recenter gyro</string>
-    <string name="gamepad_diag_recenter_gyro_hint">Zeros the gyro offsets (same operation as the activation edge)</string>
+    <string name="gamepad_diag_recenter_gyro_hint">Fixes drift: the aim stops turning on its own.</string>
     <string name="gamepad_diag_calibrate_grip_title">Calibrate grip angle</string>
-    <string name="gamepad_diag_calibrate_grip_hint">Hold the pad in your natural grip; the angle is read from the accelerometer and saved to the device profile</string>
+    <string name="gamepad_diag_calibrate_grip_hint">Hold the pad the way you usually do — the aim tilt is read from this new angle.</string>
     <string name="gamepad_autoconfig_save_title">Save profile for this controller</string>
-    <string name="gamepad_autoconfig_save_hint">From now on, this controller always uses the current mapping (raw→logical), without a logical profile</string>
+    <string name="gamepad_autoconfig_save_hint">From now on, this controller always opens with the current button layout — even after reconnecting or in other games.</string>
     <string name="gamepad_autoconfig_saved_format">Saved: %1$s · %2$s</string>
     <string name="gamepad_autoconfig_restore_title">Restore automatic mapping</string>
-    <string name="gamepad_autoconfig_restore_hint">Delete the saved profile and go back to the automatic chain (model / database / capabilities)</string>
+    <string name="gamepad_autoconfig_restore_hint">Forget the saved layout and use the automatic one again.</string>
     <string name="gamepad_autoconfig_error_title">Could not save profile</string>
     <string name="gamepad_autoconfig_error_missing_confirm">This mapping has no confirm button (A / ✕). Nothing was saved.</string>
     <string name="gamepad_autoconfig_error_missing_direction">This mapping has no D-pad direction to navigate the menus. Nothing was saved.</string>
@@ -2510,9 +2517,9 @@
     <string name="gamepad_sdl_import_title">Import mapping (SDL format)</string>
     <string name="gamepad_sdl_import_hint">Paste a gamecontrollerdb mapping string or load a file</string>
     <string name="gamepad_sdl_export_title">Share mapping (SDL format)</string>
-    <string name="gamepad_sdl_export_hint">Generate a community mapping string for this controller</string>
+    <string name="gamepad_sdl_export_hint">Creates a shareable string for this controller — for forums and the SDL community</string>
     <string name="gamepad_sdl_export_dialog_title">SDL mapping string</string>
-    <string name="gamepad_sdl_export_footer">SDL_GameControllerDB format (zlib, SDL). Community database: github.com/mdqinc/SDL_GameControllerDB</string>
+    <string name="gamepad_sdl_export_footer">Community format (SDL_GameControllerDB, zlib/SDL). Database: github.com/mdqinc/SDL_GameControllerDB</string>
     <string name="gamepad_sdl_copy">Copy</string>
     <string name="gamepad_sdl_share">Share</string>
     <string name="gamepad_sdl_save_file">Save file</string>
@@ -2526,10 +2533,10 @@
     <string name="gamepad_sdl_import_invalid">Not a valid SDL mapping string</string>
     <string name="gamepad_sdl_import_preview_format">Name: %1$s · Platform: %2$s · %3$d buttons · %4$d axes</string>
     <string name="gamepad_sdl_import_block_platform_format">This string targets platform \"%1$s\". GameNative only imports Android mappings — a desktop string would bind the wrong controls.</string>
-    <string name="gamepad_sdl_import_warn_affinity_format">This string was created for another controller (GUID %1$s vs. connected %2$s). Apply anyway?</string>
+    <string name="gamepad_sdl_import_warn_affinity_format">This string was made for a different controller. Apply it anyway?</string>
     <string name="gamepad_sdl_import_no_diff">No changes — the string matches the current mapping</string>
     <string name="gamepad_sdl_import_more_diffs">… and %1$d more changes</string>
-    <string name="gamepad_sdl_imported">Mapping imported (tier USER)</string>
+    <string name="gamepad_sdl_imported">Mapping imported — this controller now uses it</string>
     <string name="gamepad_sdl_import_apply">Apply</string>
     <string name="gamepad_sdl_import_cancel">Cancel</string>
     <string name="gamepad_sdl_diff_add_format">+ %1$s: %2$s</string>
@@ -2538,20 +2545,20 @@
     <!-- K2 (spec 2026-08-16-K2): modo mouse universal por stick -->
     <string name="gamepad_mouse_mode_title">Mouse mode</string>
     <string name="gamepad_mouse_mode_enable_title">Enable mouse mode</string>
-    <string name="gamepad_mouse_mode_enable_subtitle">Hold START 750 ms and release to toggle; while active, the left stick moves the cursor, A/B click and the D-pad scrolls</string>
+    <string name="gamepad_mouse_mode_enable_subtitle">Hold START for 1 second and release: the left stick becomes the mouse, A/B click and the D-pad scrolls. Repeat to go back.</string>
     <string name="gamepad_mouse_mode_base_title">Base speed</string>
     <string name="gamepad_mouse_mode_gain_title">Gain (ramp)</string>
-    <string name="gamepad_mouse_mode_card_title">Mouse mode (hold START 750 ms)</string>
-    <string name="gamepad_mouse_mode_card_on">Enabled — hold START and release to toggle</string>
-    <string name="gamepad_mouse_mode_card_off">Disabled — the left stick stays a stick</string>
+    <string name="gamepad_mouse_mode_card_title">Mouse mode (hold START to switch)</string>
+    <string name="gamepad_mouse_mode_card_on">On — hold START and release to switch back</string>
+    <string name="gamepad_mouse_mode_card_off">Off — the left stick moves the game like before</string>
     <!-- K1 (spec 2026-08-16-K1): gamepad virtual de toque no pipeline do fork -->
-    <string name="gamepad_settings_virtual_pipeline_title">Virtual touch gamepad pipeline</string>
-    <string name="gamepad_settings_virtual_pipeline_subtitle">The touch overlay becomes a virtual controller in the universal pipeline (layers, expressions, radial, turbo, per-game profiles). Requires the universal gamepad toggle. Mouse/keys of the overlay stay as-is.</string>
+    <string name="gamepad_settings_virtual_pipeline_title">On-screen gamepad (touch overlay)</string>
+    <string name="gamepad_settings_virtual_pipeline_subtitle">The on-screen buttons act like a real controller. They follow the same shortcuts, radial menu and turbo you set for your controller. The on-screen mouse and keys keep working as before. Requires the universal gamepad support toggle.</string>
 
-    <string name="gamepad_virtual_pipeline_quick_title">Virtual gamepad</string>
+    <string name="gamepad_virtual_pipeline_quick_title">On-screen gamepad</string>
     <!-- K7 (spec 2026-08-16-K7): calibração visual de stick -->
     <string name="gamepad_calibration_title">Stick calibration</string>
-    <string name="gamepad_calibration_raw_vs_calibrated">RAW (as-is) vs calibrated — with the settings below</string>
+    <string name="gamepad_calibration_raw_vs_calibrated">Left: what the stick really does. Right: what the game receives with the settings below.</string>
     <string name="gamepad_stick_deadzone_title">Deadzone</string>
     <string name="gamepad_stick_anti_deadzone_title">Anti-deadzone</string>
     <string name="gamepad_stick_max_output_title">Max output</string>

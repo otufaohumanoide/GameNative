@@ -47,16 +47,6 @@ data class GamepadDevice(
     val quirkName: String? = null,
 ) {
     val mappingKey: String get() = "%04x%04x".format(vendorId, productId)
-
-    /**
-     * K4 §1.4: label de diagnóstico do mapping efetivo — ganha o sufixo "+QUIRK"
-     * quando há quirk ativo (ex.: "SDL_DB+QUIRK"). A UI do device card usa ESTA
-     * label; o enum [MappingSource] continua puro.
-     */
-    val mappingSourceLabel: String?
-        get() = mappingSource?.let {
-            if (quirkName != null) "${it.name}+QUIRK" else it.name
-        }
 }
 
 /**
