@@ -21,7 +21,9 @@ import app.gamenative.gamepad.GamepadButton
  *   (sem `!`) vira [FaceStyle.NINTENDO] para vendor não-identificável — o análogo do
  *   `SDL_ConvertMappingToPositionalBAXY` (SDL_gamepad.c:2535) na camada de rótulo
  *   que o fork já tem, sem mudar o formato interno;
- * - `aN` = ordem de eixos do driver Android (0/1=X/Y, 2/3=Z/RZ, 4/5=LTRIGGER/RTRIGGER);
+ * - `aN` = ordem de eixos do driver Android (0/1=X/Y, 2/3=Z/RZ, 4/5=LTRIGGER/RTRIGGER)
+ *   → ids REAIS do MotionEvent (a2=AXIS_Z=11, a3=AXIS_RZ=14 — fix do guia universal
+ *   input, pré-K6);
  * - `hN.M` = hat com máscara SDL (1=up, 2=right, 4=down, 8=left — igual ao
  *   MappingParser do fork);
  * - prefixos `+`/`-`/`~` → direção ±1.

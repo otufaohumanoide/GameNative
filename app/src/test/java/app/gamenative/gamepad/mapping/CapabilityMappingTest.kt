@@ -91,6 +91,19 @@ class CapabilityMappingTest {
     }
 
     @Test
+    fun `stick direito sintetiza com os ids REAIS do MotionEvent Z=11 RZ=14`() {
+        // FIX do guia universal input (pré-K6): a coleta do hotplug entrega os ids
+        // reais do MotionEvent (AXIS_Z=11/AXIS_RZ=14); o gate da síntese tinha
+        // 2/3 (AXIS_PRESSURE/SIZE) e nunca casava — o stick direito nunca nascia.
+        val mapping = CapabilityMapping.synthesize(
+            caps(axes = listOf(0, 1, 11, 14)),
+            FaceStyle.GENERIC,
+        )!!
+        assertEquals(RawBinding.Axis(11, +1), mapping.axes[GamepadAxis.RIGHT_X])
+        assertEquals(RawBinding.Axis(14, +1), mapping.axes[GamepadAxis.RIGHT_Y])
+    }
+
+    @Test
     fun `stick direito so com AXIS_Z e AXIS_RZ (pad de 1 stick nao ganha fantasma)`() {
         val mapping = CapabilityMapping.synthesize(
             caps(axes = listOf(AndroidConstants.AXIS_X, AndroidConstants.AXIS_Y)),

@@ -49,7 +49,9 @@ object MappingDatabase {
      * Identidade dos keycodes Android normalizados (spec Parte I §5): o framework entrega
      * KEYCODE_BUTTON_A/B/X/Y (96/97/99/100), L1/R1 (102/103), L2/R2 (104/105 quando
      * botão), THUMBL/R (106/107), START/SELECT/MODE (108/109/110) e DPAD 19-22; eixos
-     * AXIS_X/Y (0/1), Z/RZ (2/3), LTRIGGER/RTRIGGER (17/18).
+     * AXIS_X/Y (0/1), Z/RZ (11/14), LTRIGGER/RTRIGGER (17/18) — ids REAIS do MotionEvent
+     * (fix do guia universal input: 2/3 eram AXIS_PRESSURE/SIZE; o stick direito não
+     * lia o Z/RZ verdadeiro).
      */
     fun defaultAndroidMapping(faceStyle: FaceStyle): GamepadMapping {
         val buttons = mapOf(

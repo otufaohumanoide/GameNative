@@ -95,6 +95,22 @@ class EventTranslatorTest {
     }
 
     @Test
+    fun `defaultAndroidMapping le o stick direito dos ids REAIS do MotionEvent`() {
+        // FIX do guia universal input (pré-K6): o modelo guardava Z/RZ como 2/3
+        // (ordem do driver da SDL), mas o adapter chaveia pelos ids reais do
+        // MotionEvent — AXIS_Z=11, AXIS_RZ=14 (javap platforms/android-36).
+        // Sem o fix, axisValues[2]/[3] nunca existem e o stick direito fica mudo.
+        val mapping = MappingDatabase.defaultAndroidMapping(app.gamenative.gamepad.FaceStyle.GENERIC)
+        val events = EventTranslator.translateAxis(
+            axis(mapOf(11 to 0.4f, 14 to -0.6f)),
+            mapping,
+            DeadzoneConfig(leftStick = 0f, rightStick = 0f),
+        )
+        assertTrue(events.any { it == InputEvent.AxisMotion(1, GamepadAxis.RIGHT_X, 0.4f) })
+        assertTrue(events.any { it == InputEvent.AxisMotion(1, GamepadAxis.RIGHT_Y, -0.6f) })
+    }
+
+    @Test
     fun `trigger axis is deadzone processed and rescaled`() {
         val mapping = MappingDatabase.defaultAndroidMapping(app.gamenative.gamepad.FaceStyle.XBOX)
         // AXIS_LTRIGGER=17 com valor 0.9; deadzone 0.08 → saída rescalonada ~1.0.

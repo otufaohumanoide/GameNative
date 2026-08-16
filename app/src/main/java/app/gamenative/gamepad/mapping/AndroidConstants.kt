@@ -55,11 +55,17 @@ object AndroidConstants {
         for (keyCode in BUTTON_1..BUTTON_16) add(keyCode)
     }.toIntArray()
 
-    // MotionEvent.AXIS_*
+    // MotionEvent.AXIS_* (ids REAIS do SDK — javap em platforms/android-36/android.jar:
+    // AXIS_X=0, AXIS_Y=1, AXIS_Z=11, AXIS_RX=12, AXIS_RY=13, AXIS_RZ=14, AXIS_HAT_X=15,
+    // AXIS_HAT_Y=16, AXIS_LTRIGGER=17, AXIS_RTRIGGER=18, AXIS_GAS=22, AXIS_BRAKE=23.
+    // FIX (guia universal input, bug de mapping/hub pré-K6): Z/RZ eram 2/3 (transcritos
+    // da ORDEM do driver da SDL `a2`/`a3`), mas o AndroidInputAdapter chaveia
+    // axisValues pelos ids REAIS do MotionEvent — o stick direito ficava morto no
+    // pipeline universal (axisValues[2/3] nunca existem; AXIS_PRESSURE=2/SIZE=3).
     const val AXIS_X = 0
     const val AXIS_Y = 1
-    const val AXIS_Z = 2
-    const val AXIS_RZ = 3
+    const val AXIS_Z = 11
+    const val AXIS_RZ = 14
     const val AXIS_RX = 12
     const val AXIS_RY = 13
     const val AXIS_HAT_X = 15
