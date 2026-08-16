@@ -126,7 +126,19 @@ object EventTranslator {
         deadzone: Float,
     ) {
         val binding = mapping.axes[axis] as? RawBinding.Axis ?: return
-        val value = raw.axisValues[binding.axis] ?: return
+        val rawValue = raw.axisValues[binding.axis] ?: return
+        // K4 (spec 2026-08-16-K4): triggers do DS4 BT não-padrão vêm em RX/RY —
+        // eixos CENTRADOS (−1..1, neutro em −1). O moonlight normaliza com
+        // `(value + 1) / 2` quando `triggersIdleNegative` (ControllerHandler.java:
+        // 875-876, 1613-1620); aqui o gate é o próprio eixo físico do binding.
+        // Eixos de trigger 0..1 (LTRIGGER/RTRIGGER/BRAKE/GAS) seguem intactos.
+        val value = if (binding.axis == AndroidConstants.AXIS_RX ||
+            binding.axis == AndroidConstants.AXIS_RY
+        ) {
+            (rawValue + 1f) / 2f
+        } else {
+            rawValue
+        }
         val processed = DeadzoneProcessor.processAxis(value * binding.direction, deadzone)
         if (processed == 0f) return
         events += InputEvent.AxisMotion(raw.deviceId, axis, processed)

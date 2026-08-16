@@ -18,6 +18,9 @@ object AndroidInputAdapter {
         keyCode = event.keyCode,
         action = event.action,
         repeatCount = event.repeatCount,
+        // K4 (spec 2026-08-16-K4, §1.3.2): o scanCode cru alimenta o alias de
+        // scanCode do quirk ativo (keyCode UNKNOWN → keycode da tabela).
+        scanCode = event.scanCode,
     )
 
     /**
@@ -64,6 +67,11 @@ object AndroidInputAdapter {
             MotionEvent.AXIS_RTRIGGER,
             MotionEvent.AXIS_BRAKE,
             MotionEvent.AXIS_GAS,
+            // K4 (spec 2026-08-16-K4): RX/RY — triggers do DS4 BT não-padrão
+            // (ControllerHandler.java:851-859). O adapter precisa COLETÁ-LOS para o
+            // quirk de trigger em RX/RY chegar ao tradutor.
+            MotionEvent.AXIS_RX,
+            MotionEvent.AXIS_RY,
         )
         for (axis in candidates) {
             axes[axis] = event.getAxisValue(axis)

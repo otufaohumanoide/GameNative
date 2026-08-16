@@ -14,6 +14,13 @@ data class RawKeyInput(
     val keyCode: Int,
     val action: Int,
     val repeatCount: Int,
+    /**
+     * K4 (spec 2026-08-16-K4, §1.3.2): scanCode cru do KeyEvent — o alias de
+     * scanCode do quirk ativo corrige o keycode ANTES da tradução quando o keycode é
+     * KEYCODE_UNKNOWN (device sem .kl). Default 0 = não informado (nenhum quirk usa
+     * scanCode 0) — chamadores antigos intactos, degradação byte-identical.
+     */
+    val scanCode: Int = 0,
 )
 
 data class RawAxisInput(

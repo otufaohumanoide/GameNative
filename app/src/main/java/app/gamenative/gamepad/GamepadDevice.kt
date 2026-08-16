@@ -40,8 +40,23 @@ data class GamepadDevice(
      * UI/log. null = ainda não resolvido (a UI esconde a linha).
      */
     val mappingSource: MappingSource? = null,
+    /**
+     * K4 (spec 2026-08-16-K4, §1.4): nome do quirk ativo deste device (resolvido uma
+     * vez no hotplug). null = sem quirk — nada muda (degradação byte-identical).
+     */
+    val quirkName: String? = null,
 ) {
     val mappingKey: String get() = "%04x%04x".format(vendorId, productId)
+
+    /**
+     * K4 §1.4: label de diagnóstico do mapping efetivo — ganha o sufixo "+QUIRK"
+     * quando há quirk ativo (ex.: "SDL_DB+QUIRK"). A UI do device card usa ESTA
+     * label; o enum [MappingSource] continua puro.
+     */
+    val mappingSourceLabel: String?
+        get() = mappingSource?.let {
+            if (quirkName != null) "${it.name}+QUIRK" else it.name
+        }
 }
 
 /**

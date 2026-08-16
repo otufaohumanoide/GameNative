@@ -197,10 +197,24 @@ fun DeviceDiagnosticsCard(
 
                 // K3 (spec 2026-08-16-K3, §1.5): origem (tier) do mapping efetivo —
                 // MODEL / SDL_DB / CAPABILITIES / DEFAULT / USER. null = não
-                // resolvido → linha escondida (byte-identical).
-                device.mappingSource?.let { source ->
+                // resolvido → linha escondida (byte-identical). K4 (spec
+                // 2026-08-16-K4, §1.4): com quirk ativo a label ganha o sufixo
+                // "+QUIRK" (ex.: "SDL_DB+QUIRK").
+                device.mappingSourceLabel?.let { label ->
                     Text(
-                        text = stringResource(R.string.gamepad_diag_mapping_source, source.name),
+                        text = stringResource(R.string.gamepad_diag_mapping_source, label),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+
+                // K4 (spec 2026-08-16-K4, §1.4): label do quirk ativo no card do
+                // device — nome do quirk (ex.: "DS4 non-standard (RX/RY triggers)").
+                device.quirkName?.let { quirk ->
+                    Text(
+                        text = stringResource(R.string.gamepad_diag_quirk, quirk),
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -26,6 +26,8 @@ import app.gamenative.gamepad.expressions.ExprBindingProcessor
 import app.gamenative.gamepad.expressions.ExprState
 import app.gamenative.gamepad.mapping.AndroidConstants
 import app.gamenative.gamepad.mapping.CapabilityMapping
+import app.gamenative.gamepad.mapping.DeviceQuirk
+import app.gamenative.gamepad.mapping.DeviceQuirks
 import app.gamenative.gamepad.mapping.EventTranslator
 import app.gamenative.gamepad.mapping.GamepadCapabilities
 import app.gamenative.gamepad.mapping.GamepadMapping
@@ -246,6 +248,7 @@ class GamepadHub(context: Context) {
         _activeDevice.value = null
         buttonStates.clear()
         mappingCache.clear()
+        quirkCache.clear()
         for (deviceId in alive) {
             PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)
             PluviaApp.events.emit(GamepadDeviceRemovedEvent(deviceId))
@@ -1089,7 +1092,19 @@ class GamepadHub(context: Context) {
         // (spec 2026-08-13-onda2 §1.2 — correção 3 da validação).
         if (device.deviceClass != DeviceClass.CONTROLLER) return false
         val mapping = mappingFor(device)
-        val events = EventTranslator.translateKey(raw, mapping)
+        // K4 (spec 2026-08-16-K4, §1.3.2): alias de scanCode ANTES da tradução —
+        // keyCode KEYCODE_UNKNOWN (device sem .kl) + scanCode na tabela do quirk
+        // ativo → substitui o keycode. Guard curto-circuita por keyCode (um int
+        // compare por evento; nada de lookup quando o keycode é conhecido — o
+        // caminho atual fica byte-identical).
+        val effectiveRaw = if (raw.keyCode == AndroidConstants.KEYCODE_UNKNOWN) {
+            val alias = quirkCache[raw.deviceId]?.fixup?.scanCodeAliases
+                ?.get(raw.scanCode)
+            if (alias != null) raw.copy(keyCode = alias) else raw
+        } else {
+            raw
+        }
+        val events = EventTranslator.translateKey(effectiveRaw, mapping)
         if (events.isEmpty()) return false
         val profile = profileFor(raw.deviceId, activeAppId)
         val activateButton = profile.gyroActivateButton
@@ -1337,27 +1352,40 @@ class GamepadHub(context: Context) {
     private val mappingCache = mutableMapOf<Int, Pair<GamepadMapping, MappingSource>>()
 
     /**
+     * K4 (spec 2026-08-16-K4, §1.3): quirk resolvido UMA vez por hotplug/addDevice
+     * (nunca por evento) — par (entry, aliases) do device ativo. A entry carrega a
+     * identidade de diagnóstico (nome/origem) e o fixup; os aliases de scanCode
+     * alimentam o caminho de KeyEvent. Cache morre junto com o mappingCache
+     * (deviceId efêmero, padrão K3).
+     */
+    private val quirkCache = mutableMapOf<Int, DeviceQuirk?>()
+
+    /**
      * Cadeia de prioridade do mapping (spec 2026-08-16-K3, §1.5): USER (K5, futuro) >
      * MODEL (MappingDatabase) > SDL_DB (gamecontrollerdb) > CAPABILITIES (síntese) >
      * DEFAULT (estático). A ORDEM da cadeia É a prioridade — regra de escalonamento
      * do SDL (SDL_gamepad.c:2214-2221, um tier só é sobrescrito por prioridade ≥).
-     * A origem volta junto para UI/log ([MappingSource]).
+     * A origem volta junto para UI/log ([MappingSource]). K4 (spec 2026-08-16-K4,
+     * §1.3.1): o quirk do device (se houver) aplica DEPOIS, como pós-processamento
+     * do mapping escolhido — [DeviceQuirks.apply] devolve o MESMO objeto quando o
+     * fixup é nulo/vazio (degradação zero, sem alocação por evento; o cache por
+     * deviceId já amortiza a cópia única do hotplug).
      */
     private fun resolveMapping(device: GamepadDevice): Pair<GamepadMapping, MappingSource> =
         mappingCache.getOrPut(device.deviceId) {
-            MappingDatabase.mappingFor(device.vendorId, device.productId)?.let {
-                return@getOrPut it to MappingSource.MODEL
-            }
             // F1.4 (spec 2026-08-15-input-core-avancado): fallback do DB pinado do
             // SDL_GameControllerDB (entradas Android). Load do asset UMA vez,
             // preguiçoso (o hotplug do device desconhecido esquenta o cache).
-            sdlDb()[device.mappingKey]?.let { return@getOrPut it to MappingSource.SDL_DB }
-            device.capabilities?.let { capabilities ->
-                CapabilityMapping.synthesize(capabilities, device.faceStyle)?.let {
-                    return@getOrPut it to MappingSource.CAPABILITIES
+            val base = MappingDatabase.mappingFor(device.vendorId, device.productId)
+                ?.let { it to MappingSource.MODEL }
+                ?: sdlDb()[device.mappingKey]?.let { it to MappingSource.SDL_DB }
+                ?: device.capabilities?.let { capabilities ->
+                    CapabilityMapping.synthesize(capabilities, device.faceStyle)?.let {
+                        it to MappingSource.CAPABILITIES
+                    }
                 }
-            }
-            MappingDatabase.defaultAndroidMapping(device.faceStyle) to MappingSource.DEFAULT
+                ?: (MappingDatabase.defaultAndroidMapping(device.faceStyle) to MappingSource.DEFAULT)
+            DeviceQuirks.apply(base.first, quirkCache[device.deviceId]?.fixup) to base.second
         }
 
     private fun mappingFor(device: GamepadDevice): GamepadMapping = resolveMapping(device).first
@@ -1467,8 +1495,19 @@ class GamepadHub(context: Context) {
         )
         // K3: cache do mapping é por deviceId EFÊMERO — entrada velha nunca vaza.
         mappingCache.remove(deviceId)
+        // K4 (spec 2026-08-16-K4, §1.3): quirk resolvido UMA vez no hotplug (fora
+        // do hot path) — vid/pid/nome/transporte + gate de capabilities (K3). O
+        // mapping efetivo (com fixup) e os aliases de scanCode saem daqui.
+        val quirk = DeviceQuirks.resolve(
+            vendorId = inputDevice.vendorId,
+            productId = inputDevice.productId,
+            name = inputDevice.name,
+            isBt = isBluetoothInput(inputDevice),
+            caps = capabilities,
+        )
+        quirkCache[deviceId] = quirk
         val (_, mappingSource) = resolveMapping(device)
-        val stored = device.copy(mappingSource = mappingSource)
+        val stored = device.copy(mappingSource = mappingSource, quirkName = quirk?.name)
         _connectedDevices.value = _connectedDevices.value + (deviceId to stored)
         refreshActive()
         invalidateProfiles()
@@ -1480,12 +1519,18 @@ class GamepadHub(context: Context) {
             CapabilityMapping.classify(capabilities), mappingSource,
             stored.batteryPercent?.toString() ?: "-", stored.hasGyro, stored.hasTouchpad,
         )
+        // K4 §1.4: log ÚNICO no addDevice quando há quirk ativo (nada por evento).
+        if (quirk != null) {
+            Timber.d("gncontrol: quirk %s aplicado (%s)", quirk.name, quirk.source)
+        }
     }
 
     private fun removeDevice(deviceId: Int) {
         buttonStates.remove(deviceId)
         // K3: cache do mapping morre junto (deviceId efêmero pode ser reusado).
         mappingCache.remove(deviceId)
+        // K4: o quirk do device morre junto (mesma regra do mappingCache).
+        quirkCache.remove(deviceId)
         // U2 (V6): estado do touchpad→mouse morre junto com o device (mesmo padrão
         // buttonStates — o deviceId efêmero pode ser reusado por outro hardware).
         PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)
@@ -1551,6 +1596,23 @@ class GamepadHub(context: Context) {
             hasAxisX = device.getMotionRange(MotionEvent.AXIS_X) != null,
             hasAxisY = device.getMotionRange(MotionEvent.AXIS_Y) != null,
         )
+    }
+
+    /**
+     * K4 (spec 2026-08-16-K4, §1.1): heurística de transporte Bluetooth — o Android
+     * NÃO expõe API pública para isso. Sinais acumulados, conservadores (sem sinal
+     * → false → quirks gateados por BT não ativam — degradação ao caminho atual):
+     * 1. nome com "wireless"/"bluetooth" (padrão dos pads HID de BT — o moonlight
+     *    também usa o nome: "Xbox Wireless Controller", ControllerHandler.java:985);
+     * 2. descriptor com "bluetooth" (prefixo de MAC nos builds modernos do
+     *    EventHub — sem custo se o build não produzir);
+     * 3. vendors conhecidos BT-only (0x057e Nintendo — Switch Pro/Joy-Con).
+     */
+    private fun isBluetoothInput(device: InputDevice): Boolean {
+        val name = device.name.lowercase()
+        if (name.contains("wireless") || name.contains("bluetooth")) return true
+        if (device.descriptor.lowercase().contains("bluetooth")) return true
+        return device.vendorId == 0x057e
     }
 }
 

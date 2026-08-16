@@ -2488,6 +2488,7 @@
     <string name="gamepad_diag_touchpad_readout">Touchpad: x %1$s · y %2$s</string>
     <string name="gamepad_diag_touchpad_touching">touching</string>
     <string name="gamepad_diag_mapping_source">Mapping: %1$s</string>
+    <string name="gamepad_diag_quirk">Quirk: %1$s</string>
     <string name="gamepad_diag_recenter_gyro_title">Recenter gyro</string>
     <string name="gamepad_diag_recenter_gyro_hint">Zeros the gyro offsets (same operation as the activation edge)</string>
     <string name="gamepad_diag_calibrate_grip_title">Calibrate grip angle</string>

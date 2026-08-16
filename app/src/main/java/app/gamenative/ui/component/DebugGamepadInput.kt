@@ -29,6 +29,10 @@ import kotlinx.coroutines.delay
  *   key:<keycode>            press + release (e.g. key:96 = BUTTON_A, key:110 = BUTTON_MODE/PS)
  *   key:<keycode>:down       press and hold (repeat events arrive like a held button)
  *   key:<keycode>:up         release
+ *   scan:<scancode>[:down|up]
+ *                            K4 (spec 2026-08-16-K4, §4.2): KeyEvent com keyCode
+ *                            KEYCODE_UNKNOWN (0) + scanCode explícito — exercita o
+ *                            alias de scanCode do DeviceQuirks (ex.: scan:704).
  *   stick:<x>:<y>            hold the left stick at x/y (e.g. stick:0:0.8 = down); repeated
  *                            ACTION_MOVE until `stick:0:0`
  *   hat:<x>:<y>              same for the D-pad hat
@@ -213,6 +217,31 @@ private fun handleCommand(command: String, activity: Activity) {
                 }
             }
             Log.d("DebugGamepad", "key $keyCode $hold")
+        }
+        // K4 (spec 2026-08-16-K4, §4.2): exercita o alias de scanCode do
+        // DeviceQuirks — dispara um KeyEvent com keyCode KEYCODE_UNKNOWN (0) +
+        // scanCode explícito, exatamente o caminho "sem .kl" que os quirks corrigem
+        // (ex.: scan:704 = d-pad esquerdo cru). O verbo `key:` não leva scanCode
+        // (protocolo congelado) — por isso o verbo próprio.
+        "scan" -> {
+            val scanCode = parts.getOrNull(1)?.toIntOrNull() ?: return
+            val hold = parts.getOrNull(2)
+            val deviceId = gamepadDeviceId() ?: 0
+            Log.d("DebugGamepad", "scan $scanCode devId=$deviceId dev=${InputDevice.getDevice(deviceId)?.name} src=${InputDevice.SOURCE_GAMEPAD}")
+            val now = SystemClock.uptimeMillis()
+            fun keyEvent(action: Int) = KeyEvent(
+                now, now, action, 0 /* KEYCODE_UNKNOWN */, 0, 0,
+                deviceId, scanCode, 0, InputDevice.SOURCE_GAMEPAD,
+            )
+            when (hold) {
+                "down" -> activity.dispatchKeyEvent(keyEvent(KeyEvent.ACTION_DOWN))
+                "up" -> activity.dispatchKeyEvent(keyEvent(KeyEvent.ACTION_UP))
+                else -> {
+                    activity.dispatchKeyEvent(keyEvent(KeyEvent.ACTION_DOWN))
+                    activity.dispatchKeyEvent(keyEvent(KeyEvent.ACTION_UP))
+                }
+            }
+            Log.d("DebugGamepad", "scan $scanCode $hold")
         }
         "touch", "touchdown", "touchup" -> {
             val x = parts.getOrNull(1)?.toFloatOrNull() ?: 0.5f

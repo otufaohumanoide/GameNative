@@ -26,6 +26,12 @@ object AndroidConstants {
     const val BUTTON_16 = 203
     const val BACK = 4
     const val MENU = 82
+    // K4 (spec 2026-08-16-K4): keycodes/valores usados pelas entries de quirk —
+    // SEARCH (SHIELD search→mode, ControllerHandler.java:1541-1543), KEYCODE_UNKNOWN
+    // (guarda do alias de scanCode, §1.3.2) e os eixos CENTRADOS RX/RY (triggers do
+    // DS4 BT não-padrão, ControllerHandler.java:851-859).
+    const val SEARCH = 84
+    const val KEYCODE_UNKNOWN = 0
     const val DPAD_UP = 19
     const val DPAD_DOWN = 20
     const val DPAD_LEFT = 21
@@ -54,6 +60,8 @@ object AndroidConstants {
     const val AXIS_Y = 1
     const val AXIS_Z = 2
     const val AXIS_RZ = 3
+    const val AXIS_RX = 12
+    const val AXIS_RY = 13
     const val AXIS_HAT_X = 15
     const val AXIS_HAT_Y = 16
     const val AXIS_LTRIGGER = 17
