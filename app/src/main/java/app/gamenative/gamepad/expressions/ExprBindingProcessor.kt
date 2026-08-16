@@ -14,7 +14,12 @@ import app.gamenative.gamepad.InputEvent
 object ExprBindingProcessor {
 
     data class Parsed(
-        val button: GamepadButton,
+        /**
+         * Botão dono do binding (transições Down/Up). null quando a CHAVE do
+         * binding nomeia um [GamepadAxis] (ex.: LEFT_TRIGGER é os dois) — nesse
+         * caso o binding emite SÓ AxisMotion contínuo.
+         */
+        val button: GamepadButton?,
         val axis: GamepadAxis?,
         val source: String,
         val ast: ExprAst,
@@ -23,16 +28,22 @@ object ExprBindingProcessor {
         val chord: ChordLogic.Chord? = null,
     )
 
-    /** Tokens `expr:` dos bindings efetivos → bindings parseados (erros pulados). */
+    /**
+     * Tokens `expr:` dos bindings efetivos → bindings parseados (erros pulados).
+     * A chave pode nomear um GamepadButton (transições Down/Up), um GamepadAxis
+     * (só AxisMotion contínuo) ou ambos (LEFT_TRIGGER/RIGHT_TRIGGER — os dois
+     * caminhos). Chave que não é nem um nem outro ⇒ pulada.
+     */
     fun parseBindings(effectiveBindings: Map<String, String>): List<Parsed> {
         val result = mutableListOf<Parsed>()
         var index = 0
         for ((name, token) in effectiveBindings) {
             if (!token.startsWith("expr:")) continue
             val source = token.removePrefix("expr:")
-            val button = GamepadButton.entries.firstOrNull { it.name == name } ?: continue
-            val ast = runCatching { ExprParser.parse(source) }.getOrNull() ?: continue
+            val button = GamepadButton.entries.firstOrNull { it.name == name }
             val axis = GamepadAxis.entries.firstOrNull { it.name == name }
+            if (button == null && axis == null) continue
+            val ast = runCatching { ExprParser.parse(source) }.getOrNull() ?: continue
             result += Parsed(button, axis, source, ast, index++, chord = ChordLogic.parseChord(source))
         }
         return result
@@ -71,9 +82,10 @@ object ExprBindingProcessor {
         val events = mutableListOf<InputEvent>()
         for (binding in bindings) {
             // Supressão do binding simples: botão final de chord armado não emite
-            // por conta própria (o chord emite).
-            if (binding.chord == null &&
-                ChordLogic.suppressFinal(chords, heldButtons, binding.button.name.lowercase())
+            // por conta própria (o chord emite) — só para bindings de BOTÃO.
+            val button = binding.button
+            if (binding.chord == null && button != null &&
+                ChordLogic.suppressFinal(chords, heldButtons, button.name.lowercase())
             ) {
                 continue
             }
@@ -83,12 +95,12 @@ object ExprBindingProcessor {
             val outKey = "expr${binding.index}|out"
             val out = state.funcs.getOrPut(outKey) { FuncState() }
             val level = if (value > ExprFuncs.THRESHOLD) 1f else 0f
-            if (level != out.value) {
+            if (button != null && level != out.value) {
                 out.value = level
                 events += if (level == 1f) {
-                    InputEvent.ButtonDown(deviceId, binding.button)
+                    InputEvent.ButtonDown(deviceId, button)
                 } else {
-                    InputEvent.ButtonUp(deviceId, binding.button)
+                    InputEvent.ButtonUp(deviceId, button)
                 }
             }
             val axis = binding.axis

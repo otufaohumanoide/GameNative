@@ -174,3 +174,23 @@ python3 tools/profiles/sync_profile_repo.py ×2 → md5 267a4982… idêntico (d
    mantido simples e previsível aqui.
 2. **Modificadores NÃO são suprimidos** (só o final) — os modificadores disparam
    seus próprios bindings normalmente (comportamento de modificador).
+
+## 7. Verificação independente (spec-2026-08-16-master-roadmap-input-avancado-verificacao)
+
+A revisão humana (§5 do spec de verificação) apontou 2 achados residuais — ambos
+corrigidos neste follow-up (commit abaixo):
+
+1. **Eixo `expr:` end-to-end (Correção A aplicada).** `Parsed.button` virou
+   `GamepadButton?` e `parseBindings` aceita chave que nomeia um GamepadAxis
+   (button null, axis setado); `evaluate` emite SÓ AxisMotion nesse caso e as
+   transições de botão ficam condicionadas a button != null. Teste novo em
+   `ExprBindingProcessorTest` (chave `LEFT_X` → só AxisMotion; chave que não é
+   botão nem eixo é pulada) — 8/8.
+2. **Token malformado volta ao pass-through.** `GamepadHub.remapEvent` agora
+   faz `when (decoded)`: `ExprBinding → emptyList()` (consumido — a expressão é a
+   dona), `null → listOf(event)` (pass-through pré-J — perfil corrompido nunca
+   engole o botão), `Physical → remap físico`. O caminho de injeção U4 já
+   degradava a pass-through (decode null → return false) — sem mudança.
+
+Gate re-executado após as correções: tests consolidados + assemble + sync 2×
+determinístico — verdes.

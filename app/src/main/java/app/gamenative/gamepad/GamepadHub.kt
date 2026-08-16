@@ -745,32 +745,41 @@ class GamepadHub(context: Context) {
         // turbo é aplicado na injeção física (PhysicalControllerHandler, caminho U4).
         // J1 §2.2: binding `expr:` NÃO é fonte física — a expressão É o dono do
         // botão (o evento físico é consumido; o valor lógico vem do avaliador).
-        val binding = GamepadBindingCodec.decode(token)?.raw ?: return emptyList()
-        val down = event is InputEvent.ButtonDown
-        return when (binding) {
-            is RawBinding.Key -> {
-                val target = mapping.buttons.entries
-                    .firstOrNull { (_, b) -> b is RawBinding.Key && b.keyCode == binding.keyCode }
-                    ?.key
-                if (target == null) emptyList() else {
-                    listOf(
-                        if (down) InputEvent.ButtonDown(device.deviceId, target)
-                        else InputEvent.ButtonUp(device.deviceId, target),
-                    )
+        // Verificação (spec-2026-08-16-master-roadmap-input-avancado-verificacao
+        // §5.2): SÓ ExprBinding consome — token malformado (perfil corrompido)
+        // volta ao PASS-THROUGH do comportamento pré-J.
+        return when (val decoded = GamepadBindingCodec.decode(token)) {
+            is GamepadBindingCodec.LayerBinding.ExprBinding -> emptyList()
+            null -> listOf(event)
+            is GamepadBindingCodec.LayerBinding.Physical -> {
+                val binding = decoded.raw
+                val down = event is InputEvent.ButtonDown
+                when (binding) {
+                    is RawBinding.Key -> {
+                        val target = mapping.buttons.entries
+                            .firstOrNull { (_, b) -> b is RawBinding.Key && b.keyCode == binding.keyCode }
+                            ?.key
+                        if (target == null) emptyList() else {
+                            listOf(
+                                if (down) InputEvent.ButtonDown(device.deviceId, target)
+                                else InputEvent.ButtonUp(device.deviceId, target),
+                            )
+                        }
+                    }
+                    is RawBinding.Axis -> {
+                        val target = mapping.axes.entries
+                            .firstOrNull { (_, b) -> b is RawBinding.Axis && b.axis == binding.axis }
+                            ?.key
+                        if (target == null) emptyList() else {
+                            val value = if (down) binding.direction.toFloat() else 0f
+                            listOf(InputEvent.AxisMotion(device.deviceId, target, value))
+                        }
+                    }
+                    // Hat não é alvo de remap de botão no caminho lógico (decisão
+                    // registrada — o remap de dpad no jogo passa pelo canal de tecla).
+                    is RawBinding.Hat -> emptyList()
                 }
             }
-            is RawBinding.Axis -> {
-                val target = mapping.axes.entries
-                    .firstOrNull { (_, b) -> b is RawBinding.Axis && b.axis == binding.axis }
-                    ?.key
-                if (target == null) emptyList() else {
-                    val value = if (down) binding.direction.toFloat() else 0f
-                    listOf(InputEvent.AxisMotion(device.deviceId, target, value))
-                }
-            }
-            // Hat não é alvo de remap de botão no caminho lógico (decisão registrada —
-            // o remap de dpad no jogo passa pelo canal de tecla).
-            is RawBinding.Hat -> emptyList()
         }
     }
 

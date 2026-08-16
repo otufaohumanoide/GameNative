@@ -68,6 +68,32 @@ class ExprBindingProcessorTest {
     }
 
     @Test
+    fun `chave de eixo puro emite so AxisMotion sem transicoes de botao`() {
+        // Correção A (spec-...-verificacao §5.1): a chave pode nomear SÓ um
+        // GamepadAxis — o binding vira eixo contínuo, sem botão dono.
+        val effective = mapOf("LEFT_X" to "expr:deadzone(axis:left_y, 0.3)")
+        val bindings = ExprBindingProcessor.parseBindings(effective)
+        assertEquals(1, bindings.size)
+        assertTrue(bindings[0].button == null)
+        assertEquals(GamepadAxis.LEFT_X, bindings[0].axis)
+        val state = ExprState()
+        val events = ExprBindingProcessor.evaluate(
+            bindings,
+            reader(mapOf("axis:left_y" to 0.8f)),
+            state,
+            50L,
+            1000L,
+            deviceId = 1,
+        )
+        assertTrue(events.none { it is InputEvent.ButtonDown || it is InputEvent.ButtonUp })
+        val motion = events.filterIsInstance<InputEvent.AxisMotion>().single()
+        assertEquals(GamepadAxis.LEFT_X, motion.axis)
+        assertTrue("esperado ~0.714, veio ${motion.value}", motion.value in 0.70f..0.73f)
+        // Chave que não é botão NEM eixo é pulada.
+        assertTrue(ExprBindingProcessor.parseBindings(mapOf("GARBAGE" to "expr:1")).isEmpty())
+    }
+
+    @Test
     fun `sem expr nada muda`() {
         val effective = mapOf("FACE_TOP" to "key:96", "RIGHT_BUMPER" to "key:99:turbo")
         assertTrue(ExprBindingProcessor.parseBindings(effective).isEmpty())
