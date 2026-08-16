@@ -141,7 +141,7 @@ corrigir o checkout é housekeeping opcional, não fase.
 | K6 | `spec-2026-08-16-K6-intercambio-mapping-sdl.md` | tests `*Sdl* *Mapping* *Gamepad*` + assemble | ✅ 2026-08-16 | `99609ae1` |
 | K2 | `spec-2026-08-16-K2-modo-mouse-universal.md` | tests `*MouseMode* *Gamepad*` + assemble | ✅ 2026-08-16 | `f64df99e` |
 | K1 | `spec-2026-08-16-K1-gamepad-virtual-toque.md` | tests `*Virtual* *TouchGamepad* *Gamepad*` + assemble | ✅ 2026-08-16 | `f33fc076` |
-| K7 | `spec-2026-08-16-K7-calibracao-stick-visual.md` | tests `*Stick* *Curve* *Gamepad*` + assemble | ⬜ | — |
+| K7 | `spec-2026-08-16-K7-calibracao-stick-visual.md` | tests `*Stick* *Curve* *Gamepad*` + assemble | ✅ 2026-08-16 | `7792c986` |
 
 Comandos de gate (prefixar sempre):
 ```
