@@ -32,6 +32,18 @@ data class StickTransformConfig(
     val curve: ResponseCurve = ResponseCurve.LINEAR,
     /** Pontos da LUT (entrada→saída, 0..1). Vazio/inválido = LINEAR. */
     val lut: List<Float> = emptyList(),
+    /**
+     * K7 (spec 2026-08-16-K7, §1.1): anti-deadzone ("inverse deadzone" do PPSSPP
+     * AnalogCalibrationScreen — port clean-room) — rescala a magnitude pós-deadzone
+     * para começar em `antiDeadzone`: o output nunca cai no limbo abaixo da deadzone
+     * INTERNA do jogo. 0 = OFF (identidade byte-identical).
+     */
+    val antiDeadzone: Float = 0f,
+    /**
+     * K7 §1.1: teto da saída (sensitivity) — clamp final depois da curve.
+     * 1 = atual (identidade byte-identical); < 1 limita a deflexão máxima.
+     */
+    val maxOutput: Float = 1f,
 )
 
 data class StickTransformResult(val x: Float, val y: Float, val inDeadzone: Boolean)
@@ -56,16 +68,37 @@ object StickTransform {
             DeadzoneMode.RADIAL -> {
                 val magnitude = hypot(dz.x, dz.y)
                 if (magnitude <= 0f) return StickTransformResult(0f, 0f, true)
-                val curved = curve(magnitude, config)
+                // K7 §1.1 — ordem: deadzone → anti-deadzone → curve → clamp maxOutput.
+                val boosted = antiDeadzoneValue(magnitude, config.antiDeadzone)
+                val curved = curve(boosted, config).coerceAtMost(config.maxOutput.coerceIn(0f, 1f))
                 val scale = if (magnitude <= 0f) 0f else curved / magnitude
                 StickTransformResult(dz.x * scale, dz.y * scale, false)
             }
             DeadzoneMode.AXIAL -> StickTransformResult(
-                x = curveSigned(dz.x, config),
-                y = curveSigned(dz.y, config),
+                x = signedAntiDeadzoneCurve(dz.x, config),
+                y = signedAntiDeadzoneCurve(dz.y, config),
                 inDeadzone = false,
             )
         }
+    }
+
+    /**
+     * K7 §1.1: rescala a magnitude pós-deadzone para começar em [antiDeadzone]
+     * (inverse deadzone do PPSSPP — o output nunca entra no limbo abaixo da
+     * deadzone interna do jogo). 0 = identidade.
+     */
+    private fun antiDeadzoneValue(magnitude: Float, antiDeadzone: Float): Float {
+        val anti = antiDeadzone.coerceIn(0f, 1f)
+        if (anti <= 0f) return magnitude
+        return anti + (1f - anti) * magnitude
+    }
+
+    /** Eixo com anti-deadzone + curva + clamp (modo AXIAL, sinal preservado). */
+    private fun signedAntiDeadzoneCurve(value: Float, config: StickTransformConfig): Float {
+        if (value == 0f) return 0f
+        val curved = curve(antiDeadzoneValue(abs(value), config.antiDeadzone), config)
+            .coerceAtMost(config.maxOutput.coerceIn(0f, 1f))
+        return sign(value) * curved
     }
 
     /** Aplica a response curve a uma magnitude 0..1 (preserva 0 e 1). */

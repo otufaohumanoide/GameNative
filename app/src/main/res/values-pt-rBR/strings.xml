@@ -2417,6 +2417,17 @@
     <string name="gamepad_settings_virtual_pipeline_subtitle">O overlay de toque vira um controle virtual no pipeline universal (camadas, expressões, radial, turbo, perfis por jogo). Exige o toggle de gamepad universal. Mouse/teclas do overlay continuam como estão.</string>
 
     <string name="gamepad_virtual_pipeline_quick_title">Gamepad virtual</string>
+    <!-- K7 (spec 2026-08-16-K7): calibração visual de stick -->
+    <string name="gamepad_calibration_title">Calibração de stick</string>
+    <string name="gamepad_calibration_raw_vs_calibrated">CRU (como está) vs calibrado — com os ajustes abaixo</string>
+    <string name="gamepad_stick_deadzone_title">Deadzone</string>
+    <string name="gamepad_stick_anti_deadzone_title">Anti-deadzone</string>
+    <string name="gamepad_stick_max_output_title">Saída máxima</string>
+    <string name="gamepad_deadzone_mode_radial">Radial</string>
+    <string name="gamepad_deadzone_mode_axial">Axial</string>
+    <string name="gamepad_curve_linear">Linear</string>
+    <string name="gamepad_curve_exponential">Exponencial</string>
+    <string name="gamepad_curve_scurve">Curva S</string>
     <string name="gamepad_diag_all_buttons_title">Todos os botões</string>
     <string name="gamepad_diag_all_buttons_hint">Pressione qualquer botão ou mova os sticks e gatilhos para vê-los acender acima.</string>
     <string name="gamepad_glyph_dpad_up">↑</string>

@@ -66,6 +66,12 @@ data class GamepadProfile(
     val rightStickCurve: ResponseCurve? = null,
     val leftStickLut: List<Float>? = null,
     val rightStickLut: List<Float>? = null,
+    // K7 (spec 2026-08-16-K7, §1.1): anti-deadzone (inverse deadzone) e teto de
+    // saída por stick — null = OFF/atual (0/1, byte-identical).
+    val leftStickAntiDeadzone: Float? = null,
+    val rightStickAntiDeadzone: Float? = null,
+    val leftStickMaxOutput: Float? = null,
+    val rightStickMaxOutput: Float? = null,
     // F1.2: stick DIREITO vira Flick Stick (null = OFF — stick normal).
     val flickStickEnabled: Boolean? = null,
     val flickStickActivationRadius: Float? = null,
@@ -140,6 +146,10 @@ data class GamepadProfile(
             rightStickCurve == null &&
             leftStickLut == null &&
             rightStickLut == null &&
+            leftStickAntiDeadzone == null &&
+            rightStickAntiDeadzone == null &&
+            leftStickMaxOutput == null &&
+            rightStickMaxOutput == null &&
             flickStickEnabled == null &&
             flickStickActivationRadius == null &&
             flickStickSnapAngle == null &&

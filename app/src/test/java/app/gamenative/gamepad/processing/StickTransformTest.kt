@@ -123,3 +123,92 @@ class StickTransformLoadSanitizeTest {
         org.junit.Assert.assertSame(profile, profile.withSanitizedLuts())
     }
 }
+
+// ── K7 (spec 2026-08-16-K7, §1.1): anti-deadzone + maxOutput ──
+
+class K7StickTransformTest {
+    private fun config(
+        deadzone: Float = 0.15f,
+        anti: Float = 0f,
+        maxOutput: Float = 1f,
+        curve: ResponseCurve = ResponseCurve.LINEAR,
+        mode: DeadzoneMode = DeadzoneMode.RADIAL,
+    ) = StickTransformConfig(deadzone = deadzone, mode = mode, antiDeadzone = anti, maxOutput = maxOutput, curve = curve)
+
+    @org.junit.Test
+    fun `anti-deadzone 0 e maxOutput 1 sao identidade`() {
+        val base = config()
+        val plain = StickTransform.apply(StickSample(0.5f, 0.3f), base)
+        val identity = StickTransform.apply(StickSample(0.5f, 0.3f), config(anti = 0f, maxOutput = 1f))
+        org.junit.Assert.assertEquals(plain.x, identity.x, 1e-6f)
+        org.junit.Assert.assertEquals(plain.y, identity.y, 1e-6f)
+    }
+
+    @org.junit.Test
+    fun `anti-deadzone rescala a magnitude para comecar no anel`() {
+        // Pós-deadzone mag=0.4 → anti 0.3 → boosted = 0.3 + 0.7*0.4 = 0.58.
+        val r = StickTransform.apply(
+            StickSample(0.4f, 0f),
+            config(deadzone = 0f, anti = 0.3f),
+        )
+        org.junit.Assert.assertEquals(0.58f, r.x, 1e-4f)
+    }
+
+    @org.junit.Test
+    fun `anti-deadzone nunca deixa o output entrar no limbo`() {
+        // Pós-deadzone quase zero (mas fora) → output mínimo = anti.
+        val r = StickTransform.apply(
+            StickSample(0.01f, 0f),
+            config(deadzone = 0f, anti = 0.25f),
+        )
+        org.junit.Assert.assertTrue(r.x >= 0.25f - 1e-4f)
+    }
+
+    @org.junit.Test
+    fun `maxOutput clampa a saida final`() {
+        // Borda cheia com teto 0.6 → 0.6.
+        val r = StickTransform.apply(
+            StickSample(1f, 0f),
+            config(deadzone = 0f, maxOutput = 0.6f),
+        )
+        org.junit.Assert.assertEquals(0.6f, r.x, 1e-4f)
+        // Dentro do teto não muda.
+        val mid = StickTransform.apply(
+            StickSample(0.3f, 0f),
+            config(deadzone = 0f, maxOutput = 0.6f),
+        )
+        org.junit.Assert.assertEquals(0.3f, mid.x, 1e-4f)
+    }
+
+    @org.junit.Test
+    fun `ordem anti depois da deadzone e antes do clamp`() {
+        // deadzone 0.2 (mag 0.5 → pós-dz (0.5-0.2)/(1-0.2)=0.375) → anti 0.2 →
+        // boosted = 0.2 + 0.8*0.375 = 0.5 → clamp 0.4 → 0.4.
+        val r = StickTransform.apply(
+            StickSample(0.5f, 0f),
+            config(deadzone = 0.2f, anti = 0.2f, maxOutput = 0.4f),
+        )
+        org.junit.Assert.assertEquals(0.4f, r.x, 1e-4f)
+    }
+
+    @org.junit.Test
+    fun `modo axial aplica anti e clamp por eixo com sinal`() {
+        val r = StickTransform.apply(
+            StickSample(-0.5f, 0f),
+            config(deadzone = 0f, anti = 0.2f, mode = DeadzoneMode.AXIAL),
+        )
+        // |−0.5| → boosted 0.2+0.8*0.5 = 0.6, sinal preservado.
+        org.junit.Assert.assertEquals(-0.6f, r.x, 1e-4f)
+    }
+
+    @org.junit.Test
+    fun `dentro da deadzone o anti nao fabrica saida`() {
+        val r = StickTransform.apply(
+            StickSample(0.1f, 0f),
+            config(deadzone = 0.2f, anti = 0.5f),
+        )
+        org.junit.Assert.assertTrue(r.inDeadzone)
+        org.junit.Assert.assertEquals(0f, r.x, 0f)
+        org.junit.Assert.assertEquals(0f, r.y, 0f)
+    }
+}

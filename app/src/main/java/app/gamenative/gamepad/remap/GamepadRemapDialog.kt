@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.gamenative.PluviaApp
+import app.gamenative.PrefManager
 import app.gamenative.R
 import app.gamenative.events.AndroidEvent
 import app.gamenative.events.GamepadInputEvent
@@ -74,6 +75,7 @@ import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.RawBinding
 import app.gamenative.gamepad.processing.BindingModifier
 import app.gamenative.gamepad.processing.DeadzoneMode
+import app.gamenative.gamepad.processing.StickTransformConfig
 import app.gamenative.gamepad.processing.ResponseCurve
 import app.gamenative.gamepad.processing.StickTransform
 import app.gamenative.gamepad.processing.SwipeDir
@@ -93,6 +95,7 @@ import app.gamenative.ui.component.gamepadAdjustableRow
 import app.gamenative.ui.component.gamepadBackHandler
 import app.gamenative.ui.component.gamepadSelectable
 import app.gamenative.ui.component.remap.ControllerVisualView
+import app.gamenative.ui.component.remap.StickCalibrationSection
 import app.gamenative.ui.component.remap.VisualControlState
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -151,6 +154,18 @@ fun GamepadRemapDialog(
     var swipeBindings by remember { mutableStateOf(profile.touchpadSwipes ?: emptyMap()) }
     var captureSwipe by remember { mutableStateOf<SwipeDir?>(null) }
     // ── F1 (spec 2026-08-15-input-core-avancado) — seção Stick + Flick + fusão ──
+    // K7 (spec 2026-08-16-K7, §1.1/§1.3): campos da calibração visual — deadzone
+    // (a lista avançada não editava), anti-deadzone e max output por stick.
+    var leftCalDeadzone by remember {
+        mutableStateOf(profile.leftStickDeadzone ?: PrefManager.gamepadStickDeadzone)
+    }
+    var leftCalAnti by remember { mutableStateOf(profile.leftStickAntiDeadzone ?: 0f) }
+    var leftCalMax by remember { mutableStateOf(profile.leftStickMaxOutput ?: 1f) }
+    var rightCalDeadzone by remember {
+        mutableStateOf(profile.rightStickDeadzone ?: PrefManager.gamepadStickDeadzone)
+    }
+    var rightCalAnti by remember { mutableStateOf(profile.rightStickAntiDeadzone ?: 0f) }
+    var rightCalMax by remember { mutableStateOf(profile.rightStickMaxOutput ?: 1f) }
     var leftStickMode by remember { mutableStateOf(profile.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL) }
     var rightStickMode by remember { mutableStateOf(profile.rightStickDeadzoneMode ?: DeadzoneMode.RADIAL) }
     var leftCurve by remember { mutableStateOf(profile.leftStickCurve ?: ResponseCurve.LINEAR) }
@@ -232,6 +247,13 @@ fun GamepadRemapDialog(
         // F1 (spec 2026-08-15-input-core-avancado)
         leftStickDeadzoneMode = if (leftStickMode == DeadzoneMode.RADIAL) null else leftStickMode,
         rightStickDeadzoneMode = if (rightStickMode == DeadzoneMode.RADIAL) null else rightStickMode,
+        // K7 (spec 2026-08-16-K7, §1.1): defaults colapsam em null (política V1).
+        leftStickDeadzone = if (leftCalDeadzone == PrefManager.gamepadStickDeadzone) null else leftCalDeadzone,
+        rightStickDeadzone = if (rightCalDeadzone == PrefManager.gamepadStickDeadzone) null else rightCalDeadzone,
+        leftStickAntiDeadzone = if (leftCalAnti == 0f) null else leftCalAnti,
+        rightStickAntiDeadzone = if (rightCalAnti == 0f) null else rightCalAnti,
+        leftStickMaxOutput = if (leftCalMax == 1f) null else leftCalMax,
+        rightStickMaxOutput = if (rightCalMax == 1f) null else rightCalMax,
         leftStickCurve = if (leftCurve == ResponseCurve.LINEAR) null else leftCurve,
         rightStickCurve = if (rightCurve == ResponseCurve.LINEAR) null else rightCurve,
         leftStickLut = if (leftLut.isEmpty()) null else leftLut,
@@ -272,6 +294,12 @@ fun GamepadRemapDialog(
         swipeBindings = imported.touchpadSwipes ?: emptyMap()
         leftStickMode = imported.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL
         rightStickMode = imported.rightStickDeadzoneMode ?: DeadzoneMode.RADIAL
+        leftCalDeadzone = imported.leftStickDeadzone ?: PrefManager.gamepadStickDeadzone
+        rightCalDeadzone = imported.rightStickDeadzone ?: PrefManager.gamepadStickDeadzone
+        leftCalAnti = imported.leftStickAntiDeadzone ?: 0f
+        rightCalAnti = imported.rightStickAntiDeadzone ?: 0f
+        leftCalMax = imported.leftStickMaxOutput ?: 1f
+        rightCalMax = imported.rightStickMaxOutput ?: 1f
         leftCurve = imported.leftStickCurve ?: ResponseCurve.LINEAR
         rightCurve = imported.rightStickCurve ?: ResponseCurve.LINEAR
         leftLut = imported.leftStickLut ?: emptyList()
@@ -1034,6 +1062,50 @@ fun GamepadRemapDialog(
                             onImportLut = {
                                 pendingLutImportSetter = { clean -> rightLut = clean }
                                 lutImportLauncher.launch(arrayOf("application/json", "text/plain"))
+                            },
+                        )
+                        // ── K7 (spec 2026-08-16-K7, §1.3): Calibração visual ──
+                        // Tab própria por device (RAW vs CALIBRADO ao vivo). Os
+                        // campos são OS MESMOS do perfil — a lista avançada
+                        // permanece (não-duplicação do spec §1.4). O botão FACE
+                        // continua navegando (só eixos são observados).
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text(
+                            text = stringResource(R.string.gamepad_calibration_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                        StickCalibrationSection(
+                            deviceId = device.deviceId,
+                            left = StickTransformConfig(
+                                deadzone = leftCalDeadzone,
+                                mode = leftStickMode,
+                                curve = leftCurve,
+                                lut = leftLut,
+                                antiDeadzone = leftCalAnti,
+                                maxOutput = leftCalMax,
+                            ),
+                            right = StickTransformConfig(
+                                deadzone = rightCalDeadzone,
+                                mode = rightStickMode,
+                                curve = rightCurve,
+                                lut = rightLut,
+                                antiDeadzone = rightCalAnti,
+                                maxOutput = rightCalMax,
+                            ),
+                            onLeftChange = { c ->
+                                leftCalDeadzone = c.deadzone
+                                leftStickMode = c.mode
+                                leftCurve = c.curve
+                                leftCalAnti = c.antiDeadzone
+                                leftCalMax = c.maxOutput
+                            },
+                            onRightChange = { c ->
+                                rightCalDeadzone = c.deadzone
+                                rightStickMode = c.mode
+                                rightCurve = c.curve
+                                rightCalAnti = c.antiDeadzone
+                                rightCalMax = c.maxOutput
                             },
                         )
                         // ── F1.2: Flick Stick ──
