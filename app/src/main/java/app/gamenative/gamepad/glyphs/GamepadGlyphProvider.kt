@@ -45,6 +45,9 @@ object GamepadGlyphProvider {
             GamepadButton.DPAD_DOWN -> R.string.gamepad_glyph_dpad_down
             GamepadButton.DPAD_LEFT -> R.string.gamepad_glyph_dpad_left
             GamepadButton.DPAD_RIGHT -> R.string.gamepad_glyph_dpad_right
+            // K3 (spec 2026-08-16-K3, §1.4): extras (MISC1/paddles/touchpad) sem
+            // label por estilo — caem no label genérico (fora do escopo desta fase).
+            else -> R.string.gamepad_glyph_generic_other
         }
         FaceStyle.PLAYSTATION -> when (button) {
             GamepadButton.FACE_BOTTOM -> R.string.gamepad_glyph_ps_face_bottom
@@ -64,6 +67,9 @@ object GamepadGlyphProvider {
             GamepadButton.DPAD_DOWN -> R.string.gamepad_glyph_dpad_down
             GamepadButton.DPAD_LEFT -> R.string.gamepad_glyph_dpad_left
             GamepadButton.DPAD_RIGHT -> R.string.gamepad_glyph_dpad_right
+            // K3 (spec 2026-08-16-K3, §1.4): extras (MISC1/paddles/touchpad) sem
+            // label por estilo — caem no label genérico (fora do escopo desta fase).
+            else -> R.string.gamepad_glyph_generic_other
         }
         FaceStyle.NINTENDO -> when (button) {
             GamepadButton.FACE_BOTTOM -> R.string.gamepad_glyph_nintendo_face_bottom
@@ -83,6 +89,9 @@ object GamepadGlyphProvider {
             GamepadButton.DPAD_DOWN -> R.string.gamepad_glyph_dpad_down
             GamepadButton.DPAD_LEFT -> R.string.gamepad_glyph_dpad_left
             GamepadButton.DPAD_RIGHT -> R.string.gamepad_glyph_dpad_right
+            // K3 (spec 2026-08-16-K3, §1.4): extras (MISC1/paddles/touchpad) sem
+            // label por estilo — caem no label genérico (fora do escopo desta fase).
+            else -> R.string.gamepad_glyph_generic_other
         }
         FaceStyle.GENERIC -> when (button) {
             GamepadButton.FACE_BOTTOM -> R.string.gamepad_glyph_generic_face_bottom

@@ -24,8 +24,11 @@ import app.gamenative.gamepad.GamepadButton
  * - `hN.M` → RawBinding.Hat(N, M) — bitmask SDL (1=up, 2=right, 4=down, 8=left);
  * - `lefttrigger:b6` (trigger como BOTÃO) vai para o mapa de botões — no Android o
  *   trigger-botão chega como KeyEvent (L2/R2 = 104/105 ou BUTTON_1..16);
- * - `platform:...` e qualquer campo desconhecido (`hint:`, `type:`, `misc1:`, ...) são
- *   IGNORADOS (tolerância — a DB real tem esses campos).
+ * - `platform:...` e qualquer campo desconhecido (`hint:`, `type:`, ...) são
+ *   IGNORADOS (tolerância — a DB real tem esses campos);
+ * - K3 (spec 2026-08-16-K3, §1.4): `misc1`, `paddle1..4` e `touchpad` viram botões
+ *   extras ([GamepadButton] MISC1/PADDLE_1-4/TOUCHPAD — análogos do enum SDL3,
+ *   zlib).
  */
 object MappingParser {
 
@@ -176,6 +179,14 @@ object MappingParser {
         "start" -> GamepadButton.START
         "back" -> GamepadButton.SELECT
         "guide" -> GamepadButton.GUIDE
+        // K3 (spec 2026-08-16-K3, §1.4): botões extras do DB (nomes do SDL3,
+        // zlib — SDL_gamepad.h). Paddles na ordem posicional paddle1..paddle4.
+        "misc1" -> GamepadButton.MISC1
+        "paddle1" -> GamepadButton.PADDLE_1
+        "paddle2" -> GamepadButton.PADDLE_2
+        "paddle3" -> GamepadButton.PADDLE_3
+        "paddle4" -> GamepadButton.PADDLE_4
+        "touchpad" -> GamepadButton.TOUCHPAD
         else -> null
     }
 }

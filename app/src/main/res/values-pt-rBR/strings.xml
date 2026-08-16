@@ -2355,6 +2355,7 @@
     <string name="gamepad_diag_gyro_readout">Giroscópio: yaw %1$s · pitch %2$s rad/s</string>
     <string name="gamepad_diag_touchpad_readout">Touchpad: x %1$s · y %2$s</string>
     <string name="gamepad_diag_touchpad_touching">tocando</string>
+    <string name="gamepad_diag_mapping_source">Mapeamento: %1$s</string>
     <string name="gamepad_diag_recenter_gyro_title">Recentrar giroscópio</string>
     <string name="gamepad_diag_recenter_gyro_hint">Zera os offsets do giroscópio (mesma operação da borda de ativação)</string>
     <string name="gamepad_diag_calibrate_grip_title">Calibrar ângulo de pegada</string>

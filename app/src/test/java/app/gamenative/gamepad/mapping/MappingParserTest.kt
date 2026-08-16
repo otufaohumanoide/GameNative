@@ -124,12 +124,33 @@ class MappingParserTest {
         )!!
         assertTrue(mapping.buttons.isNotEmpty())
         assertTrue(mapping.axes.isNotEmpty())
-        // touchpad:/misc1:/paddle*: não existem no modelo → ignorados.
+        // K3 (spec 2026-08-16-K3, §1.4): touchpad:/misc1:/paddle*: AGORA existem no
+        // modelo — viram botões extras. paddle1:b16 sai do espaço genérico (b0..b15)
+        // e continua ignorado.
         val tolerant = MappingParser.parse(
             "030000004c050000c405000000000000,PS4 Controller," +
-                "a:b0,touchpad:b13,misc1:b14,paddle1:b16,leftx:a0,platform:Windows,",
+                "a:b0,touchpad:b13,misc1:b14,paddle1:b5,paddle4:b16,leftx:a0,platform:Windows,",
         )!!
-        assertEquals(1, tolerant.buttons.size)
+        assertEquals(4, tolerant.buttons.size)
+        assertEquals(RawBinding.Key(188 + 13), tolerant.buttons[GamepadButton.TOUCHPAD])
+        assertEquals(RawBinding.Key(188 + 14), tolerant.buttons[GamepadButton.MISC1])
+        assertEquals(RawBinding.Key(188 + 5), tolerant.buttons[GamepadButton.PADDLE_1])
+        assertNull(tolerant.buttons[GamepadButton.PADDLE_4])
+    }
+
+    @Test
+    fun `botoes extras misc1 paddle e touchpad parseiam`() {
+        val mapping = MappingParser.parse(
+            "030000004c050000c405000000000000,PS4 Controller," +
+                "a:b0,touchpad:b13,misc1:b14,paddle1:b5,paddle2:b6,paddle3:b7,paddle4:b8," +
+                "leftx:a0,platform:Windows,",
+        )!!
+        assertEquals(RawBinding.Key(201), mapping.buttons[GamepadButton.TOUCHPAD])
+        assertEquals(RawBinding.Key(202), mapping.buttons[GamepadButton.MISC1])
+        assertEquals(RawBinding.Key(193), mapping.buttons[GamepadButton.PADDLE_1])
+        assertEquals(RawBinding.Key(194), mapping.buttons[GamepadButton.PADDLE_2])
+        assertEquals(RawBinding.Key(195), mapping.buttons[GamepadButton.PADDLE_3])
+        assertEquals(RawBinding.Key(196), mapping.buttons[GamepadButton.PADDLE_4])
     }
 
     @Test

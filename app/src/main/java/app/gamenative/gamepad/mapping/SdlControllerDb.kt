@@ -17,6 +17,10 @@ import app.gamenative.gamepad.GamepadButton
  *   ignorados (sem chave estável).
  * - `bN` = enum SDL_CONTROLLER_BUTTON do backend Android (b0=A…b14=DPAD_RIGHT,
  *   b15/16=L2/R2, b17/18=C/Z, b20..35=BUTTON_1..16) → keycodes Android normalizados;
+ * - K3 (spec 2026-08-16-K3, §1.3): `hint:SDL_GAMECONTROLLER_USE_BUTTON_LABELS:=1`
+ *   (sem `!`) vira [FaceStyle.NINTENDO] para vendor não-identificável — o análogo do
+ *   `SDL_ConvertMappingToPositionalBAXY` (SDL_gamepad.c:2535) na camada de rótulo
+ *   que o fork já tem, sem mudar o formato interno;
  * - `aN` = ordem de eixos do driver Android (0/1=X/Y, 2/3=Z/RZ, 4/5=LTRIGGER/RTRIGGER);
  * - `hN.M` = hat com máscara SDL (1=up, 2=right, 4=down, 8=left — igual ao
  *   MappingParser do fork);
@@ -53,6 +57,15 @@ object SdlControllerDb {
         val mappingKey = mappingKeyFromGuid(fields[0])
         if (mappingKey.isEmpty()) return null // GUID legado sem vid/pid — ignora
 
+        // K3 §1.3: hint de rótulos lido ANTES do loop (o campo em si continua
+        // ignorado como binding). A forma `!NOME:=1` do SDL NEGA o hint (mapping
+        // posicional — usado como está), então só a forma positiva conta.
+        val usesButtonLabels = fields.drop(2).any { field ->
+            field.startsWith("hint:") &&
+                field.contains("SDL_GAMECONTROLLER_USE_BUTTON_LABELS:=1") &&
+                !field.contains("!")
+        }
+
         val buttons = mutableMapOf<GamepadButton, RawBinding>()
         val axes = mutableMapOf<GamepadAxis, RawBinding>()
 
@@ -85,7 +98,7 @@ object SdlControllerDb {
         return GamepadMapping(
             mappingKey = mappingKey,
             name = fields[1],
-            faceStyle = faceStyleForVendor(mappingKey),
+            faceStyle = faceStyleForVendor(mappingKey, usesButtonLabels),
             buttons = buttons,
             axes = axes,
         )
@@ -107,13 +120,20 @@ object SdlControllerDb {
         return "%04x%04x".format(vendor, product)
     }
 
-    /** FaceStyle inferido do vendor (glyphs + swap OK/Cancel; só visual/semântico). */
-    fun faceStyleForVendor(mappingKey: String): FaceStyle = when (mappingKey.substring(0, 4)) {
-        "054c" -> FaceStyle.PLAYSTATION
-        "045e" -> FaceStyle.XBOX
-        "057e" -> FaceStyle.NINTENDO
-        else -> FaceStyle.GENERIC
-    }
+    /**
+     * FaceStyle inferido do vendor (glyphs + swap OK/Cancel; só visual/semântico).
+     *
+     * K3 §1.3: [usesButtonLabels] (hint `SDL_GAMECONTROLLER_USE_BUTTON_LABELS:=1`)
+     * vira NINTENDO para vendors não-identificáveis — o hint VENCE para quem não é
+     * inequívoco, PERDE para Sony/MS (054c/045e) que o vendor já define.
+     */
+    fun faceStyleForVendor(mappingKey: String, usesButtonLabels: Boolean = false): FaceStyle =
+        when (mappingKey.substring(0, 4)) {
+            "054c" -> FaceStyle.PLAYSTATION
+            "045e" -> FaceStyle.XBOX
+            "057e" -> FaceStyle.NINTENDO
+            else -> if (usesButtonLabels) FaceStyle.NINTENDO else FaceStyle.GENERIC
+        }
 
     /**
      * `bN` → RawBinding.Key com o keycode Android do enum SDL_CONTROLLER_BUTTON
@@ -230,6 +250,14 @@ object SdlControllerDb {
         "start" -> GamepadButton.START
         "back" -> GamepadButton.SELECT
         "guide" -> GamepadButton.GUIDE
+        // K3 (spec 2026-08-16-K3, §1.4): botões extras do DB (nomes do SDL3,
+        // zlib — SDL_gamepad.h). Paddles na ordem posicional paddle1..paddle4.
+        "misc1" -> GamepadButton.MISC1
+        "paddle1" -> GamepadButton.PADDLE_1
+        "paddle2" -> GamepadButton.PADDLE_2
+        "paddle3" -> GamepadButton.PADDLE_3
+        "paddle4" -> GamepadButton.PADDLE_4
+        "touchpad" -> GamepadButton.TOUCHPAD
         else -> null
     }
 }

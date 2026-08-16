@@ -195,6 +195,19 @@ fun DeviceDiagnosticsCard(
                     onRestoreControl = {},
                 )
 
+                // K3 (spec 2026-08-16-K3, §1.5): origem (tier) do mapping efetivo —
+                // MODEL / SDL_DB / CAPABILITIES / DEFAULT / USER. null = não
+                // resolvido → linha escondida (byte-identical).
+                device.mappingSource?.let { source ->
+                    Text(
+                        text = stringResource(R.string.gamepad_diag_mapping_source, source.name),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+
                 // ── Readouts ao vivo (mono ~10 Hz — último valor do device coletado
                 // num laço de 100 ms; o StateFlow guarda a última amostra GLOBAL e o
                 // card mantém o último valor DESTE device). Nada é capturado de

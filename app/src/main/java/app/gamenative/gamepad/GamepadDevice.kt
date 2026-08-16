@@ -1,5 +1,7 @@
 package app.gamenative.gamepad
 
+import app.gamenative.gamepad.mapping.GamepadCapabilities
+
 /**
  * A IDENTIDADE de um controle conectado (spec 2026-08-13, Parte I §1).
  *
@@ -27,6 +29,24 @@ data class GamepadDevice(
     val hasTouchpad: Boolean = false,
     /** Nível de bateria 0..100 (API 31+); null = desconhecido/sem bateria. */
     val batteryPercent: Int? = null,
+    /**
+     * K3 (spec 2026-08-16-K3, §1.1): capacidades coletadas no hotplug (UMA chamada
+     * binder `InputDevice.hasKeys` — fora do hot path, padrão V11 do hasGyro).
+     * null = não coletado → a cadeia degrada para o default estático atual.
+     */
+    val capabilities: GamepadCapabilities? = null,
+    /**
+     * K3 (spec 2026-08-16-K3, §1.5): origem (tier) do mapping efetivo deste device —
+     * UI/log. null = ainda não resolvido (a UI esconde a linha).
+     */
+    val mappingSource: MappingSource? = null,
 ) {
     val mappingKey: String get() = "%04x%04x".format(vendorId, productId)
 }
+
+/**
+ * Origem do mapping efetivo (spec 2026-08-16-K3, §1.5). Ordem de declaração = ordem
+ * de prioridade da cadeia (regra de escalonamento do SDL, SDL_gamepad.c:2214-2221):
+ * USER (fase K5, reservado) > MODEL > SDL_DB > CAPABILITIES > DEFAULT.
+ */
+enum class MappingSource { USER, MODEL, SDL_DB, CAPABILITIES, DEFAULT }

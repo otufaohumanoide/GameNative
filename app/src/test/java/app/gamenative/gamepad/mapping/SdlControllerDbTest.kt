@@ -112,4 +112,70 @@ class SdlControllerDbTest {
         assertEquals(FaceStyle.NINTENDO, SdlControllerDb.faceStyleForVendor("057e2009"))
         assertEquals(FaceStyle.GENERIC, SdlControllerDb.faceStyleForVendor("2dc89002"))
     }
+
+    // ── K3 (spec 2026-08-16-K3, §1.3): hint de rótulos ──
+
+    @Test
+    fun `hint USE_BUTTON_LABELS vira NINTENDO para vendor nao identificavel`() {
+        val line = "05000000010200000304000000000000,Generic Labeled,a:b0,b:b1," +
+            "leftx:a0,lefty:a1,hint:SDL_GAMECONTROLLER_USE_BUTTON_LABELS:=1,platform:Android,"
+        val mapping = SdlControllerDb.parseLine(line) ?: error("parse falhou")
+        assertEquals(FaceStyle.NINTENDO, mapping.faceStyle)
+    }
+
+    @Test
+    fun `hint perde para Sony e MS inequivocos`() {
+        val sony = "050000004c050000cc090000fffe3f00,PS4 Labeled,a:b0,b:b1," +
+            "leftx:a0,lefty:a1,hint:SDL_GAMECONTROLLER_USE_BUTTON_LABELS:=1,platform:Android,"
+        assertEquals(FaceStyle.PLAYSTATION, SdlControllerDb.parseLine(sony)!!.faceStyle)
+
+        val ms = "030000005e0400008e02000000007265,Xbox Hinted,a:b0,b:b1," +
+            "leftx:a0,lefty:a1,hint:SDL_GAMECONTROLLER_USE_BUTTON_LABELS:=1,platform:Android,"
+        assertEquals(FaceStyle.XBOX, SdlControllerDb.parseLine(ms)!!.faceStyle)
+    }
+
+    @Test
+    fun `hint negado nao muda o estilo`() {
+        val line = "05000000010200000304000000000000,Generic Positional,a:b0,b:b1," +
+            "leftx:a0,lefty:a1,hint:!SDL_GAMECONTROLLER_USE_BUTTON_LABELS:=1,platform:Android,"
+        val mapping = SdlControllerDb.parseLine(line) ?: error("parse falhou")
+        assertEquals(FaceStyle.GENERIC, mapping.faceStyle)
+    }
+
+    @Test
+    fun `faceStyleForVendor com hint explicito`() {
+        assertEquals(FaceStyle.NINTENDO, SdlControllerDb.faceStyleForVendor("02010403", usesButtonLabels = true))
+        assertEquals(FaceStyle.GENERIC, SdlControllerDb.faceStyleForVendor("02010403"))
+        // O hint VENCE para vendor não-identificável (8BitDo/2dc8 não é Sony/MS).
+        assertEquals(FaceStyle.NINTENDO, SdlControllerDb.faceStyleForVendor("2dc89002", usesButtonLabels = true))
+        assertEquals(FaceStyle.PLAYSTATION, SdlControllerDb.faceStyleForVendor("054c09cc", usesButtonLabels = true))
+    }
+
+    // ── K3 (spec 2026-08-16-K3, §1.4): botões extras do DB ──
+
+    @Test
+    fun `misc1 paddle e touchpad viram botoes extras`() {
+        // bN = enum SDL do backend Android: b7=THUMBL, b17=C, b18=Z,
+        // b31 = BUTTON_1+11 (touchpad click de algumas entries).
+        val line = "050000007e0500000920000000000000,Switch Pro Test,a:b1,b:b0," +
+            "guide:b5,misc1:b7,leftx:a0,lefty:a1,paddle1:b17,paddle2:b18,touchpad:b31,platform:Android,"
+        val mapping = SdlControllerDb.parseLine(line) ?: error("parse falhou")
+        assertEquals(RawBinding.Key(AndroidConstants.BUTTON_THUMBL), mapping.buttons[GamepadButton.MISC1])
+        assertEquals(RawBinding.Key(AndroidConstants.BUTTON_C), mapping.buttons[GamepadButton.PADDLE_1])
+        assertEquals(RawBinding.Key(AndroidConstants.BUTTON_Z), mapping.buttons[GamepadButton.PADDLE_2])
+        assertEquals(RawBinding.Key(AndroidConstants.BUTTON_1 + 11), mapping.buttons[GamepadButton.TOUCHPAD])
+        // Semântica padrão intacta na mesma linha.
+        assertEquals(RawBinding.Key(AndroidConstants.BUTTON_B), mapping.buttons[GamepadButton.FACE_BOTTOM])
+    }
+
+    @Test
+    fun `paddles 3 e 4 tambem parseiam`() {
+        val line = "050000007e0500000920000000000000,Elite Test,a:b0," +
+            "paddle1:b20,paddle2:b21,paddle3:b22,paddle4:b23,leftx:a0,platform:Android,"
+        val mapping = SdlControllerDb.parseLine(line) ?: error("parse falhou")
+        assertEquals(RawBinding.Key(AndroidConstants.BUTTON_1), mapping.buttons[GamepadButton.PADDLE_1])
+        assertEquals(RawBinding.Key(AndroidConstants.BUTTON_1 + 1), mapping.buttons[GamepadButton.PADDLE_2])
+        assertEquals(RawBinding.Key(AndroidConstants.BUTTON_1 + 2), mapping.buttons[GamepadButton.PADDLE_3])
+        assertEquals(RawBinding.Key(AndroidConstants.BUTTON_1 + 3), mapping.buttons[GamepadButton.PADDLE_4])
+    }
 }

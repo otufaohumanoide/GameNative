@@ -24,7 +24,10 @@ import app.gamenative.gamepad.layers.TriggerOutcome
 import app.gamenative.gamepad.expressions.ChordLogic
 import app.gamenative.gamepad.expressions.ExprBindingProcessor
 import app.gamenative.gamepad.expressions.ExprState
+import app.gamenative.gamepad.mapping.AndroidConstants
+import app.gamenative.gamepad.mapping.CapabilityMapping
 import app.gamenative.gamepad.mapping.EventTranslator
+import app.gamenative.gamepad.mapping.GamepadCapabilities
 import app.gamenative.gamepad.mapping.GamepadMapping
 import app.gamenative.gamepad.mapping.MappingDatabase
 import app.gamenative.gamepad.mapping.RawAxisInput
@@ -242,6 +245,7 @@ class GamepadHub(context: Context) {
         _connectedDevices.value = emptyMap()
         _activeDevice.value = null
         buttonStates.clear()
+        mappingCache.clear()
         for (deviceId in alive) {
             PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)
             PluviaApp.events.emit(GamepadDeviceRemovedEvent(deviceId))
@@ -1322,13 +1326,41 @@ class GamepadHub(context: Context) {
         )
     }
 
-    private fun mappingFor(device: GamepadDevice) =
-        MappingDatabase.mappingFor(device.vendorId, device.productId)
+    /**
+     * K3 (spec 2026-08-16-K3, §1.5): cache do mapping EFETIVO por deviceId (par
+     * mapping + origem). O resultado é determinístico por device (vid/pid + [GamepadCapabilities]
+     * imutáveis no [GamepadDevice]) e o hot path (~120 Hz por stick + hats) NÃO aloca
+     * mapping por evento (a síntese de capabilities custa mapas novos a cada chamada).
+     * Acesso só na main thread (dispatch + hotplug — contrato M1 do profileCache);
+     * invalidado em addDevice/removeDevice/stop (deviceId é efêmero).
+     */
+    private val mappingCache = mutableMapOf<Int, Pair<GamepadMapping, MappingSource>>()
+
+    /**
+     * Cadeia de prioridade do mapping (spec 2026-08-16-K3, §1.5): USER (K5, futuro) >
+     * MODEL (MappingDatabase) > SDL_DB (gamecontrollerdb) > CAPABILITIES (síntese) >
+     * DEFAULT (estático). A ORDEM da cadeia É a prioridade — regra de escalonamento
+     * do SDL (SDL_gamepad.c:2214-2221, um tier só é sobrescrito por prioridade ≥).
+     * A origem volta junto para UI/log ([MappingSource]).
+     */
+    private fun resolveMapping(device: GamepadDevice): Pair<GamepadMapping, MappingSource> =
+        mappingCache.getOrPut(device.deviceId) {
+            MappingDatabase.mappingFor(device.vendorId, device.productId)?.let {
+                return@getOrPut it to MappingSource.MODEL
+            }
             // F1.4 (spec 2026-08-15-input-core-avancado): fallback do DB pinado do
-            // SDL_GameControllerDB (entradas Android) antes do default. Load do asset
-            // UMA vez, preguiçoso — só quando um modelo desconhecido aparece.
-            ?: sdlDb()[device.mappingKey]
-            ?: MappingDatabase.defaultAndroidMapping(device.faceStyle)
+            // SDL_GameControllerDB (entradas Android). Load do asset UMA vez,
+            // preguiçoso (o hotplug do device desconhecido esquenta o cache).
+            sdlDb()[device.mappingKey]?.let { return@getOrPut it to MappingSource.SDL_DB }
+            device.capabilities?.let { capabilities ->
+                CapabilityMapping.synthesize(capabilities, device.faceStyle)?.let {
+                    return@getOrPut it to MappingSource.CAPABILITIES
+                }
+            }
+            MappingDatabase.defaultAndroidMapping(device.faceStyle) to MappingSource.DEFAULT
+        }
+
+    private fun mappingFor(device: GamepadDevice): GamepadMapping = resolveMapping(device).first
 
     /** Mapa `"vvvvpppp" → GamepadMapping` do asset pinado (lazy; cacheado). */
     @Volatile
@@ -1376,6 +1408,27 @@ class GamepadHub(context: Context) {
         if (deviceClass == DeviceClass.UNKNOWN || deviceClass == DeviceClass.SENSOR) return
         val faceStyle = MappingDatabase.mappingFor(inputDevice.vendorId, inputDevice.productId)
             ?.faceStyle ?: FaceStyle.GENERIC
+        // K3 (spec 2026-08-16-K3, §1.1): capacidades coletadas no hotplug — UMA
+        // chamada binder (InputDevice.hasKeys) + 1 passada nos motionRanges, fora do
+        // hot path (mesmo padrão V11 do hasGyro/hasTouchpad).
+        val hasKeys = inputDevice.hasKeys(*AndroidConstants.ALL_CANDIDATE_KEYCODES)
+        val keycodes = buildSet {
+            AndroidConstants.ALL_CANDIDATE_KEYCODES.forEachIndexed { index, keyCode ->
+                if (hasKeys[index]) add(keyCode)
+            }
+        }
+        val joystickAxes = inputDevice.motionRanges
+            .filter { it.source == InputDevice.SOURCE_JOYSTICK }
+            .map { it.axis }
+            .distinct()
+            .sorted()
+        val capabilities = GamepadCapabilities(
+            keycodes = keycodes,
+            axes = joystickAxes,
+            hasHat = AndroidConstants.AXIS_HAT_X in joystickAxes &&
+                AndroidConstants.AXIS_HAT_Y in joystickAxes,
+            isGamepadSource = (inputDevice.sources and InputDevice.SOURCE_GAMEPAD) != 0,
+        )
         // U1/U7 (V11): capacidades coletadas no hotplug (fora do hot path — pull).
         // Gyro: API 31+ via getSensorManager do device; API < 31 → false (degradação
         // silenciosa — a UI esconde, nunca mostra erro). Touchpad: CLASS_POINTER.
@@ -1410,21 +1463,29 @@ class GamepadHub(context: Context) {
             hasGyro = hasGyro,
             hasTouchpad = hasTouchpad,
             batteryPercent = batteryPercent,
+            capabilities = capabilities,
         )
-        _connectedDevices.value = _connectedDevices.value + (deviceId to device)
+        // K3: cache do mapping é por deviceId EFÊMERO — entrada velha nunca vaza.
+        mappingCache.remove(deviceId)
+        val (_, mappingSource) = resolveMapping(device)
+        val stored = device.copy(mappingSource = mappingSource)
+        _connectedDevices.value = _connectedDevices.value + (deviceId to stored)
         refreshActive()
         invalidateProfiles()
         sensorSource?.onDeviceAdded(deviceId)
-        PluviaApp.events.emit(GamepadDeviceAddedEvent(device))
+        PluviaApp.events.emit(GamepadDeviceAddedEvent(stored))
         Timber.d(
-            "GamepadHub: added id=%d name=%s vendor=%04x product=%04x class=%s battery=%s gyro=%b touchpad=%b",
-            deviceId, device.name, device.vendorId, device.productId, deviceClass,
-            device.batteryPercent?.toString() ?: "-", device.hasGyro, device.hasTouchpad,
+            "GamepadHub: added id=%d name=%s vendor=%04x product=%04x class=%s shape=%s mapping=%s battery=%s gyro=%b touchpad=%b",
+            deviceId, stored.name, stored.vendorId, stored.productId, deviceClass,
+            CapabilityMapping.classify(capabilities), mappingSource,
+            stored.batteryPercent?.toString() ?: "-", stored.hasGyro, stored.hasTouchpad,
         )
     }
 
     private fun removeDevice(deviceId: Int) {
         buttonStates.remove(deviceId)
+        // K3: cache do mapping morre junto (deviceId efêmero pode ser reusado).
+        mappingCache.remove(deviceId)
         // U2 (V6): estado do touchpad→mouse morre junto com o device (mesmo padrão
         // buttonStates — o deviceId efêmero pode ser reusado por outro hardware).
         PluviaApp.gamepadTouchpad.onDeviceRemoved(deviceId)

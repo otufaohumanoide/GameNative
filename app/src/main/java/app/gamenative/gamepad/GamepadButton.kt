@@ -23,4 +23,16 @@ enum class GamepadButton {
     START,
     SELECT,
     GUIDE,
+    // K3 (spec 2026-08-16-K3, §1.4): botões EXTRAS do SDL_GameControllerDB — análogos
+    // do enum SDL3 (zlib — SDL_gamepad.h, SDL_GamepadButton): MISC1 = botão
+    // adicional (share do Xbox Series, mute do DualSense, capture do Switch Pro);
+    // PADDLE_1..4 = paddles traseiros (ordem posicional `paddle1..paddle4` do DB);
+    // TOUCHPAD = clique do touchpad (PS4/PS5). APPEND no fim do enum — os nomes
+    // serializam no perfil por `.name`, nunca por ordinal.
+    MISC1,
+    PADDLE_1,
+    PADDLE_2,
+    PADDLE_3,
+    PADDLE_4,
+    TOUCHPAD,
 }
