@@ -199,5 +199,4 @@ Kotlin com origem citada no KDoc de cada arquivo novo.
 - `feat(gamepad): detecção universal por capacidades — síntese CAPABILITIES
   (port clean-room do SDL_CreateMappingForAndroidGamepad), hint de rótulos do DB,
   botões extras MISC1/paddles/touchpad e tiers MODEL/SDL_DB/CAPABILITIES/DEFAULT/USER
-  (spec 2026-08-16-K3-deteccao-universal-capacidades)` — hash na tabela §7 do master
-  roadmap.
+  (spec 2026-08-16-K3-deteccao-universal-capacidades)` — `aa0132c2`.
