@@ -176,6 +176,11 @@ fun GamepadRemapDialog(
     var gyroStickAntiDeadzone by remember { mutableStateOf(profile.gyroStickAntiDeadzone ?: 0f) }
     var gyroActivateToggle by remember { mutableStateOf(profile.gyroActivateToggle ?: false) }
     var gyroGripAngleDeg by remember { mutableStateOf(profile.gyroGripAngleDeg ?: 0f) }
+    // K2 (spec 2026-08-16-K2, §1.4): modo mouse por stick — switch + velocidade
+    // da rampa (o tempo do toggle fica no default 750 ms; configurar é follow-up).
+    var mouseModeEnabled by remember { mutableStateOf(profile.mouseModeEnabled ?: false) }
+    var mouseModeBasePps by remember { mutableStateOf(profile.mouseModeBasePps ?: 0f) }
+    var mouseModeGainPps by remember { mutableStateOf(profile.mouseModeGainPps ?: 80f) }
     var status by remember { mutableStateOf<String?>(null) }
     // E (spec 2026-08-16-E-profile-catalog-comunitario, §1.3): browser do catálogo
     // aberto (janela própria por cima deste dialog); desliga o escopo de foco deste
@@ -247,6 +252,12 @@ fun GamepadRemapDialog(
         gyroStickAntiDeadzone = if (gyroStickAntiDeadzone == 0f) null else gyroStickAntiDeadzone,
         gyroActivateToggle = if (gyroActivateToggle) true else null,
         gyroGripAngleDeg = if (gyroGripAngleDeg == 0f) null else gyroGripAngleDeg,
+        // K2 (spec 2026-08-16-K2, §1.4): null-defaults — OFF/default colapsam em
+        // null (política do store; o switch desligado remove a preferência).
+        mouseModeEnabled = if (mouseModeEnabled) true else null,
+        mouseModeToggleMs = null,
+        mouseModeBasePps = if (mouseModeEnabled && mouseModeBasePps != 0f) mouseModeBasePps else null,
+        mouseModeGainPps = if (mouseModeEnabled && mouseModeGainPps != 80f) mouseModeGainPps else null,
     )
 
     /** Aplica um perfil importado (clipboard ou arquivo — F3.3) ao estado do editor. */
@@ -279,6 +290,9 @@ fun GamepadRemapDialog(
         gyroStickMaxOutput = imported.gyroStickMaxOutput ?: 1f
         gyroStickAntiDeadzone = imported.gyroStickAntiDeadzone ?: 0f
         gyroActivateToggle = imported.gyroActivateToggle ?: false
+        mouseModeEnabled = imported.mouseModeEnabled ?: false
+        mouseModeBasePps = imported.mouseModeBasePps ?: 0f
+        mouseModeGainPps = imported.mouseModeGainPps ?: 80f
         gyroGripAngleDeg = imported.gyroGripAngleDeg ?: 0f
     }
 
@@ -1380,6 +1394,65 @@ fun GamepadRemapDialog(
                                 modifier = Modifier.focusProperties { canFocus = false },
                             )
                         }
+                    }
+
+                    // ── K2: Modo mouse (spec 2026-08-16-K2, §1.4) ──
+                    // Switch liga o modo para o device; o chord do toggle é FIXO em
+                    // START (segurar 750 ms + soltar — configurar o botão é
+                    // follow-up declarado). Velocidade da rampa quadrática
+                    // (defaults do moonlight: base 0, gain 80 px/s).
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = stringResource(R.string.gamepad_mouse_mode_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                    val mouseModeInteraction = remember { MutableInteractionSource() }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .gamepadSelectable(
+                                selected = mouseModeEnabled,
+                                onClick = { mouseModeEnabled = !mouseModeEnabled },
+                                shape = RoundedCornerShape(8.dp),
+                                interactionSource = mouseModeInteraction,
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.gamepad_mouse_mode_enable_title),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = stringResource(R.string.gamepad_mouse_mode_enable_subtitle),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = mouseModeEnabled,
+                            onCheckedChange = { mouseModeEnabled = it },
+                            modifier = Modifier.focusProperties { canFocus = false },
+                        )
+                    }
+                    if (mouseModeEnabled) {
+                        GyroSliderRow(
+                            title = stringResource(R.string.gamepad_mouse_mode_base_title),
+                            value = mouseModeBasePps,
+                            range = 0f..200f,
+                            format = { String.format(java.util.Locale.US, "%.0f px/s", it) },
+                            onValueChange = { mouseModeBasePps = it },
+                        )
+                        GyroSliderRow(
+                            title = stringResource(R.string.gamepad_mouse_mode_gain_title),
+                            value = mouseModeGainPps,
+                            range = 0f..400f,
+                            format = { String.format(java.util.Locale.US, "%.0f px/s", it) },
+                            onValueChange = { mouseModeGainPps = it },
+                        )
                     }
 
                     // ── P2-6: Touchpad (spec 2026-08-14-touchpad-drag-double-tap) ──

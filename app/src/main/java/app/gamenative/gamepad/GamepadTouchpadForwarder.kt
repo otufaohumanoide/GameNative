@@ -42,6 +42,9 @@ class GamepadTouchpadForwarder {
         fun pressLeft()
         fun releaseLeft()
         fun rightClick()
+        // K2 (spec 2026-08-16-K2, §1.2): scroll vertical do modo mouse (dpad).
+        // steps > 0 = para cima, < 0 = para baixo (1 detent por passo).
+        fun scroll(verticalSteps: Int)
     }
 
     /**
@@ -148,6 +151,7 @@ class GamepadTouchpadForwarder {
         override fun pressLeft() {}
         override fun releaseLeft() {}
         override fun rightClick() {}
+        override fun scroll(verticalSteps: Int) {}
     }
 
     private object NoopSwipeExecutorSink : SwipeExecutorSink {
@@ -194,6 +198,24 @@ class XServerTouchpadMouseSink : GamepadTouchpadForwarder.TouchpadMouseSink {
         xServer.injectPointerButtonPress(Pointer.Button.BUTTON_RIGHT)
         xServer.injectPointerButtonRelease(Pointer.Button.BUTTON_RIGHT)
         Timber.d("GamepadTouchpad: double-tap -> right click")
+    }
+
+    // K2 (spec 2026-08-16-K2, §1.2): scroll do modo mouse — o XServer do winlator
+    // só expõe botões de roda (BUTTON_SCROLL_UP/DOWN), então cada passo é um
+    // press+release (1 detent por passo; o repeat é janela de 120 ms no hub).
+    override fun scroll(verticalSteps: Int) {
+        val xServer = PluviaApp.xServerView?.getxServer() ?: return
+        if (verticalSteps == 0) return
+        val button = if (verticalSteps > 0) {
+            Pointer.Button.BUTTON_SCROLL_UP
+        } else {
+            Pointer.Button.BUTTON_SCROLL_DOWN
+        }
+        repeat(kotlin.math.abs(verticalSteps)) {
+            xServer.injectPointerButtonPress(button)
+            xServer.injectPointerButtonRelease(button)
+        }
+        Timber.d("GamepadMouseMode: scroll %d", verticalSteps)
     }
 }
 

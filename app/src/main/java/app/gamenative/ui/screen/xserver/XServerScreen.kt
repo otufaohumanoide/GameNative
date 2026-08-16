@@ -1597,6 +1597,11 @@ fun XServerScreen(
     } else {
         OverlayInputContext.NONE
     }
+    // K2 (spec 2026-08-16-K2, §1.3): espelho do contexto no hub — o modo mouse é
+    // SUSPENSO com overlay aberto (o dpad volta a navegar o menu; `active`
+    // persiste). Holder vivo escrito na composição, lido no MOMENTO do evento
+    // (lição C1) — sem locals novas na função principal (regra dex).
+    PluviaApp.gamepadHub.overlayOpen = overlayInputState.context != OverlayInputContext.NONE
 
     // Onda 2 (spec 2026-08-13-onda2 §1.4): appId vivo para perfis por jogo — mesmo padrão
     // do holder acima: escrito NA composição, lido pelos handlers do hub no call time.

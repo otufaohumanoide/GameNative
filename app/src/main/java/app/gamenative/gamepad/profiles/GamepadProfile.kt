@@ -92,6 +92,14 @@ data class GamepadProfile(
     val gyroActivateToggle: Boolean? = null,
     // G6: ângulo de pegada em graus (null = 0 = eixos atuais).
     val gyroGripAngleDeg: Float? = null,
+    // ── K2 (spec 2026-08-16-K2, §1.4) — modo mouse universal por stick ──
+    // null = OFF (caminho atual byte-identical). O chord do toggle é FIXO em
+    // START (configurar o botão é follow-up declarado); o tempo e a velocidade
+    // da rampa são configuráveis por perfil.
+    val mouseModeEnabled: Boolean? = null,
+    val mouseModeToggleMs: Int? = null, // null = 750 (moonlight)
+    val mouseModeBasePps: Float? = null, // null = 0 (rampa pura)
+    val mouseModeGainPps: Float? = null, // null = 80 px/s (moonlight: 4 px/report 50 ms)
     // F3.3: versão do schema (export/import cloud-ready; chaves novas preservadas — V1).
     val schemaVersion: Int = 1,
 ) {
@@ -147,7 +155,12 @@ data class GamepadProfile(
             gyroStickMaxOutput == null &&
             gyroStickAntiDeadzone == null &&
             gyroActivateToggle == null &&
-            gyroGripAngleDeg == null
+            gyroGripAngleDeg == null &&
+            // K2 (spec 2026-08-16-K2, §1.4): mesmos null-defaults.
+            mouseModeEnabled == null &&
+            mouseModeToggleMs == null &&
+            mouseModeBasePps == null &&
+            mouseModeGainPps == null
 
     fun toJson(): String = json.encodeToString(GamepadProfile.serializer(), this)
 

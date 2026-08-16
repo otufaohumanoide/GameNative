@@ -2403,6 +2403,15 @@
     <string name="gamepad_sdl_diff_add_format">+ %1$s: %2$s</string>
     <string name="gamepad_sdl_diff_remove_format">− %1$s: %2$s</string>
     <string name="gamepad_sdl_diff_change_format">± %1$s: %2$s → %3$s</string>
+    <!-- K2 (spec 2026-08-16-K2): modo mouse universal por stick -->
+    <string name="gamepad_mouse_mode_title">Modo mouse</string>
+    <string name="gamepad_mouse_mode_enable_title">Ativar modo mouse</string>
+    <string name="gamepad_mouse_mode_enable_subtitle">Segure START 750 ms e solte para alternar; ativo, o stick esquerdo move o cursor, A/B clicam e o direcional rola</string>
+    <string name="gamepad_mouse_mode_base_title">Velocidade base</string>
+    <string name="gamepad_mouse_mode_gain_title">Ganho (rampa)</string>
+    <string name="gamepad_mouse_mode_card_title">Modo mouse (segurar START 750 ms)</string>
+    <string name="gamepad_mouse_mode_card_on">Ativado — segure START e solte para alternar</string>
+    <string name="gamepad_mouse_mode_card_off">Desativado — o stick esquerdo continua stick</string>
     <string name="gamepad_diag_all_buttons_title">Todos os botões</string>
     <string name="gamepad_diag_all_buttons_hint">Pressione qualquer botão ou mova os sticks e gatilhos para vê-los acender acima.</string>
     <string name="gamepad_glyph_dpad_up">↑</string>

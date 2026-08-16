@@ -165,6 +165,20 @@ class PhysicalControllerHandler(
         PluviaApp.gamepadHub.deviceFor(deviceId)?.deviceClass == DeviceClass.TOUCHPAD
 
     /**
+     * K2 (spec 2026-08-16-K2, §1.3): teclas consumidas pelo modo mouse — A/B
+     * (cliques) e DPAD (scroll). START NÃO está na lista: faz o toggle (hub) e
+     * continua chegando ao jogo ("volta a ser START").
+     */
+    private val MOUSE_MODE_CONSUMED_KEYS = setOf(
+        KeyEvent.KEYCODE_BUTTON_A,
+        KeyEvent.KEYCODE_BUTTON_B,
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_DOWN,
+        KeyEvent.KEYCODE_DPAD_LEFT,
+        KeyEvent.KEYCODE_DPAD_RIGHT,
+    )
+
+    /**
      * Handle physical controller button events.
      * Extracted from InputControlsView.onKeyEvent()
      */
@@ -173,6 +187,15 @@ class PhysicalControllerHandler(
         // par do begin em MainActivity.dispatchKeyEvent (slot pendente; descartado
         // quando a rota não passou pelo dispatch — ver LatencyTracker).
         LatencyTracker.end(LatencyTracker.Source.KEY, System.nanoTime())
+        // K2 (spec 2026-08-16-K2, §1.3): modo mouse ATIVO — A/B/dpad crus são do
+        // mouse (o hub roteou os lógicos para o sink); consumir aqui para NÃO
+        // chegarem ao jogo (o handler só roda com overlay fechado). START passa
+        // (é o toggle e "volta a ser START" — moonlight também envia PLAY).
+        if (PluviaApp.gamepadHub.mouseModeActive(event.deviceId) &&
+            event.keyCode in MOUSE_MODE_CONSUMED_KEYS
+        ) {
+            return true
+        }
         if (profile != null && event.repeatCount == 0) {
             // P5 (spec 2026-08-14-gamepad-upgrades-pendencias, Parte V): defesa em
             // profundidade do gate do MainActivity — device de touchpad PURO (classe

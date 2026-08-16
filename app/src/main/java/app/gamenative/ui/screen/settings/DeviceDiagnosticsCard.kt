@@ -34,6 +34,7 @@ import app.gamenative.events.GamepadInputEvent
 import app.gamenative.gamepad.GamepadDevice
 import app.gamenative.gamepad.GyroPreview
 import app.gamenative.gamepad.TouchpadPreview
+import app.gamenative.gamepad.profiles.GamepadProfile
 import app.gamenative.gamepad.mapping.AutoconfigCheck
 import app.gamenative.gamepad.mapping.AutoconfigSaveResult
 import app.gamenative.gamepad.mapping.AutoconfigValidation
@@ -374,6 +375,27 @@ fun DeviceDiagnosticsCard(
                         onClick = { PluviaApp.gamepadHub.deleteAutoconfig(device.mappingKey) },
                     )
                 }
+                // K2 (spec 2026-08-16-K2, §1.4): modo mouse por stick — toggle
+                // rápido no card (o chord START 750 ms fica disponível quando ON).
+                // Edita o perfil BRUTO do device (nunca congela o merge).
+                val deviceProfile = PluviaApp.gamepadHub.deviceProfileFor(device.deviceId)
+                val mouseModeOn = PluviaApp.gamepadHub.profileFor(device.deviceId, null)
+                    .mouseModeEnabled == true
+                DiagButtonRow(
+                    title = stringResource(R.string.gamepad_mouse_mode_card_title),
+                    subtitle = if (mouseModeOn) {
+                        stringResource(R.string.gamepad_mouse_mode_card_on)
+                    } else {
+                        stringResource(R.string.gamepad_mouse_mode_card_off)
+                    },
+                    onClick = {
+                        val base = deviceProfile ?: GamepadProfile()
+                        PluviaApp.gamepadHub.saveDeviceProfile(
+                            device.deviceId,
+                            base.copy(mouseModeEnabled = !mouseModeOn),
+                        )
+                    },
+                )
                 // K6 (spec 2026-08-16-K6, §1.2/§1.3): import/export no formato SDL —
                 // o export serializa o mapping BASE (pré-quirk — quirk é correção de
                 // transporte, não identidade do controle, racional do K5); o diff do

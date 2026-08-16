@@ -2535,6 +2535,15 @@
     <string name="gamepad_sdl_diff_add_format">+ %1$s: %2$s</string>
     <string name="gamepad_sdl_diff_remove_format">− %1$s: %2$s</string>
     <string name="gamepad_sdl_diff_change_format">± %1$s: %2$s → %3$s</string>
+    <!-- K2 (spec 2026-08-16-K2): modo mouse universal por stick -->
+    <string name="gamepad_mouse_mode_title">Mouse mode</string>
+    <string name="gamepad_mouse_mode_enable_title">Enable mouse mode</string>
+    <string name="gamepad_mouse_mode_enable_subtitle">Hold START 750 ms and release to toggle; while active, the left stick moves the cursor, A/B click and the D-pad scrolls</string>
+    <string name="gamepad_mouse_mode_base_title">Base speed</string>
+    <string name="gamepad_mouse_mode_gain_title">Gain (ramp)</string>
+    <string name="gamepad_mouse_mode_card_title">Mouse mode (hold START 750 ms)</string>
+    <string name="gamepad_mouse_mode_card_on">Enabled — hold START and release to toggle</string>
+    <string name="gamepad_mouse_mode_card_off">Disabled — the left stick stays a stick</string>
     <string name="gamepad_diag_all_buttons_title">All buttons</string>
     <string name="gamepad_diag_all_buttons_hint">Press any button or move the sticks and triggers to see them light up above.</string>
 <string name="gamepad_glyph_dpad_up">↑</string>

@@ -5,6 +5,7 @@ import android.hardware.BatteryState
 import android.hardware.Sensor
 import android.hardware.input.InputManager
 import android.os.Build
+import android.os.SystemClock
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -61,6 +62,10 @@ import app.gamenative.gamepad.processing.GyroMouseState
 import app.gamenative.gamepad.processing.GyroPixelAccumulator
 import app.gamenative.gamepad.processing.GyroState
 import app.gamenative.gamepad.processing.GyroProcessor
+import app.gamenative.gamepad.processing.MouseModeOutcome
+import app.gamenative.gamepad.processing.MouseModeProcessor
+import app.gamenative.gamepad.processing.MouseModeSpeed
+import app.gamenative.gamepad.processing.MouseModeState
 import app.gamenative.gamepad.processing.GyroSample
 import app.gamenative.gamepad.processing.OneEuroFilter
 import app.gamenative.gamepad.processing.StickSample
@@ -354,6 +359,16 @@ class GamepadHub(context: Context) {
         val device = deviceFor(deviceId) ?: return
         deviceStore.save(device.mappingKey, profile)
         invalidateProfiles()
+    }
+
+    /**
+     * K2 (spec 2026-08-16-K2, §1.4): perfil BRUTO do device (sem merge com jogo/
+     * globais) — a UI do modo mouse edita SÓ o campo dela sobre o bruto e salva
+     * (nunca congela o merge no save, padrão do repo). null = sem entrada salva.
+     */
+    fun deviceProfileFor(deviceId: Int): GamepadProfile? {
+        val device = deviceFor(deviceId) ?: return null
+        return deviceStore.load(device.mappingKey)
     }
 
     /**
@@ -1173,6 +1188,22 @@ class GamepadHub(context: Context) {
     // G1/G2: estado sub-pixel e OneEuro do MOUSE mode por device (idem V6). Só
     // existem com o modo ativo — OFF/outros modos ficam byte-identical.
     private val gyroMouseStates = mutableMapOf<Int, GyroMouseState>()
+
+    /**
+     * K2 (spec 2026-08-16-K2, §1.3): estado do modo mouse por device (V6 — morto
+     * no removeDevice). Criado só quando o perfil habilita o modo; o toggle vive
+     * no flush (routeMouseMode), o repeat do scroll nos repeats crus do onKey.
+     */
+    private val mouseModeStates = mutableMapOf<Int, MouseModeState>()
+
+    /**
+     * K2 (spec 2026-08-16-K2, §1.3): suspensão do modo mouse por overlay — o
+     * XServerScreen escreve na composição (holder vivo, lição C1): com QuickMenu/
+     * radial/remap abertos o dpad volta a navegar o menu e o modo fica suspenso
+     * (o `active` persiste — ao fechar o overlay o modo volta).
+     */
+    @Volatile
+    var overlayOpen: Boolean = false
     private val gyroSmoothStates = mutableMapOf<Int, GyroSmoothState>()
 
     // F1.2 (spec 2026-08-15-input-core-avancado): estado do Flick Stick por device
@@ -1254,7 +1285,27 @@ class GamepadHub(context: Context) {
             raw
         }
         val events = EventTranslator.translateKey(effectiveRaw, mapping)
-        if (events.isEmpty()) return false
+        if (events.isEmpty()) {
+            // K2 (spec 2026-08-16-K2, §1.1): repeats CRUS do dpad — o tradutor
+            // descarta repeats (só bordas), então este é o ÚNICO canal de
+            // repetição do scroll do modo mouse (janela de 120 ms no processor).
+            if (raw.repeatCount > 0 && !overlayOpen) {
+                val profile = profileFor(raw.deviceId, activeAppId)
+                if (profile.mouseModeEnabled == true) {
+                    val state = mouseModeStates[raw.deviceId]
+                    if (state != null && state.active) {
+                        val outcome = MouseModeProcessor.onScrollRepeat(
+                            state,
+                            SystemClock.uptimeMillis(),
+                        )
+                        if (outcome is MouseModeOutcome.MouseScroll) {
+                            PluviaApp.xServerMouseSink.scroll(outcome.steps)
+                        }
+                    }
+                }
+            }
+            return false
+        }
         val profile = profileFor(raw.deviceId, activeAppId)
         val activateButton = profile.gyroActivateButton
         val layerState = layerStates.getOrPut(raw.deviceId) { LayerState() }
@@ -1272,11 +1323,99 @@ class GamepadHub(context: Context) {
             // F §1.3: trigger SHIFT consome o evento físico (não emite lógico — o
             // botão não chega ao jogo); camada comum segue pass-through.
             if (!resolveLayerTriggers(device, mapping, layerState, profile, event) && !chordSuppressed) {
-                emitLogical(device, mapping, profile, layerState, event, raw.deviceId)
+                // K2 §1.3: modo mouse DEPOIS do pipeline lógico, ANTES da emissão —
+                // consumido (clique/scroll/cursor) não chega aos menus/overlays.
+                if (!routeMouseMode(raw.deviceId, event)) {
+                    emitLogical(device, mapping, profile, layerState, event, raw.deviceId)
+                }
             }
         }
         return true
     }
+
+    /**
+     * K2 (spec 2026-08-16-K2, §1.3) — hook do modo mouse no flush (post-remap,
+     * pré-emissão): consome A/B (cliques), dpad (scroll) e o stick esquerdo
+     * (cursor) enquanto ativo; START arma (down) e flipa (up confirmado) o
+     * toggle. Retorna true quando o evento foi consumido pelo modo (não emite).
+     *
+     * Suspenso com [overlayOpen] (o dpad navega o menu; `active` persiste) e
+     * quando o perfil não habilita o modo (null = OFF — caminho byte-identical).
+     * O stick direito/triggers passam (o modo usa SÓ o stick esquerdo — o
+     * moonlight usa os dois, o spec K2 definiu o esquerdo; configuração é
+     * follow-up).
+     */
+    private fun routeMouseMode(deviceId: Int, event: InputEvent): Boolean {
+        val profile = profileFor(deviceId, activeAppId)
+        if (profile.mouseModeEnabled != true) return false
+        if (overlayOpen) return false
+        val state = mouseModeStates.getOrPut(deviceId) { MouseModeState() }
+        val nowMs = SystemClock.uptimeMillis()
+        val toggleMs = profile.mouseModeToggleMs?.toLong()
+            ?: MouseModeProcessor.DEFAULT_TOGGLE_MS
+
+        fun handleButton(button: GamepadButton, isDown: Boolean): Boolean {
+            when (val outcome = MouseModeProcessor.onKey(state, button, isDown, nowMs, toggleMs)) {
+                MouseModeOutcome.None -> return false
+                is MouseModeOutcome.Activated -> {
+                    onMouseModeToggle(deviceId, active = true)
+                    return false // START segue o pipeline (toggle + volta a ser START)
+                }
+                is MouseModeOutcome.Deactivated -> {
+                    onMouseModeToggle(deviceId, active = false)
+                    return false
+                }
+                is MouseModeOutcome.MouseButton -> {
+                    when {
+                        outcome.left && outcome.down -> PluviaApp.xServerMouseSink.pressLeft()
+                        outcome.left -> PluviaApp.xServerMouseSink.releaseLeft()
+                        else -> if (outcome.down) PluviaApp.xServerMouseSink.rightClick()
+                    }
+                    return true
+                }
+                is MouseModeOutcome.MouseScroll -> {
+                    PluviaApp.xServerMouseSink.scroll(outcome.steps)
+                    return true
+                }
+            }
+        }
+
+        return when (event) {
+            is InputEvent.ButtonDown -> handleButton(event.button, isDown = true)
+            is InputEvent.ButtonUp -> handleButton(event.button, isDown = false)
+            is InputEvent.AxisMotion -> {
+                if (event.axis != GamepadAxis.LEFT_X && event.axis != GamepadAxis.LEFT_Y) {
+                    return false
+                }
+                if (event.axis == GamepadAxis.LEFT_X) state.lastStickX = event.value
+                if (event.axis == GamepadAxis.LEFT_Y) state.lastStickY = event.value
+                val speed = MouseModeSpeed(
+                    basePps = profile.mouseModeBasePps ?: 0f,
+                    gainPps = profile.mouseModeGainPps ?: 80f,
+                )
+                val move = MouseModeProcessor.onStick(
+                    state, state.lastStickX, state.lastStickY, nowMs, speed,
+                )
+                if (move != null) PluviaApp.xServerMouseSink.move(move.dx, move.dy)
+                true // stick esquerdo consumido enquanto o modo está ativo
+            }
+            else -> false
+        }
+    }
+
+    /** K2 §1.3: feedback de toggle — haptic curto + log (padrão moonlight "OSD toast"). */
+    private fun onMouseModeToggle(deviceId: Int, active: Boolean) {
+        GamepadHaptics.rumbleDevice(deviceId, 0.4f, 0.4f, 80L)
+        Timber.d(
+            "gncontrol: modo mouse %s (device %d)",
+            if (active) "ATIVADO" else "desativado", deviceId,
+        )
+    }
+
+    /** K2 §1.3: modo mouse ativo para o device — o PhysicalControllerHandler usa
+     *  para CONSUMIR A/B/dpad crus (não chegam ao jogo). */
+    fun mouseModeActive(deviceId: Int): Boolean =
+        mouseModeStates[deviceId]?.active == true && !overlayOpen
 
     /** Traduz um MotionEvent cru e emite GamepadInputEvent no bus (gate-aware). */
     fun onAxis(raw: RawAxisInput): Boolean {
@@ -1345,7 +1484,11 @@ class GamepadHub(context: Context) {
                 // U3: triggers de camada (botão FÍSICO) + remap pela camada ativa.
                 // F §1.3: trigger SHIFT consome o evento físico.
                 if (!resolveLayerTriggers(device, mapping, layerState, profile, event) && !chordSuppressed) {
-                    emitted = emitLogical(device, mapping, profile, layerState, event, raw.deviceId) || emitted
+                    // K2 §1.3: modo mouse no flush (post-pipeline, pré-emissão) —
+                    // o stick esquerdo ativo vira cursor e não chega aos menus.
+                    if (!routeMouseMode(raw.deviceId, event)) {
+                        emitted = emitLogical(device, mapping, profile, layerState, event, raw.deviceId) || emitted
+                    }
                 }
             }
         }
@@ -1726,6 +1869,8 @@ class GamepadHub(context: Context) {
         gyroMouseStates.remove(deviceId)
         gyroSmoothStates.remove(deviceId)
         gyroActivateLatches.remove(deviceId)
+        // K2 (V6): estado do modo mouse morre junto (deviceId efêmero reusado).
+        mouseModeStates.remove(deviceId)
         // F1.2/F1.3 (V6): estados do Flick Stick e da fusão morrem junto.
         flickStickStates.remove(deviceId)
         fusionStates.remove(deviceId)
