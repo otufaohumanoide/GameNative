@@ -186,4 +186,6 @@ Protocolo no spec §4 (Mi 11 / DS4 BT / Silksong):
 
 ## 6. Commit
 
-`feat(gamepad): …` — ver §7 do master roadmap (checkpoint idempotente).
+`5a12bd7e` — `feat(gamepad): tabela declarativa de quirks por vid/pid/transport —
+port clean-room do handleRemapping do moonlight (… spec 2026-08-16-K4-quirks-vidpid)`.
+§7 do master roadmap atualizada (✅ 2026-08-16).
