@@ -137,7 +137,7 @@ corrigir o checkout é housekeeping opcional, não fase.
 | 0 | `spec-2026-08-16-master-roadmap-input-avancado-verificacao.md` §5 | tests `*Expr* *Gamepad*` + assemble | ✅ 2026-08-16 | `d1c7f600` |
 | K3 | `spec-2026-08-16-K3-deteccao-universal-capacidades.md` | tests `*CapabilityMapping* *Mapping* *Sdl* *Gamepad*` + assemble | ✅ 2026-08-16 | `aa0132c2` |
 | K4 | `spec-2026-08-16-K4-quirks-vidpid.md` | tests `*Quirk* *Gamepad*` + assemble | ✅ 2026-08-16 | `5a12bd7e` |
-| K5 | `spec-2026-08-16-K5-autoconfig-save-dispositivo.md` | tests `*Autoconfig* *DeviceMapping* *Gamepad*` + assemble | ⬜ | — |
+| K5 | `spec-2026-08-16-K5-autoconfig-save-dispositivo.md` | tests `*Autoconfig* *DeviceMapping* *Gamepad*` + assemble | ✅ 2026-08-16 | `4af898ed` |
 | K6 | `spec-2026-08-16-K6-intercambio-mapping-sdl.md` | tests `*Sdl* *Mapping* *Gamepad*` + assemble | ⬜ | — |
 | K2 | `spec-2026-08-16-K2-modo-mouse-universal.md` | tests `*MouseMode* *Gamepad*` + assemble | ⬜ | — |
 | K1 | `spec-2026-08-16-K1-gamepad-virtual-toque.md` | tests `*Virtual* *TouchGamepad* *Gamepad*` + assemble | ⬜ | — |
