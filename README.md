@@ -1,6 +1,6 @@
 <div align="center">
 
-# GameNative Plus
+# GameNative (Plus)
 
 **A personal fork of GameNative with native RetroArch shader support (librashader) — every game frame runs through a filter chain before it hits the screen, and each game remembers its own shader.**
 
@@ -75,7 +75,7 @@ To the melonDS developers, Rafael Caetano, the PCSX2 team, the **ARMSX2 team**, 
 
 ## Building
 
-This fork publishes **no releases** — build it yourself. It's a Winlator/GameNative-derived Android project with a Rust toolchain in the loop for librashader.
+GameNative (Plus) publishes **ready-to-install APKs** on the [Releases page](https://github.com/otufaohumanoide/GameNative/releases) — grab the latest `app-modern-release.apk` and install it directly on your device. Prefer building from source? It's a Winlator/GameNative-derived Android project with a Rust toolchain in the loop for librashader.
 
 1. **Prerequisites:**
    - Android SDK (point `local.properties` at it: `sdk.dir=/path/to/Android/Sdk`)
