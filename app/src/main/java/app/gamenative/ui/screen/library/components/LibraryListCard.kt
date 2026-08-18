@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Face4
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -133,26 +134,36 @@ internal fun ListViewCard(
                     .size(52.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
             ) {
-                ListItemImage(
-                    modifier = Modifier.fillMaxSize(),
-                    imageModifier = Modifier.clip(RoundedCornerShape(10.dp)),
-                    image = { iconUrl },
-                )
-                // M4 (spec 2026-08-12) + E (spec 2026-08-16-E): badges no canto do
-                // ícone — shader ativo + perfil personalizado (lado a lado, nunca
-                // sobrepostos).
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    if (hasShader) {
-                        ShaderActiveBadge()
-                    }
-                    if (hasProfileOverrides) {
-                        ProfileOverrideBadge()
+                if (appInfo.isRecTeaser) {
+                    Icon(
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp),
+                    )
+                } else {
+                    ListItemImage(
+                        modifier = Modifier.fillMaxSize(),
+                        imageModifier = Modifier.clip(RoundedCornerShape(10.dp)),
+                        image = { iconUrl },
+                    )
+                    // M4 (spec 2026-08-12) + E (spec 2026-08-16-E): badges no canto do
+                    // ícone — shader ativo + perfil personalizado (lado a lado, nunca
+                    // sobrepostos).
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        if (hasShader) {
+                            ShaderActiveBadge()
+                        }
+                        if (hasProfileOverrides) {
+                            ProfileOverrideBadge()
+                        }
                     }
                 }
             }
@@ -163,7 +174,11 @@ internal fun ListViewCard(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    text = appInfo.name,
+                    text = if (appInfo.isRecTeaser) {
+                        stringResource(R.string.rec_teaser_title)
+                    } else {
+                        appInfo.name
+                    },
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -172,7 +187,7 @@ internal fun ListViewCard(
                 )
 
                 // Status row with compact badges
-                Row(
+                if (!appInfo.isRecTeaser) Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
