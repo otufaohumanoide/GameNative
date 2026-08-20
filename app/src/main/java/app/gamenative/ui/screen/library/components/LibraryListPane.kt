@@ -124,6 +124,7 @@ internal fun LibraryListPane(
     modifier: Modifier = Modifier,
     shaderEnabledIds: Set<String> = emptySet(),
     profileOverrideIds: Set<String> = emptySet(),
+    onFocusedIndexChanged: (Int) -> Unit = {},
 ) {
     val context = LocalContext.current
     val snackBarHost = remember { SnackbarHostState() }
@@ -298,7 +299,10 @@ internal fun LibraryListPane(
                                         appInfo = item,
                                         onClick = { onNavigate(item.appId) },
                                         paneType = currentLayout,
-                                        onFocus = { targetOfScroll = item.index },
+                                        onFocus = {
+                                            targetOfScroll = item.index
+                                            onFocusedIndexChanged(listIndex)
+                                        },
                                         imageRefreshCounter = state.imageRefreshCounter,
                                         compatibilityStatus = state.compatibilityMap[item.name],
                                         gameStats = state.statsFor(item),
