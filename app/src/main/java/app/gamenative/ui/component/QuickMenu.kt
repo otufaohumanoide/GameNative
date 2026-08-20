@@ -1,5 +1,6 @@
 package app.gamenative.ui.component
 
+import android.os.SystemClock
 import android.view.KeyEvent
 import timber.log.Timber
 import androidx.activity.compose.BackHandler
@@ -535,7 +536,7 @@ fun QuickMenu(
                 if (!isVisible && inviteMenu.consumeGameInviteRequest()) {
                     selectedTab = QuickMenuTab.INVITE
                     PrefManager.quickMenuLastTab = selectedTab
-                    SteamInviteState.openedForGameRequest = true
+                    SteamInviteState.openedForGameRequest = SystemClock.uptimeMillis()
                     onRequestOpen()
                 }
                 delay(1000)
