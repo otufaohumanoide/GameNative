@@ -2472,8 +2472,8 @@ fun XServerScreen(
                                 isOffline
                             )
 
-                            // Start performance driver after environment is set up
-                            PowerManager.start(container.rootDir)
+                            // Autostart performance driver after environment is set up
+                            PowerManager.autoStart(container.rootDir)
 
                             // Pin game process to performance cores (CPUs 4-7)
                             container.executablePath
@@ -5433,6 +5433,10 @@ private suspend fun applyGeneralPatches(
                 rootDir,
                 onExtractFileListener,
             );
+        }
+        Timber.i("Extracting WFM from container_pattern_common.tzst")
+        check(containerManager.extractContainerPatternCommonWfm(rootDir, onExtractFileListener)) {
+            "Failed to extract WFM from container_pattern_common.tzst"
         }
     } else {
         Timber.i("Extracting container_pattern_common.tzst")
