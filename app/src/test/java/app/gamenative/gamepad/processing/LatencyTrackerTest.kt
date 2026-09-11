@@ -87,7 +87,6 @@ class LatencyTrackerTest {
         assertEquals(5f, LatencyTracker.snapshot(LatencyTracker.Source.KEY).p50Ms, 0.01f)
         assertEquals(1, LatencyTracker.snapshot(LatencyTracker.Source.MOTION).count)
         assertEquals(3f, LatencyTracker.snapshot(LatencyTracker.Source.MOTION).p50Ms, 0.01f)
-        assertEquals(0, LatencyTracker.snapshot(LatencyTracker.Source.SENSOR).count)
     }
 
     @Test
@@ -140,6 +139,5 @@ class LatencyTrackerTest {
         val report = LatencyTracker.report()
         assertTrue(report.contains("KEY=no-samples"))
         assertTrue(report.contains("MOTION=no-samples"))
-        assertTrue(report.contains("SENSOR=no-samples"))
     }
 }

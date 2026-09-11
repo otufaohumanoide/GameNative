@@ -22,8 +22,6 @@ class ProfileCatalogTest {
           "description": "Gyro as mouse.",
           "downloads": 12,
           "profile": {
-            "gyroMode": "MOUSE",
-            "gyroSensitivity": 1.4,
             "touchpadSwipes": {
               "RIGHT": [{"keyCode": -1000, "holdMs": 60, "gapMs": 40}],
               "UP": [{"keyCode": 96}]
@@ -58,7 +56,6 @@ class ProfileCatalogTest {
             "faceStyle": "PLAYSTATION",
             "swapOkCancel": true,
             "layers": {"DEFAULT": {"RIGHT_BUMPER": "key:96"}},
-            "gyroMode": "MOUSE",
             "layerTriggers": {"FACE_LEFT": {"button": "FACE_LEFT", "mode": "HOLD", "isShift": true}},
             "rumbleOnActivate": false,
             "touchpadDoubleTapRightClick": true,
@@ -66,7 +63,6 @@ class ProfileCatalogTest {
             "leftStickCurve": "EXPONENTIAL",
             "leftStickLut": [0.0, 0.5, 1.0],
             "flickStickEnabled": true,
-            "gyroFusionEnabled": true,
             "schemaVersion": 1
           }
         }
@@ -115,7 +111,6 @@ class ProfileCatalogTest {
         assertEquals(96, profile.touchpadSwipes?.get("UP")?.single()?.keyCode)
         assertEquals(3, profile.leftStickLut?.size)
         assertEquals(true, profile.flickStickEnabled)
-        assertEquals(true, profile.gyroFusionEnabled)
     }
 
     @Test
@@ -127,7 +122,7 @@ class ProfileCatalogTest {
         """
         val result = ProfileCatalog.parse(catalogOf(listOf(extra)))
         assertEquals(1, result.entries.size)
-        assertEquals("CAMERA", result.entries.single().profile.gyroMode?.name)
+        assertEquals("x", result.entries.single().id)
     }
 
     @Test
@@ -167,7 +162,6 @@ class ProfileCatalogTest {
         assertEquals(
             listOf(
                 ProfileSummaryCategory.BINDINGS,
-                ProfileSummaryCategory.GYRO,
                 ProfileSummaryCategory.LAYERS,
                 ProfileSummaryCategory.SWIPES,
                 ProfileSummaryCategory.STICK,
@@ -223,11 +217,6 @@ class ProfileCatalogTest {
             touchpadSwipes = mapOf("UP" to listOf(app.gamenative.gamepad.radial.RadialMacroKey(96))),
         )
         assertEquals(listOf(ProfileSummaryCategory.SWIPES), ProfileCatalog.summaryOf(swipesOnly))
-
-        val gyroOff = GamepadProfile(gyroMode = app.gamenative.gamepad.GyroMode.OFF)
-        // Desligar o gyro TOCA o gyro (decisão do impl: nenhum resumo vazio para
-        // perfis que só mudam uma chave).
-        assertEquals(listOf(ProfileSummaryCategory.GYRO), ProfileCatalog.summaryOf(gyroOff))
 
         val stickOnly = GamepadProfile(leftStickCurve = app.gamenative.gamepad.processing.ResponseCurve.EXPONENTIAL)
         assertEquals(listOf(ProfileSummaryCategory.STICK), ProfileCatalog.summaryOf(stickOnly))

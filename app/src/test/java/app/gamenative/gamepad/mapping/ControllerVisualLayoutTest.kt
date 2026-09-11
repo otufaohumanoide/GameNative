@@ -228,12 +228,6 @@ class ControllerVisualLayoutTest {
     @Test
     fun `flash control ignores non input events`() {
         assertNull(
-            ControllerVisualLayout.flashControlFor(
-                InputEvent.SensorUpdate(7, 0f, 0f, 0f, 0f, 0f, 0f),
-                7,
-            ),
-        )
-        assertNull(
             ControllerVisualLayout.flashControlFor(InputEvent.TouchpadMotion(7, 0.1f, 0.2f), 7),
         )
     }

@@ -15,7 +15,7 @@ Validation (spec 2026-08-16-E-profile-catalog-comunitario, §1.1) — per profil
 reject-with-warning (never abort the whole sync):
   - profile fields must be inside the GamepadProfile allowlist (unknown fields reject
     the ENTRY with a warning — a newer catalog must not leak keys into an older APK);
-  - enums validated (faceStyle/gyroMode/deadzone modes/response curves/layer trigger
+  - enums validated (faceStyle/deadzone modes/response curves/layer trigger
     modes/swipe directions — the F/D allowlists: iconKey/children do not exist in
     GamepadProfile, so that part of the F/D validation is vacuous here and enforced
     by the Kotlin parser on load);
@@ -46,24 +46,18 @@ DEFAULT_OUT = os.path.join(
 # ── Allowlists espelho do Kotlin (GamepadProfile.kt / enums do repo) ──
 PROFILE_FIELDS = {
     "faceStyle", "swapOkCancel", "leftStickDeadzone", "rightStickDeadzone",
-    "leftTriggerDeadzone", "rightTriggerDeadzone", "layers", "gyroMode",
-    "gyroSensitivity", "gyroDeadzone", "gyroActivateButton", "layerTriggers",
+    "leftTriggerDeadzone", "rightTriggerDeadzone", "layers", "layerTriggers",
     "rumbleOnActivate", "rumbleOnBack", "touchpadDoubleTapRightClick",
     "touchpadSwipes", "leftStickDeadzoneMode", "rightStickDeadzoneMode",
     "leftStickCurve", "rightStickCurve", "leftStickLut", "rightStickLut",
     "flickStickEnabled", "flickStickActivationRadius", "flickStickSnapAngle",
-    "gyroFusionEnabled", "gyroFusionKp", "gyroFusionKi", "schemaVersion",
-    # G (spec 2026-08-16-G-gyro-v2): campos novos do gyro v2.
-    "gyroSensitivityY", "gyroInvertX", "gyroInvertY", "gyroSmoothMinCutoff",
-    "gyroSmoothBeta", "gyroStickMaxOutput", "gyroStickAntiDeadzone",
-    "gyroActivateToggle", "gyroGripAngleDeg",
+    "schemaVersion",
 }
 ENTRY_FIELDS = {
     "id", "game", "faceStyle", "controller", "name", "author", "description",
     "downloads", "profile",
 }
 FACE_STYLES = {"XBOX", "PLAYSTATION", "NINTENDO", "GENERIC"}
-GYRO_MODES = {"OFF", "MOUSE", "CAMERA"}
 DEADZONE_MODES = {"RADIAL", "AXIAL"}
 RESPONSE_CURVES = {"LINEAR", "EXPONENTIAL", "SCURVE", "LUT"}
 LAYER_TRIGGER_MODES = {"HOLD", "TOGGLE", "DOUBLE_TAP", "LONG_PRESS", "SEQUENCE"}
@@ -169,9 +163,6 @@ def validate_profile(raw: dict, where: str) -> tuple:
     for field in ("faceStyle",):
         if field in raw and raw[field] is not None:
             enum_ok(raw[field], FACE_STYLES, field)
-    for field in ("gyroMode",):
-        if field in raw and raw[field] is not None:
-            enum_ok(raw[field], GYRO_MODES, field)
     for field in ("leftStickDeadzoneMode", "rightStickDeadzoneMode"):
         if field in raw and raw[field] is not None:
             enum_ok(raw[field], DEADZONE_MODES, field)
@@ -181,20 +172,12 @@ def validate_profile(raw: dict, where: str) -> tuple:
 
     for field in (
         "leftStickDeadzone", "rightStickDeadzone", "leftTriggerDeadzone",
-        "rightTriggerDeadzone", "gyroSensitivity", "gyroDeadzone",
-        "flickStickActivationRadius", "flickStickSnapAngle", "gyroFusionKp",
-        "gyroFusionKi",
-        # G (spec 2026-08-16-G-gyro-v2): campos novos do gyro v2 (floats).
-        "gyroSensitivityY", "gyroSmoothMinCutoff", "gyroSmoothBeta",
-        "gyroStickMaxOutput", "gyroStickAntiDeadzone", "gyroGripAngleDeg",
+        "rightTriggerDeadzone", "flickStickActivationRadius", "flickStickSnapAngle",
     ):
         if field in raw and raw[field] is not None and not is_finite_number(raw[field]):
             errors.append(f"{field} não é número finito")
 
-    for field in ("swapOkCancel", "touchpadDoubleTapRightClick", "flickStickEnabled",
-                  "gyroFusionEnabled",
-                  # G: bools do gyro v2.
-                  "gyroInvertX", "gyroInvertY", "gyroActivateToggle"):
+    for field in ("swapOkCancel", "touchpadDoubleTapRightClick", "flickStickEnabled"):
         if field in raw and raw[field] is not None and not isinstance(raw[field], bool):
             errors.append(f"{field} deve ser bool")
 

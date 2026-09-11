@@ -9,9 +9,8 @@ import kotlin.math.hypot
 /**
  * Flick Stick do stick DIREITO (F1.2 do spec 2026-08-15-input-core-avancado) — padrão
  * JoyShockLibrary adaptado à saída de TAXA do pipeline existente: o processador é
- * PURO e emite `yawRadS` (rad/s), a MESMA unidade do CAMERA mode do gyro (U1/P1-2) —
- * o consumidor é o `applyCameraGyro` (deflexão = f(velocidade), parar de girar ⇒
- * deflexão volta a 0 automaticamente).
+ * PURO e emite `yawRadS` (rad/s), a MESMA unidade do CAMERA mode histórico —
+ * a deflexão é f(velocidade): parar de girar ⇒ deflexão volta a 0 automaticamente.
  *
  * Semântica:
  * - Deflexão radial < [FlickStickConfig.activationRadius] (0.85): nenhuma saída

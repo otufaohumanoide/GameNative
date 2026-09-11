@@ -3,8 +3,8 @@ package app.gamenative.gamepad.processing
 /**
  * Medição de latência de ponta a ponta do pipeline de input (F0 do spec
  * 2026-08-15-input-core-avancado): t0 na ingestão (`MainActivity.dispatchKeyEvent`/
- * `dispatchGenericMotionEvent` e `GamepadHub.onSensorSample`) → t1 no
- * `PhysicalControllerHandler` (onKeyEvent/onGenericMotionEvent/applyCameraGyro).
+ * `dispatchGenericMotionEvent`) → t1 no `PhysicalControllerHandler`
+ * (onKeyEvent/onGenericMotionEvent).
  *
  * Baseline para a decisão "migrar C++/Rust ou não" — critério de saída do F0:
  * p95 < 16 ms ⇒ migração arquivada por falta de evidência.
@@ -14,9 +14,9 @@ package app.gamenative.gamepad.processing
  *   no chamador) e os percentis são computáveis em JVM (testado).
  * - Hot path barato: `enabled` off ⇒ begin/end são um load + branch. On ⇒ um write/
  *   read de slot por evento, sem alocação em rajada.
- * - Correlação begin/end por SLOT pendente por fonte (KEY/MOTION/SENSOR): o dispatch
- *   é síncrono na main thread (EventDispatcher é síncrono; sensor entrega na main
- *   via Looper — P2-7), então cada begin é imediatamente seguido de UM end dentro da
+ * - Correlação begin/end por SLOT pendente por fonte (KEY/MOTION): o dispatch
+ *   é síncrono na main thread (EventDispatcher é síncrono), então cada begin é
+ *   imediatamente seguido de UM end dentro da
  *   mesma pilha de chamadas. Begin sem end (menu aberto consumiu o evento, rota sem
  *   handler) é SOBRESCRITO pelo begin seguinte — nunca contamina a amostra seguinte.
  * - Guarda de frescor (100 ms): end órfão (handler chamado por rota que não passou
@@ -28,8 +28,8 @@ package app.gamenative.gamepad.processing
  */
 object LatencyTracker {
 
-    /** Fontes medidas. KEY/MOTION = dispatch → handler; SENSOR = onSensorSample → applyCameraGyro. */
-    enum class Source { KEY, MOTION, SENSOR }
+    /** Fontes medidas. KEY/MOTION = dispatch → handler. */
+    enum class Source { KEY, MOTION }
 
     /** Estatística de uma fonte (ms). */
     data class Snapshot(

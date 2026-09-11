@@ -11,6 +11,8 @@ import android.graphics.Rect;
 
 import androidx.core.graphics.ColorUtils;
 
+import app.gamenative.PrefManager;
+
 import com.winlator.core.CubicBezierInterpolator;
 import com.winlator.math.Mathf;
 import com.winlator.widget.InputControlsView;

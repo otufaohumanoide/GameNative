@@ -146,10 +146,6 @@ class GamepadProfileStore(private val file: File) {
                 leftTriggerDeadzone = override.leftTriggerDeadzone ?: base.leftTriggerDeadzone,
                 rightTriggerDeadzone = override.rightTriggerDeadzone ?: base.rightTriggerDeadzone,
                 layers = base.layers + override.layers,
-                gyroMode = override.gyroMode ?: base.gyroMode,
-                gyroSensitivity = override.gyroSensitivity ?: base.gyroSensitivity,
-                gyroDeadzone = override.gyroDeadzone ?: base.gyroDeadzone,
-                gyroActivateButton = override.gyroActivateButton ?: base.gyroActivateButton,
                 layerTriggers = base.layerTriggers + override.layerTriggers,
                 rumbleOnActivate = override.rumbleOnActivate ?: base.rumbleOnActivate,
                 rumbleOnBack = override.rumbleOnBack ?: base.rumbleOnBack,
@@ -173,19 +169,6 @@ class GamepadProfileStore(private val file: File) {
                 flickStickEnabled = override.flickStickEnabled ?: base.flickStickEnabled,
                 flickStickActivationRadius = override.flickStickActivationRadius ?: base.flickStickActivationRadius,
                 flickStickSnapAngle = override.flickStickSnapAngle ?: base.flickStickSnapAngle,
-                gyroFusionEnabled = override.gyroFusionEnabled ?: base.gyroFusionEnabled,
-                gyroFusionKp = override.gyroFusionKp ?: base.gyroFusionKp,
-                gyroFusionKi = override.gyroFusionKi ?: base.gyroFusionKi,
-                // G (spec 2026-08-16-G-gyro-v2): mesmos null-preserva.
-                gyroSensitivityY = override.gyroSensitivityY ?: base.gyroSensitivityY,
-                gyroInvertX = override.gyroInvertX ?: base.gyroInvertX,
-                gyroInvertY = override.gyroInvertY ?: base.gyroInvertY,
-                gyroSmoothMinCutoff = override.gyroSmoothMinCutoff ?: base.gyroSmoothMinCutoff,
-                gyroSmoothBeta = override.gyroSmoothBeta ?: base.gyroSmoothBeta,
-                gyroStickMaxOutput = override.gyroStickMaxOutput ?: base.gyroStickMaxOutput,
-                gyroStickAntiDeadzone = override.gyroStickAntiDeadzone ?: base.gyroStickAntiDeadzone,
-                gyroActivateToggle = override.gyroActivateToggle ?: base.gyroActivateToggle,
-                gyroGripAngleDeg = override.gyroGripAngleDeg ?: base.gyroGripAngleDeg,
             )
         }
     }

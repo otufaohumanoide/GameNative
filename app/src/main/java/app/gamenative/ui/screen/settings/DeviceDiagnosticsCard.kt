@@ -32,7 +32,6 @@ import app.gamenative.PluviaApp
 import app.gamenative.R
 import app.gamenative.events.GamepadInputEvent
 import app.gamenative.gamepad.GamepadDevice
-import app.gamenative.gamepad.GyroPreview
 import app.gamenative.gamepad.TouchpadPreview
 import app.gamenative.gamepad.profiles.GamepadProfile
 import app.gamenative.gamepad.mapping.AutoconfigCheck
@@ -83,16 +82,15 @@ private fun mappingSourceLabel(source: app.gamenative.gamepad.MappingSource, has
 /**
  * Cartão de diagnóstico por device (spec 2026-08-16-C-device-card-input-viewer, §1.1):
  * substitui o ConnectedDeviceRow na composição do [SettingsGroupGamepad] — header
- * IDÊNTICO ao row antigo quando recolhido (nome/bateria/badges GYRO/TOUCHPAD,
+ * IDÊNTICO ao row antigo quando recolhido (nome/bateria/badge TOUCHPAD,
  * byte-identical). Expande (só com device ATIVO) em:
  * - Input viewer: [ControllerVisualView] com o faceStyle do device (reuso integral da
  *   fase B) e flash ao vivo por [GamepadInputEvent] filtrado por deviceId;
- * - Readouts mono ~10 Hz: gyro yaw/pitch rad/s (só com [GamepadDevice.hasGyro]) via
- *   `GamepadHub.gyroPreview`; touchpad x/y normalizados (só com
+ * - Readouts mono ~10 Hz: touchpad x/y normalizados (só com
  *   [GamepadDevice.hasTouchpad]) via `GamepadTouchpadForwarder.touchpadPreview`;
  * - Botões de teste: "Testar vibração" (fase A — `GamepadHaptics.rumbleDevice` +
- *   `rumbleTargetFor`), "Recentrar giroscópio" (só com gyro — `GamepadHub.recenterGyro`)
- *   e "Todos os botões" (só instruções + o viewer acescendo — sem lógica extra).
+ *   `rumbleTargetFor`) e "Todos os botões" (só instruções + o viewer acescendo —
+ *   sem lógica extra).
  *
  * Os hooks de preview ligam/desligam no [DisposableEffect] enquanto o card está
  * expandido/visível (limpeza garantida no dispose) — OFF ⇒ caminho byte-identical.
@@ -112,11 +110,9 @@ fun DeviceDiagnosticsCard(
     // SEMPRE desliga (limpeza mesmo em collapse/dispose inesperado).
     DisposableEffect(expanded) {
         if (expanded) {
-            if (device.hasGyro) PluviaApp.gamepadHub.gyroPreviewEnabled = true
             if (device.hasTouchpad) PluviaApp.gamepadTouchpad.previewEnabled = true
         }
         onDispose {
-            if (device.hasGyro) PluviaApp.gamepadHub.gyroPreviewEnabled = false
             if (device.hasTouchpad) PluviaApp.gamepadTouchpad.previewEnabled = false
         }
     }
@@ -186,9 +182,6 @@ fun DeviceDiagnosticsCard(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-            if (device.hasGyro) {
-                DiagCapabilityBadge(stringResource(R.string.gamepad_cap_gyro))
             }
             if (device.hasTouchpad) {
                 DiagCapabilityBadge(stringResource(R.string.gamepad_cap_touchpad))
@@ -285,31 +278,14 @@ fun DeviceDiagnosticsCard(
                 // num laço de 100 ms; o StateFlow guarda a última amostra GLOBAL e o
                 // card mantém o último valor DESTE device). Nada é capturado de
                 // composição antiga: o laço lê o StateFlow no momento da amostragem.
-                var gyroPreview by remember(device.deviceId) { mutableStateOf<GyroPreview?>(null) }
                 var touchpadPreview by remember(device.deviceId) { mutableStateOf<TouchpadPreview?>(null) }
                 LaunchedEffect(Unit) {
                     while (true) {
-                        PluviaApp.gamepadHub.gyroPreview.value?.let { preview ->
-                            if (preview.deviceId == device.deviceId) gyroPreview = preview
-                        }
                         PluviaApp.gamepadTouchpad.touchpadPreview.value?.let { preview ->
                             if (preview.deviceId == device.deviceId) touchpadPreview = preview
                         }
                         delay(100)
                     }
-                }
-                if (device.hasGyro) {
-                    Text(
-                        text = stringResource(
-                            R.string.gamepad_diag_gyro_readout,
-                            gyroPreview?.let { String.format(Locale.US, "%.2f", it.yawRadS) } ?: "—",
-                            gyroPreview?.let { String.format(Locale.US, "%.2f", it.pitchRadS) } ?: "—",
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
                 }
                 if (device.hasTouchpad) {
                     val base = stringResource(
@@ -352,22 +328,6 @@ fun DeviceDiagnosticsCard(
                         rumbleResult = if (vibrated) target else RumblePhoneCurve.RumbleTarget.NONE
                     },
                 )
-                if (device.hasGyro) {
-                    DiagButtonRow(
-                        title = stringResource(R.string.gamepad_diag_recenter_gyro_title),
-                        subtitle = stringResource(R.string.gamepad_diag_recenter_gyro_hint),
-                        onClick = { PluviaApp.gamepadHub.recenterGyro(device.deviceId) },
-                    )
-                    // G6 (spec 2026-08-16-G-gyro-v2): θ = atan2 do accel da última
-                    // amostra processada — salva o gyroGripAngleDeg no perfil do
-                    // DEVICE (a pegada é física, não do jogo). Sem amostra/accel
-                    // ainda = no-op.
-                    DiagButtonRow(
-                        title = stringResource(R.string.gamepad_diag_calibrate_grip_title),
-                        subtitle = stringResource(R.string.gamepad_diag_calibrate_grip_hint),
-                        onClick = { PluviaApp.gamepadHub.calibrateGrip(device.deviceId) },
-                    )
-                }
                 // K5 (spec 2026-08-16-K5, §1.3): "Salvar perfil deste controle" —
                 // grava o autoconfig (mapping BASE pré-quirk capturado no addDevice)
                 // e re-resolve ao vivo (tier USER). O clique NÃO re-deriva o mapping:

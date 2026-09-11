@@ -1,7 +1,6 @@
 package app.gamenative.gamepad.profiles
 
 import app.gamenative.gamepad.FaceStyle
-import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.layers.LayerTriggerSpec
 import app.gamenative.gamepad.processing.DeadzoneMode
 import app.gamenative.gamepad.radial.RadialMacroKey
@@ -36,14 +35,6 @@ data class GamepadProfile(
     val leftTriggerDeadzone: Float? = null,
     val rightTriggerDeadzone: Float? = null,
     val layers: Map<String, Map<String, String>> = emptyMap(),
-    // U1 (spec 2026-08-14-gamepad-u1-gyro): gyro por device. null = default
-    // (OFF / sensibilidade 1.0 / deadzone 0.05 rad/s / sempre ativo). Campos novos
-    // com a política V1 do store (downgrade de build preserva chaves desconhecidas).
-    val gyroMode: GyroMode? = null,
-    val gyroSensitivity: Float? = null,
-    val gyroDeadzone: Float? = null,
-    /** GamepadButton.name que ativa o gyro (hold); null = sempre ativo. */
-    val gyroActivateButton: String? = null,
     // U3 (spec 2026-08-14-gamepad-u3-u4-layers-remap-jogo): triggers de camada.
     val layerTriggers: Map<String, LayerTriggerSpec> = emptyMap(),
     // U5 (spec 2026-08-14-gamepad-u5-rumble): haptics do menu por device.
@@ -76,28 +67,6 @@ data class GamepadProfile(
     val flickStickEnabled: Boolean? = null,
     val flickStickActivationRadius: Float? = null,
     val flickStickSnapAngle: Float? = null,
-    // F1.3: fusão Mahony (null = OFF — caminho atual byte-identical).
-    val gyroFusionEnabled: Boolean? = null,
-    val gyroFusionKp: Float? = null,
-    val gyroFusionKi: Float? = null,
-    // ── G (spec 2026-08-16-G-gyro-v2) — gyro v2 ──
-    // G3: sensibilidade por eixo (null = usa gyroSensitivity) e inversão
-    // (null = false). MOUSE aplica no hub; CAMERA estende o contrato do sink.
-    val gyroSensitivityY: Float? = null,
-    val gyroInvertX: Boolean? = null,
-    val gyroInvertY: Boolean? = null,
-    // G2: smoothing One Euro opt-in (MOUSE). AMBOS null = OFF (byte-identical);
-    // um só valor usa o default DS4Windows no outro (minCutoff 1.0 / beta 0.7).
-    val gyroSmoothMinCutoff: Float? = null,
-    val gyroSmoothBeta: Float? = null,
-    // G4: shaping do CAMERA — teto da deflexão (1.0 = completo) e floor acima da
-    // deadzone (0 = sem salto). Defaults = linear atual (byte-identical).
-    val gyroStickMaxOutput: Float? = null,
-    val gyroStickAntiDeadzone: Float? = null,
-    // G5: ativação por TOGGLE (null = hold atual — borda de descida flipa latch).
-    val gyroActivateToggle: Boolean? = null,
-    // G6: ângulo de pegada em graus (null = 0 = eixos atuais).
-    val gyroGripAngleDeg: Float? = null,
     // ── K2 (spec 2026-08-16-K2, §1.4) — modo mouse universal por stick ──
     // null = OFF (caminho atual byte-identical). O chord do toggle é FIXO em
     // START (configurar o botão é follow-up declarado); o tempo e a velocidade
@@ -130,10 +99,6 @@ data class GamepadProfile(
             leftTriggerDeadzone == null &&
             rightTriggerDeadzone == null &&
             layers.isEmpty() &&
-            gyroMode == null &&
-            gyroSensitivity == null &&
-            gyroDeadzone == null &&
-            gyroActivateButton == null &&
             layerTriggers.isEmpty() &&
             rumbleOnActivate == null &&
             rumbleOnBack == null &&
@@ -153,19 +118,6 @@ data class GamepadProfile(
             flickStickEnabled == null &&
             flickStickActivationRadius == null &&
             flickStickSnapAngle == null &&
-            gyroFusionEnabled == null &&
-            gyroFusionKp == null &&
-            gyroFusionKi == null &&
-            // G (spec 2026-08-16-G-gyro-v2): mesmos null-defaults.
-            gyroSensitivityY == null &&
-            gyroInvertX == null &&
-            gyroInvertY == null &&
-            gyroSmoothMinCutoff == null &&
-            gyroSmoothBeta == null &&
-            gyroStickMaxOutput == null &&
-            gyroStickAntiDeadzone == null &&
-            gyroActivateToggle == null &&
-            gyroGripAngleDeg == null &&
             // K2 (spec 2026-08-16-K2, §1.4): mesmos null-defaults.
             mouseModeEnabled == null &&
             mouseModeToggleMs == null &&

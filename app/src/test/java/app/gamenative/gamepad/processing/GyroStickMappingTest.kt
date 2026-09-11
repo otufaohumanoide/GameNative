@@ -62,7 +62,7 @@ class GyroStickMappingTest {
     @Test
     fun `antiDeadzone produces a minimum jump just above the deadzone`() {
         // Menor velocidade acima da deadzone já pula para o floor (semântica
-        // SixMouseStick — a deadzone em si foi aplicada antes pelo GyroProcessor).
+        // SixMouseStick — a deadzone em si foi aplicada antes).
         assertEquals(0.2f, GyroStickMapping.deflection(0.001f, 1f, antiDeadzone = 0.2f), 0.001f)
         assertEquals(-0.2f, GyroStickMapping.deflection(-0.001f, 1f, antiDeadzone = 0.2f), 0.001f)
     }

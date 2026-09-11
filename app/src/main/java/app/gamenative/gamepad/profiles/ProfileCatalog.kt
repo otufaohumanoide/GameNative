@@ -1,7 +1,6 @@
 package app.gamenative.gamepad.profiles
 
 import app.gamenative.gamepad.FaceStyle
-import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.remap.GamepadBindingCodec
 import app.gamenative.gamepad.remap.mod
 import kotlinx.serialization.Serializable
@@ -36,12 +35,12 @@ data class CatalogEntry(
 
 /**
  * Categorias que um perfil TOCA (diff-resumo do preview, spec E §1.3) — ordem fixa
- * de apresentação. O spec lista bindings/gyro/camadas/swipes; STICK/RUMBLE/TOUCHPAD
+ * de apresentação. O spec lista bindings/camadas/swipes; STICK/RUMBLE/TOUCHPAD
  * completam a cobertura dos campos reais do GamepadProfile (decisão registrada no
  * impl doc — um perfil só de rumble não pode renderizar resumo vazio).
  */
 // J (spec 2026-08-16-J-expressions-dolphin, §2.4): EXPR = bindings de expressão.
-enum class ProfileSummaryCategory { BINDINGS, EXPR, GYRO, LAYERS, SWIPES, STICK, RUMBLE, TOUCHPAD }
+enum class ProfileSummaryCategory { BINDINGS, EXPR, LAYERS, SWIPES, STICK, RUMBLE, TOUCHPAD }
 
 /** Resultado do parse: entries válidas + contagem de descartes (nunca exceção). */
 data class CatalogResult(
@@ -118,7 +117,6 @@ object ProfileCatalog {
     /**
      * Resumo do que o perfil toca (ordem fixa de [ProfileSummaryCategory]):
      * - BINDINGS: camadas com bindings OU swap OK/Cancel;
-     * - GYRO: QUALQUER campo de gyro (inclui desligar — toca o gyro);
      * - LAYERS: triggers de camada;
      * - SWIPES: swipes do touchpad (D);
      * - STICK: deadzones/modos/curvas/LUTs/flick (F1);
@@ -136,19 +134,6 @@ object ProfileCatalog {
         }
         if (hasExpressions) {
             categories += ProfileSummaryCategory.EXPR
-        }
-        if (profile.gyroMode != null || profile.gyroSensitivity != null ||
-            profile.gyroDeadzone != null || profile.gyroActivateButton != null ||
-            profile.gyroFusionEnabled != null || profile.gyroFusionKp != null ||
-            profile.gyroFusionKi != null ||
-            // G (spec 2026-08-16-G-gyro-v2): campos novos do gyro v2 idem.
-            profile.gyroSensitivityY != null || profile.gyroInvertX != null ||
-            profile.gyroInvertY != null || profile.gyroSmoothMinCutoff != null ||
-            profile.gyroSmoothBeta != null || profile.gyroStickMaxOutput != null ||
-            profile.gyroStickAntiDeadzone != null || profile.gyroActivateToggle != null ||
-            profile.gyroGripAngleDeg != null
-        ) {
-            categories += ProfileSummaryCategory.GYRO
         }
         if (profile.layerTriggers.isNotEmpty()) {
             categories += ProfileSummaryCategory.LAYERS

@@ -3,7 +3,6 @@ package app.gamenative.gamepad.profiles
 import app.gamenative.gamepad.DeviceClass
 import app.gamenative.gamepad.FaceStyle
 import app.gamenative.gamepad.GamepadDevice
-import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.layers.LayerTriggerMode
 import app.gamenative.gamepad.layers.LayerTriggerSpec
 import app.gamenative.gamepad.radial.RadialMacroKey
@@ -231,29 +230,6 @@ class GamepadProfileStoreTest {
     // ── U1/U3/U5 — campos novos (V1 no lugar): roundtrip, default e merge ──
 
     @Test
-    fun `U1 - gyro fields roundtrip and merge`() {
-        val s = store()
-        s.save(
-            "054c09cc",
-            GamepadProfile(
-                gyroMode = GyroMode.MOUSE,
-                gyroSensitivity = 2f,
-                gyroDeadzone = 0.1f,
-                gyroActivateButton = "FACE_TOP",
-            ),
-        )
-        val loaded = s.load("054c09cc")!!
-        assertEquals(GyroMode.MOUSE, loaded.gyroMode)
-        assertEquals(2f, loaded.gyroSensitivity!!, 0.001f)
-        assertEquals(0.1f, loaded.gyroDeadzone!!, 0.001f)
-        assertEquals("FACE_TOP", loaded.gyroActivateButton)
-        // Merge: game vence campo a campo; null preserva device.
-        val merged = GamepadProfileStore.merged(loaded, GamepadProfile(gyroMode = GyroMode.CAMERA))
-        assertEquals(GyroMode.CAMERA, merged.gyroMode)
-        assertEquals(2f, merged.gyroSensitivity!!, 0.001f)
-    }
-
-    @Test
     fun `U3 - merged layers is granular - game adds layers without erasing device ones`() {
         val device = profile(layers = mapOf("DEFAULT" to mapOf("FACE_BOTTOM" to "key:96")))
         val game = profile(layers = mapOf("SPRINT" to mapOf("FACE_BOTTOM" to "key:97")))
@@ -271,8 +247,6 @@ class GamepadProfileStoreTest {
     @Test
     fun `U1 - default detection includes new fields`() {
         assertTrue(GamepadProfile().isDefault())
-        assertFalse(GamepadProfile(gyroMode = GyroMode.MOUSE).isDefault())
-        assertFalse(GamepadProfile(gyroSensitivity = 2f).isDefault())
         assertFalse(GamepadProfile(rumbleOnBack = false).isDefault())
         assertFalse(
             GamepadProfile(
@@ -347,56 +321,4 @@ class GamepadProfileStoreTest {
         assertEquals(0.25f, otherGame.leftStickDeadzone!!, 0.001f) // sem entrada → device
     }
 
-    // ── G (spec 2026-08-16-G-gyro-v2): campos novos do gyro v2 ──
-
-    @Test
-    fun `G - gyro v2 fields roundtrip`() {
-        val s = store()
-        val full = GamepadProfile(
-            gyroSensitivityY = 0.5f,
-            gyroInvertX = true,
-            gyroInvertY = false,
-            gyroSmoothMinCutoff = 1.2f,
-            gyroSmoothBeta = 0.9f,
-            gyroStickMaxOutput = 0.7f,
-            gyroStickAntiDeadzone = 0.1f,
-            gyroActivateToggle = true,
-            gyroGripAngleDeg = -45f,
-        )
-        s.save("054c09cc", full)
-        assertEquals(full, s.load("054c09cc"))
-    }
-
-    @Test
-    fun `G - merged game wins per field and nulls preserve the device`() {
-        val device = GamepadProfile(
-            gyroSensitivityY = 0.5f,
-            gyroGripAngleDeg = -30f,
-            gyroInvertX = true,
-            gyroActivateToggle = true,
-        )
-        val game = GamepadProfile(gyroSensitivityY = 0.8f)
-        val merged = GamepadProfileStore.merged(device, game)
-        assertEquals(0.8f, merged.gyroSensitivityY!!, 0.001f) // game vence
-        assertEquals(-30f, merged.gyroGripAngleDeg!!, 0.001f) // null preserva device
-        assertEquals(true, merged.gyroInvertX)
-        assertEquals(true, merged.gyroActivateToggle)
-        assertNull(merged.gyroSmoothMinCutoff)
-        assertNull(merged.gyroSmoothBeta)
-        assertNull(merged.gyroStickMaxOutput)
-        assertNull(merged.gyroStickAntiDeadzone)
-    }
-
-    @Test
-    fun `G - default detection includes the new fields`() {
-        assertTrue(GamepadProfile().isDefault())
-        assertFalse(GamepadProfile(gyroSensitivityY = 0.5f).isDefault())
-        assertFalse(GamepadProfile(gyroInvertX = true).isDefault())
-        assertFalse(GamepadProfile(gyroSmoothMinCutoff = 1.2f).isDefault())
-        assertFalse(GamepadProfile(gyroSmoothBeta = 0.9f).isDefault())
-        assertFalse(GamepadProfile(gyroStickMaxOutput = 0.7f).isDefault())
-        assertFalse(GamepadProfile(gyroStickAntiDeadzone = 0.1f).isDefault())
-        assertFalse(GamepadProfile(gyroActivateToggle = true).isDefault())
-        assertFalse(GamepadProfile(gyroGripAngleDeg = -45f).isDefault())
-    }
 }

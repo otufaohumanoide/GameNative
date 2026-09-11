@@ -15,7 +15,6 @@ import app.gamenative.events.EventDispatcher
 import app.gamenative.mods.NexusAuthManager
 import app.gamenative.powercontrol.PowerManager
 import app.gamenative.gamepad.GamepadHub
-import app.gamenative.gamepad.GamepadSensorSource
 import app.gamenative.gamepad.GamepadTouchpadForwarder
 import app.gamenative.gamepad.XServerTouchpadMouseSink
 import app.gamenative.ui.component.GamepadHaptics
@@ -114,13 +113,6 @@ class PluviaApp : SplitCompatApplication() {
         // processo; sem isso o fallback degrada para no-op silencioso (V11).
         GamepadHaptics.appContext = applicationContext
 
-        // U1 (spec 2026-08-14-gamepad-u1-gyro): fonte de sensores por device (API 31+).
-        // Começa SUSPENSA — só registra quando o XServerScreen (container rodando)
-        // manda setSuspended(false); unregister em pause/exit (V3 — bateria).
-        gamepadSensorSource = GamepadSensorSource(gamepadHub).also {
-            gamepadHub.sensorSource = it
-            it.start()
-        }
 
         // Initialize GOGConstants
         app.gamenative.service.gog.GOGConstants.init(this)
@@ -252,13 +244,10 @@ class PluviaApp : SplitCompatApplication() {
         @Volatile
         lateinit var gamepadTouchpad: GamepadTouchpadForwarder
 
-        /** Sink de mouse no XServer compartilhado (touchpad U2 + gyro MOUSE U1). */
+        /** Sink de mouse no XServer compartilhado (touchpad U2). */
         @Volatile
         lateinit var xServerMouseSink: XServerTouchpadMouseSink
 
-        /** U1 — fonte de sensores (gyro) com lifecycle de container/pause (V3). */
-        @Volatile
-        lateinit var gamepadSensorSource: GamepadSensorSource
 
         internal var onDestinationChangedListener: NavChangedListener? = null
 

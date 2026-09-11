@@ -61,7 +61,6 @@ import app.gamenative.R
 import app.gamenative.events.AndroidEvent
 import app.gamenative.events.GamepadInputEvent
 import app.gamenative.gamepad.FaceStyle
-import app.gamenative.gamepad.GyroMode
 import app.gamenative.gamepad.layers.LayerTriggerMode
 import app.gamenative.gamepad.layers.LayerTriggerSpec
 import app.gamenative.gamepad.GamepadButton
@@ -128,12 +127,6 @@ fun GamepadRemapDialog(
     // J1 (spec 2026-08-16-J-expressions-dolphin, §2.3): editor de expressão por
     // binding (janela própria por cima deste dialog — um dono do input).
     var exprEditorFor by remember { mutableStateOf<GamepadButton?>(null) }
-    // U1 (spec 2026-08-14-gamepad-u1-gyro): seção Gyro per-device (só com hasGyro).
-    var gyroMode by remember { mutableStateOf(profile.gyroMode ?: GyroMode.OFF) }
-    var gyroSensitivity by remember { mutableStateOf(profile.gyroSensitivity ?: 1f) }
-    var gyroDeadzone by remember { mutableStateOf(profile.gyroDeadzone ?: 0.05f) }
-    var gyroActivateButton by remember { mutableStateOf(profile.gyroActivateButton) }
-    var captureGyroActivate by remember { mutableStateOf(false) }
     // U3 (spec 2026-08-14-gamepad-u3-u4-layers-remap-jogo, §1.4): camada em edição,
     // triggers de camada (capture do botão + modo) e nova camada.
     var selectedLayer by remember { mutableStateOf(ActionLayer.DEFAULT.name) }
@@ -177,20 +170,6 @@ fun GamepadRemapDialog(
         mutableStateOf(profile.flickStickActivationRadius ?: DEFAULT_FLICK_RADIUS)
     }
     var flickSnap by remember { mutableStateOf(profile.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP) }
-    var gyroFusionEnabled by remember { mutableStateOf(profile.gyroFusionEnabled ?: false) }
-    // ── G (spec 2026-08-16-G-gyro-v2) — gyro v2 ──
-    var gyroSensitivityY by remember { mutableStateOf(profile.gyroSensitivityY ?: 1f) }
-    var gyroInvertX by remember { mutableStateOf(profile.gyroInvertX ?: false) }
-    var gyroInvertY by remember { mutableStateOf(profile.gyroInvertY ?: false) }
-    var gyroSmoothEnabled by remember {
-        mutableStateOf(profile.gyroSmoothMinCutoff != null || profile.gyroSmoothBeta != null)
-    }
-    var gyroSmoothMinCutoff by remember { mutableStateOf(profile.gyroSmoothMinCutoff ?: 1.0f) }
-    var gyroSmoothBeta by remember { mutableStateOf(profile.gyroSmoothBeta ?: 0.7f) }
-    var gyroStickMaxOutput by remember { mutableStateOf(profile.gyroStickMaxOutput ?: 1f) }
-    var gyroStickAntiDeadzone by remember { mutableStateOf(profile.gyroStickAntiDeadzone ?: 0f) }
-    var gyroActivateToggle by remember { mutableStateOf(profile.gyroActivateToggle ?: false) }
-    var gyroGripAngleDeg by remember { mutableStateOf(profile.gyroGripAngleDeg ?: 0f) }
     // K2 (spec 2026-08-16-K2, §1.4): modo mouse por stick — switch + velocidade
     // da rampa (o tempo do toggle fica no default 750 ms; configurar é follow-up).
     var mouseModeEnabled by remember { mutableStateOf(profile.mouseModeEnabled ?: false) }
@@ -236,10 +215,6 @@ fun GamepadRemapDialog(
     fun editorProfile(): GamepadProfile = profile.copy(
         layers = layers,
         layerTriggers = layerTriggers,
-        gyroMode = if (gyroMode == GyroMode.OFF) null else gyroMode,
-        gyroSensitivity = if (gyroSensitivity == 1f) null else gyroSensitivity,
-        gyroDeadzone = if (gyroDeadzone == 0.05f) null else gyroDeadzone,
-        gyroActivateButton = gyroActivateButton,
         touchpadDoubleTapRightClick = if (touchpadDoubleTapRightClick) true else null,
         // D (spec 2026-08-16-D-touchpad-swipes-macros): vazio = OFF → null
         // (política do store: null = sem preferência).
@@ -261,19 +236,6 @@ fun GamepadRemapDialog(
         flickStickEnabled = if (flickStickEnabled) true else null,
         flickStickActivationRadius = if (flickStickEnabled && flickRadius != DEFAULT_FLICK_RADIUS) flickRadius else null,
         flickStickSnapAngle = if (flickStickEnabled && flickSnap != DEFAULT_FLICK_SNAP) flickSnap else null,
-        gyroFusionEnabled = if (gyroFusionEnabled) true else null,
-        gyroFusionKp = null,
-        gyroFusionKi = null,
-        // G (spec 2026-08-16-G-gyro-v2): defaults colapsam em null (política do store).
-        gyroSensitivityY = if (gyroSensitivityY == 1f) null else gyroSensitivityY,
-        gyroInvertX = if (gyroInvertX) true else null,
-        gyroInvertY = if (gyroInvertY) true else null,
-        gyroSmoothMinCutoff = if (gyroSmoothEnabled) gyroSmoothMinCutoff else null,
-        gyroSmoothBeta = if (gyroSmoothEnabled) gyroSmoothBeta else null,
-        gyroStickMaxOutput = if (gyroStickMaxOutput == 1f) null else gyroStickMaxOutput,
-        gyroStickAntiDeadzone = if (gyroStickAntiDeadzone == 0f) null else gyroStickAntiDeadzone,
-        gyroActivateToggle = if (gyroActivateToggle) true else null,
-        gyroGripAngleDeg = if (gyroGripAngleDeg == 0f) null else gyroGripAngleDeg,
         // K2 (spec 2026-08-16-K2, §1.4): null-defaults — OFF/default colapsam em
         // null (política do store; o switch desligado remove a preferência).
         mouseModeEnabled = if (mouseModeEnabled) true else null,
@@ -286,10 +248,6 @@ fun GamepadRemapDialog(
     fun applyImportedProfile(imported: GamepadProfile) {
         layers = imported.layers
         layerTriggers = imported.layerTriggers
-        gyroMode = imported.gyroMode ?: GyroMode.OFF
-        gyroSensitivity = imported.gyroSensitivity ?: 1f
-        gyroDeadzone = imported.gyroDeadzone ?: 0.05f
-        gyroActivateButton = imported.gyroActivateButton
         touchpadDoubleTapRightClick = imported.touchpadDoubleTapRightClick ?: false
         swipeBindings = imported.touchpadSwipes ?: emptyMap()
         leftStickMode = imported.leftStickDeadzoneMode ?: DeadzoneMode.RADIAL
@@ -307,21 +265,9 @@ fun GamepadRemapDialog(
         flickStickEnabled = imported.flickStickEnabled ?: false
         flickRadius = imported.flickStickActivationRadius ?: DEFAULT_FLICK_RADIUS
         flickSnap = imported.flickStickSnapAngle ?: DEFAULT_FLICK_SNAP
-        gyroFusionEnabled = imported.gyroFusionEnabled ?: false
-        // G (spec 2026-08-16-G-gyro-v2): mesmos defaults do estado do editor.
-        gyroSensitivityY = imported.gyroSensitivityY ?: 1f
-        gyroInvertX = imported.gyroInvertX ?: false
-        gyroInvertY = imported.gyroInvertY ?: false
-        gyroSmoothEnabled = imported.gyroSmoothMinCutoff != null || imported.gyroSmoothBeta != null
-        gyroSmoothMinCutoff = imported.gyroSmoothMinCutoff ?: 1.0f
-        gyroSmoothBeta = imported.gyroSmoothBeta ?: 0.7f
-        gyroStickMaxOutput = imported.gyroStickMaxOutput ?: 1f
-        gyroStickAntiDeadzone = imported.gyroStickAntiDeadzone ?: 0f
-        gyroActivateToggle = imported.gyroActivateToggle ?: false
         mouseModeEnabled = imported.mouseModeEnabled ?: false
         mouseModeBasePps = imported.mouseModeBasePps ?: 0f
         mouseModeGainPps = imported.mouseModeGainPps ?: 80f
-        gyroGripAngleDeg = imported.gyroGripAngleDeg ?: 0f
     }
 
     // ── F1.1/F3.3: SAF (CreateDocument/OpenDocument) para LUT e perfil por arquivo ──
@@ -544,11 +490,11 @@ fun GamepadRemapDialog(
     }
 
     // Captura via eventos do BUS cru enquanto captureTarget != null OU
-    // captureGyroActivate (o escopo de foco fica desabilitado: TODO o input do
+    // captureLayerTrigger (o escopo de foco fica desabilitado: TODO o input do
     // controle vira binding).
-    DisposableEffect(captureTarget, captureGyroActivate, captureLayerTrigger, sequenceDraft) {
+    DisposableEffect(captureTarget, captureLayerTrigger, sequenceDraft) {
         val target = captureTarget
-        if (target == null && !captureGyroActivate && !captureLayerTrigger) {
+        if (target == null && !captureLayerTrigger) {
             return@DisposableEffect onDispose {}
         }
 
@@ -559,7 +505,6 @@ fun GamepadRemapDialog(
                 when (ev.keyCode) {
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
                         captureTarget = null
-                        captureGyroActivate = false
                         captureLayerTrigger = false
                         sequenceDraft = emptyList()
                         status = context.getString(R.string.gamepad_remap_capture_cancelled)
@@ -646,19 +591,6 @@ fun GamepadRemapDialog(
                             } else {
                                 status = context.getString(R.string.gamepad_gyro_activate_unmapped)
                             }
-                        } else if (captureGyroActivate) {
-                            // U1: o botão de ativação é um GamepadButton LÓGICO —
-                            // converte o keycode cru via mapping reverso.
-                            val logical = mapping.buttons.entries
-                                .firstOrNull { it.value == RawBinding.Key(ev.keyCode) }
-                                ?.key
-                            gyroActivateButton = logical?.name
-                            if (logical == null) {
-                                status = context.getString(R.string.gamepad_gyro_activate_unmapped)
-                            } else {
-                                status = null
-                            }
-                            captureGyroActivate = false
                         } else if (target != null) {
                             commitBinding(target, RawBinding.Key(ev.keyCode))
                             captureTarget = null
@@ -696,7 +628,7 @@ fun GamepadRemapDialog(
     // ── B §1.3: captura do mapa visual — padrão do RadialMenuEditorDialog (bus CRU do
     // deviceId); B cruzeiro / hardware back cancela. Mutuamente exclusiva com as
     // capturas existentes (os inícios de captura antigos zeram visualCapture, e o tap
-    // no hotspot zera captureTarget/gyro/trigger).
+    // no hotspot zera captureTarget/trigger).
     DisposableEffect(visualCapture) {
         val target = visualCapture
         if (target == null) return@DisposableEffect onDispose {}
@@ -823,7 +755,7 @@ fun GamepadRemapDialog(
         val initialFocus = remember { FocusRequester() }
         // Enquanto captura, o escopo de foco fica OFF: todo input do controle é captura.
         GamepadFocusScope(
-            enabled = captureTarget == null && !captureGyroActivate && !captureLayerTrigger &&
+            enabled = captureTarget == null && !captureLayerTrigger &&
                 visualCapture == null && captureSwipe == null && !catalogOpen && exprEditorFor == null,
             backAction = onDismiss,
             initialFocusRequester = initialFocus,
@@ -832,7 +764,7 @@ fun GamepadRemapDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(
-                        if (captureTarget == null && !captureGyroActivate && !captureLayerTrigger &&
+                        if (captureTarget == null && !captureLayerTrigger &&
                             visualCapture == null && captureSwipe == null && !catalogOpen && exprEditorFor == null
                         ) {
                             Modifier.gamepadBackHandler(onDismiss)
@@ -930,7 +862,6 @@ fun GamepadRemapDialog(
                                     sequenceDraft = emptyList()
                                 }
                                 captureTarget = null
-                                captureGyroActivate = false
                                 visualCapture = null
                                 captureSwipe = null
                                 status = null
@@ -1013,7 +944,6 @@ fun GamepadRemapDialog(
                                 visualCapture = if (visualCapture == button) null else button
                                 if (visualCapture != null) {
                                     captureTarget = null
-                                    captureGyroActivate = false
                                     captureLayerTrigger = false
                                     captureSwipe = null
                                 }
@@ -1246,7 +1176,6 @@ fun GamepadRemapDialog(
                                         captureSwipe = if (captureSwipe == dir) null else dir
                                         if (captureSwipe != null) {
                                             captureTarget = null
-                                            captureGyroActivate = false
                                             captureLayerTrigger = false
                                             visualCapture = null
                                         }
@@ -1266,214 +1195,6 @@ fun GamepadRemapDialog(
                             }
                         }
                     }
-                    // ── U1: Gyro (spec 2026-08-14-gamepad-u1-gyro, §1.5) — só com
-                    // capability (V11: a seção SOME quando o device não expõe sensor —
-                    // nunca mostra erro). Modo, sensibilidade, deadzone e botão de
-                    // ativação (hold; null = sempre ativo, recenter na borda).
-                    if (device.hasGyro) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Text(
-                            text = stringResource(R.string.gamepad_gyro_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.padding(bottom = 4.dp),
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            GyroModeRow(GyroMode.OFF, gyroMode == GyroMode.OFF, Modifier.weight(1f)) { gyroMode = GyroMode.OFF }
-                            GyroModeRow(GyroMode.MOUSE, gyroMode == GyroMode.MOUSE, Modifier.weight(1f)) { gyroMode = GyroMode.MOUSE }
-                            GyroModeRow(GyroMode.CAMERA, gyroMode == GyroMode.CAMERA, Modifier.weight(1f)) { gyroMode = GyroMode.CAMERA }
-                        }
-                        GyroSliderRow(
-                            title = stringResource(R.string.gamepad_gyro_sensitivity_title),
-                            value = gyroSensitivity,
-                            range = 0.1f..3.0f,
-                            onValueChange = { gyroSensitivity = it },
-                        )
-                        // G3 (spec 2026-08-16-G-gyro-v2): sensibilidade vertical
-                        // (null = usa a de cima — 1.0 aqui = igual à horizontal).
-                        GyroSliderRow(
-                            title = stringResource(R.string.gamepad_gyro_sensitivity_y_title),
-                            value = gyroSensitivityY,
-                            range = 0.1f..3.0f,
-                            onValueChange = { gyroSensitivityY = it },
-                        )
-                        // P2-4 (spec 2026-08-14-gamepad-upgrades-pendencias): a UI
-                        // exibe a deadzone em °/s (unidade dos usuários — Dolphin/
-                        // JoyShock/Steam Input); a persistência continua rad/s (sem
-                        // migração). Slider 0–30°/s; default 0.05 rad ≈ 2.9°/s.
-                        GyroSliderRow(
-                            title = stringResource(R.string.gamepad_gyro_deadzone_title),
-                            value = gyroDeadzone,
-                            range = 0.0f..GYRO_DEADZONE_MAX_RAD_S,
-                            format = { rad ->
-                                String.format(java.util.Locale.US, "%.1f°/s", rad * RAD_TO_DEG)
-                            },
-                            onValueChange = { gyroDeadzone = it },
-                        )
-                        // Botão de ativação (capture mode — mesmo padrão do remap).
-                        val activateInteraction = remember { MutableInteractionSource() }
-                        val activateLabel = gyroActivateButton?.let { name ->
-                            val logical = runCatching { GamepadButton.valueOf(name) }.getOrNull()
-                            if (logical != null) {
-                                stringResource(GamepadGlyphProvider.labelRes(logical, device.faceStyle))
-                            } else {
-                                name
-                            }
-                        } ?: stringResource(R.string.gamepad_gyro_activate_always)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .gamepadSelectable(
-                                    selected = captureGyroActivate,
-                                    onClick = {
-                                        captureGyroActivate = !captureGyroActivate
-                                        captureTarget = null
-                                        visualCapture = null
-                                        captureSwipe = null
-                                        status = null
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    interactionSource = activateInteraction,
-                                )
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = stringResource(R.string.gamepad_gyro_activate_title),
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                text = if (captureGyroActivate) {
-                                    stringResource(R.string.gamepad_remap_press_to_bind)
-                                } else {
-                                    activateLabel
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        // G5 (spec 2026-08-16-G-gyro-v2): ativação por TOGGLE — a
-                        // borda de descida do botão flipa o latch (sem botão de
-                        // ativação o gyro é sempre ativo; o switch não aparece).
-                        if (gyroActivateButton != null) {
-                            GyroToggleRow(
-                                title = stringResource(R.string.gamepad_gyro_activate_toggle_title),
-                                subtitle = stringResource(R.string.gamepad_gyro_activate_toggle_subtitle),
-                                checked = gyroActivateToggle,
-                                onCheckedChange = { gyroActivateToggle = it },
-                            )
-                        }
-                        // G3 (spec 2026-08-16-G-gyro-v2): inversão por eixo (null = false).
-                        GyroToggleRow(
-                            title = stringResource(R.string.gamepad_gyro_invert_x_title),
-                            checked = gyroInvertX,
-                            onCheckedChange = { gyroInvertX = it },
-                        )
-                        GyroToggleRow(
-                            title = stringResource(R.string.gamepad_gyro_invert_y_title),
-                            checked = gyroInvertY,
-                            onCheckedChange = { gyroInvertY = it },
-                        )
-                        // G2 (spec 2026-08-16-G-gyro-v2): smoothing One Euro opt-in
-                        // (MOUSE) — off = ambos null = caminho byte-identical.
-                        GyroToggleRow(
-                            title = stringResource(R.string.gamepad_gyro_smooth_title),
-                            subtitle = stringResource(R.string.gamepad_gyro_smooth_subtitle),
-                            checked = gyroSmoothEnabled,
-                            onCheckedChange = { gyroSmoothEnabled = it },
-                        )
-                        if (gyroSmoothEnabled) {
-                            GyroSliderRow(
-                                title = stringResource(R.string.gamepad_gyro_smooth_min_cutoff_title),
-                                value = gyroSmoothMinCutoff,
-                                range = 0.1f..3.0f,
-                                format = { String.format(java.util.Locale.US, "%.1f Hz", it) },
-                                onValueChange = { gyroSmoothMinCutoff = it },
-                            )
-                            GyroSliderRow(
-                                title = stringResource(R.string.gamepad_gyro_smooth_beta_title),
-                                value = gyroSmoothBeta,
-                                range = 0.0f..2.0f,
-                                format = { String.format(java.util.Locale.US, "%.1f", it) },
-                                onValueChange = { gyroSmoothBeta = it },
-                            )
-                        }
-                        // G4 (spec 2026-08-16-G-gyro-v2): shaping do CAMERA — teto da
-                        // deflexão e floor acima da deadzone (só relevantes nesse modo).
-                        if (gyroMode == GyroMode.CAMERA) {
-                            GyroSliderRow(
-                                title = stringResource(R.string.gamepad_gyro_stick_max_output_title),
-                                value = gyroStickMaxOutput,
-                                range = 0.1f..1.0f,
-                                format = { String.format(java.util.Locale.US, "%.0f%%", it * 100f) },
-                                onValueChange = { gyroStickMaxOutput = it },
-                            )
-                            GyroSliderRow(
-                                title = stringResource(R.string.gamepad_gyro_stick_anti_deadzone_title),
-                                value = gyroStickAntiDeadzone,
-                                // Correção G-v2-revisão: teto = maxOutput (curva
-                                // sempre monotônica — anti > maxOutput invertia a
-                                // resposta: mais rotação = menos deflexão).
-                                range = 0.0f..gyroStickMaxOutput,
-                                format = { String.format(java.util.Locale.US, "%.0f%%", it * 100f) },
-                                onValueChange = { gyroStickAntiDeadzone = it },
-                            )
-                        }
-                        // G6 (spec 2026-08-16-G-gyro-v2): grip angle — rotação do par
-                        // (X, Z) no eixo longitudinal; calibrável também pelo botão do
-                        // card de diagnóstico (Settings → Gamepad).
-                        GyroSliderRow(
-                            title = stringResource(R.string.gamepad_gyro_grip_title),
-                            value = gyroGripAngleDeg,
-                            range = -90f..90f,
-                            format = { String.format(java.util.Locale.US, "%+.0f°", it) },
-                            onValueChange = { gyroGripAngleDeg = it },
-                        )
-                        Text(
-                            text = stringResource(R.string.gamepad_gyro_grip_subtitle),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                        )
-                        // F1.3 (spec 2026-08-15-input-core-avancado): fusão Mahony
-                        // opt-in — corrige pitch/roll pela gravidade; yaw permanece no
-                        // recenter + calibração contínua. Desligado = byte-identical.
-                        val fusionInteraction = remember { MutableInteractionSource() }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .gamepadSelectable(
-                                    selected = gyroFusionEnabled,
-                                    onClick = { gyroFusionEnabled = !gyroFusionEnabled },
-                                    shape = RoundedCornerShape(8.dp),
-                                    interactionSource = fusionInteraction,
-                                )
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = stringResource(R.string.gamepad_gyro_fusion_title),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Text(
-                                    text = stringResource(R.string.gamepad_gyro_fusion_subtitle),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(
-                                checked = gyroFusionEnabled,
-                                onCheckedChange = { gyroFusionEnabled = it },
-                                modifier = Modifier.focusProperties { canFocus = false },
-                            )
-                        }
-                    }
-
                     // ── K2: Modo mouse (spec 2026-08-16-K2, §1.4) ──
                     // Switch liga o modo para o device; o chord do toggle é FIXO em
                     // START (segurar 750 ms + soltar — configurar o botão é
@@ -2333,96 +2054,6 @@ private fun LayerTriggerModeChip(
     }
 }
 
-/**
- * G (spec 2026-08-16-G-gyro-v2) — linha de switch da seção Gyro (toggle de
- * ativação, inversão por eixo, smoothing) com navegação de gamepad no MESMO
- * padrão da linha de fusão (gamepadSelectable + Switch sem foco próprio).
- */
-@Composable
-private fun GyroToggleRow(
-    title: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    subtitle: String? = null,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .gamepadSelectable(
-                selected = checked,
-                onClick = { onCheckedChange(!checked) },
-                shape = RoundedCornerShape(8.dp),
-                interactionSource = interactionSource,
-            )
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            modifier = Modifier.focusProperties { canFocus = false },
-        )
-    }
-}
-
-/** U1 — linha de seleção de modo do gyro (OFF/MOUSE/CAMERA). */
-@Composable
-private fun GyroModeRow(
-    mode: GyroMode,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    Row(
-        modifier = modifier
-            .gamepadSelectable(
-                selected = selected,
-                onClick = onClick,
-                shape = RoundedCornerShape(8.dp),
-                interactionSource = interactionSource,
-            )
-            .padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = stringResource(
-                when (mode) {
-                    GyroMode.OFF -> R.string.gamepad_gyro_mode_off
-                    GyroMode.MOUSE -> R.string.gamepad_gyro_mode_mouse
-                    GyroMode.CAMERA -> R.string.gamepad_gyro_mode_camera
-                },
-            ),
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (selected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
-    }
-}
-
-/**
- * U1 — slider de ajuste do gyro com A-lock (mesmo padrão dos settings). P2-4: o
- * valor exibido passa por [format] (ex.: °/s para a deadzone) — o valor interno
- * permanece na unidade persistida (rad/s).
- */
 @Composable
 private fun GyroSliderRow(
     title: String,
@@ -2474,12 +2105,6 @@ private fun GyroSliderRow(
         }
     }
 }
-
-/** °/s (unidade da UI) — P2-4. */
-private const val RAD_TO_DEG = 180f / kotlin.math.PI.toFloat()
-
-/** Máximo da deadzone na UI: 30°/s convertido para rad/s (persistência). */
-private const val GYRO_DEADZONE_MAX_RAD_S = 30f / RAD_TO_DEG
 
 /** Eixo dominante capturável (exclui hat — o dpad já tem botões próprios). */
 private fun strongestCapturableAxis(ev: MotionEvent): Triple<Int, Int, Float>? {

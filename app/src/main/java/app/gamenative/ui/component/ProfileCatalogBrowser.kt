@@ -469,7 +469,6 @@ private fun CatalogEntryDetail(
 private fun summaryLabelRes(category: ProfileSummaryCategory): Int = when (category) {
     ProfileSummaryCategory.BINDINGS -> R.string.profile_summary_bindings
     ProfileSummaryCategory.EXPR -> R.string.profile_summary_expr
-    ProfileSummaryCategory.GYRO -> R.string.profile_summary_gyro
     ProfileSummaryCategory.LAYERS -> R.string.profile_summary_layers
     ProfileSummaryCategory.SWIPES -> R.string.profile_summary_swipes
     ProfileSummaryCategory.STICK -> R.string.profile_summary_stick

@@ -503,11 +503,6 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         PowerManager.resume()
         PluviaApp.isActivityInForeground = true
-        // U1 (V3): retoma o gyro só com container de pé (xServerView != null) — sem
-        // jogo a fonte permanece suspensa (bateria).
-        if (PluviaApp.xServerView != null) {
-            PluviaApp.gamepadSensorSource.setSuspended(false)
-        }
 
         lifecycleScope.launch { app.gamenative.launch.LaunchReadiness.refresh() }
         // Re-apply immersive mode to ensure fullscreen persists
@@ -568,9 +563,6 @@ class MainActivity : ComponentActivity() {
         }
         PowerManager.pause()
         PluviaApp.isActivityInForeground = false
-        // U1 (V3 — vazamento = bateria): screen-off/background suspende os listeners
-        // de sensor; o XServerScreen/onResume retomam quando o container volta.
-        PluviaApp.gamepadSensorSource.setSuspended(true)
         if (hasReadyGameLifecycleState("pause")) {
             when {
                 PluviaApp.isNeverSuspendMode() -> {

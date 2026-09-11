@@ -26,7 +26,7 @@ import kotlinx.coroutines.delay
 /**
  * HUD de latência do F0 (spec 2026-08-15-input-core-avancado) — arquivo PRÓPRIO
  * (limite dex do XServerScreen): mede t0 na ingestão → t1 no PhysicalControllerHandler
- * (KEY/MOTION via dispatch; SENSOR via onSensorSample → applyCameraGyro) e mostra
+ * (KEY/MOTION via dispatch) e mostra
  * p50/p95 de cada fonte.
  *
  * Toggle via propriedade de sistema, mesmo padrão do harness de input:

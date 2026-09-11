@@ -44,8 +44,6 @@ import kotlinx.coroutines.delay
  *   touchdown:x:y            finger-down (ACTION_DOWN)
  *   touchup:x:y              finger-up (ACTION_UP)
  *   touchtap                 touchdown + touchup (tap → clique esquerdo no jogo)
- *   gyro:x:y:z               amostra de giroscópio sintética (rad/s) — injetada DIRETO
- *                            no hub.onSensorSample (U1; sem sensor real no harness)
  *
  * NOTE (2026-08-12, spec pipeline-hardening): the PS/Home button is KEYCODE_BUTTON_MODE =
  * 110 — NOT 188 (KEYCODE_BUTTON_1, a generic pad button that neither the XServerScreen
@@ -279,25 +277,6 @@ private fun handleCommand(command: String, activity: Activity) {
         "touchtap" -> {
             handleCommand("touchdown:0.5:0.5", activity)
             handleCommand("touchup:0.5:0.5", activity)
-        }
-        "gyro" -> {
-            val x = parts.getOrNull(1)?.toFloatOrNull() ?: 0f
-            val y = parts.getOrNull(2)?.toFloatOrNull() ?: 0f
-            val z = parts.getOrNull(3)?.toFloatOrNull() ?: 0f
-            val deviceId = gamepadDeviceId() ?: 0
-            Log.d("DebugGamepad", "gyro $x $y $z devId=$deviceId")
-            // V12 (U1): sem sensor real no harness — injeta direto no mesmo método que
-            // o callback do sensor chama (GamepadHub.onSensorSample).
-            PluviaApp.gamepadHub.onSensorSample(
-                deviceId = deviceId,
-                gyroX = x,
-                gyroY = y,
-                gyroZ = z,
-                accelX = 0f,
-                accelY = 0f,
-                accelZ = 0f,
-                nowMs = SystemClock.uptimeMillis(),
-            )
         }
         "stick", "hat" -> {
             val x = parts.getOrNull(1)?.toFloatOrNull() ?: return
