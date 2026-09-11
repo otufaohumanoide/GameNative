@@ -139,6 +139,7 @@ fun HomeLibraryScreen(
     onClickPlay: (String, Boolean) -> Unit,
     onTestGraphics: (String) -> Unit,
     onPlayWithDiagnostics: (String) -> Unit,
+    onAiDebugRun: (String) -> Unit,
     onNavigateRoute: (String) -> Unit,
     onLogout: () -> Unit,
     onGoOnline: () -> Unit,
@@ -165,6 +166,7 @@ fun HomeLibraryScreen(
         onClickPlay = onClickPlay,
         onTestGraphics = onTestGraphics,
         onPlayWithDiagnostics = onPlayWithDiagnostics,
+        onAiDebugRun = onAiDebugRun,
         onNavigateRoute = onNavigateRoute,
         onLogout = onLogout,
         onGoOnline = onGoOnline,
@@ -174,6 +176,8 @@ fun HomeLibraryScreen(
         onSortOptionChanged = viewModel::onSortOptionChanged,
         onSteamCollectionToggle = viewModel::onSteamCollectionToggle,
         onClearSteamCollections = viewModel::onClearSteamCollections,
+        onCuratedListToggle = viewModel::onCuratedListToggle,
+        onClearCuratedLists = viewModel::onClearCuratedLists,
         onOptionsPanelToggle = viewModel::onOptionsPanelToggle,
         onTabChanged = viewModel::onTabChanged,
         onPreviousTab = viewModel::onPreviousTab,
@@ -207,6 +211,7 @@ private fun LibraryScreenContent(
     onClickPlay: (String, Boolean) -> Unit,
     onTestGraphics: (String) -> Unit,
     onPlayWithDiagnostics: (String) -> Unit,
+    onAiDebugRun: (String) -> Unit,
     onRefresh: () -> Unit,
     onNavigateRoute: (String) -> Unit,
     onLogout: () -> Unit,
@@ -217,6 +222,8 @@ private fun LibraryScreenContent(
     onSortOptionChanged: (SortOption) -> Unit,
     onSteamCollectionToggle: (String) -> Unit,
     onClearSteamCollections: () -> Unit,
+    onCuratedListToggle: (String) -> Unit,
+    onClearCuratedLists: () -> Unit,
     onOptionsPanelToggle: (Boolean) -> Unit,
     onTabChanged: (LibraryTab) -> Unit,
     onPreviousTab: () -> Unit,
@@ -1225,6 +1232,7 @@ private fun LibraryScreenContent(
                     // Tab bar when not searching
                     LibraryTabBar(
                         currentTab = state.currentTab,
+                        tabs = state.visibleLibraryTabs,
                         tabCounts = mapOf(
                             LibraryTab.ALL to state.allCount,
                             LibraryTab.FAVORITES to state.favoritesCount,
@@ -1281,6 +1289,11 @@ private fun LibraryScreenContent(
                 onPlayWithDiagnostics = {
                     selectedLibraryItem?.let { libraryItem ->
                         onPlayWithDiagnostics(libraryItem.appId)
+                    }
+                },
+                onAiDebugRun = {
+                    selectedLibraryItem?.let { libraryItem ->
+                        onAiDebugRun(libraryItem.appId)
                     }
                 },
             )
@@ -1381,9 +1394,15 @@ private fun LibraryScreenContent(
                 steamCollectionCounts = state.steamCollectionCounts,
                 skippedDynamicCollections = state.skippedDynamicCollections,
                 isSteamConnected = isSteamConnected,
+                hasSteamCredentials = SteamUtils.hasStoredCredentials(),
                 isOffline = isOffline,
                 onSteamCollectionToggle = onSteamCollectionToggle,
                 onClearSteamCollections = onClearSteamCollections,
+                curatedLists = state.curatedLists,
+                selectedCuratedListIds = state.selectedCuratedListIds,
+                curatedListCounts = state.curatedListCounts,
+                onCuratedListToggle = onCuratedListToggle,
+                onClearCuratedLists = onClearCuratedLists,
             )
 
             // System menu (START) - renders on top of everything
@@ -1434,6 +1453,7 @@ private fun LibraryScreenContent(
                     )
                 },
             )
+
         }
 
         // Pre-import dialog (modern add path)
@@ -1607,6 +1627,7 @@ private fun Preview_LibraryScreenContent() {
             onClickPlay = { _, _ -> },
             onTestGraphics = { },
             onPlayWithDiagnostics = { },
+            onAiDebugRun = { },
             onRefresh = { },
             onNavigateRoute = {},
             onLogout = {},
@@ -1616,6 +1637,8 @@ private fun Preview_LibraryScreenContent() {
             onSortOptionChanged = {},
             onSteamCollectionToggle = {},
             onClearSteamCollections = {},
+            onCuratedListToggle = {},
+            onClearCuratedLists = {},
             onOptionsPanelToggle = { isOpen ->
                 state = state.copy(isOptionsPanelOpen = isOpen)
             },

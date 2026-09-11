@@ -70,6 +70,19 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
     private boolean xRenderingPausedForScanout = false;
     private volatile VulkanXrFrameBridge xrFrameBridge = null;
     private volatile long xrTargetAhbPtr = 0;
+    private volatile boolean flatPresentationEnabled = true;
+
+    public void setFlatPresentationEnabled(boolean enabled) {
+        if (flatPresentationEnabled == enabled) return;
+        flatPresentationEnabled = enabled;
+        if (!enabled) {
+            scenePending.set(false);
+        } else {
+            onPointerMove(xServer.pointer.getX(), xServer.pointer.getY());
+            queueSceneUpdate();
+            xServerView.requestRender();
+        }
+    }
 
     /** See VulkanXrFrameBridge's kdoc — null except for the Meta Quest immersive path. */
     public void setVulkanXrFrameBridge(VulkanXrFrameBridge xrFrameBridge) {
@@ -183,6 +196,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
     }
 
     public void queueSceneUpdate() {
+        if (!flatPresentationEnabled) return;
         if (scenePending.compareAndSet(false, true)) {
             xServerView.queueEvent(() -> {
                 scenePending.set(false);
@@ -399,6 +413,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
     }
 
     public void updateScene() {
+        if (!flatPresentationEnabled) return;
         ArrayList<RenderableWindow> newList = new ArrayList<>();
         try (XLock xl = xServer.lock(XServer.Lockable.WINDOW_MANAGER, XServer.Lockable.DRAWABLE_MANAGER)) {
             collectWindows(newList, xServer.windowManager.rootWindow,
@@ -499,6 +514,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
     }
 
     public void onUpdateWindowContentDirect(Window window, Drawable pixmap, short xOff, short yOff) {
+        if (!flatPresentationEnabled) return;
         if (hudRef != null && !nativeMode) hudRef.update();
         if (nativeHandle == 0 || pixmap == null) return;
         Drawable targetDrawable = window.getContent();
@@ -548,6 +564,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
 
     @Override
     public void onUpdateWindowContent(Window window) {
+        if (!flatPresentationEnabled) return;
         if (hudRef != null) hudRef.update();
         final long handle;
         synchronized (lock) { handle = nativeHandle; }
@@ -604,6 +621,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
 
     @Override
     public void onPointerMove(short x, short y) {
+        if (!flatPresentationEnabled) return;
         synchronized (lock) {
             if (nativeHandle == 0) return;
             nativeSetPointerPos(nativeHandle, x, y);
@@ -628,7 +646,9 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
         });
     }
 
-    @Override public void onMapWindow(Window window) { queueSceneUpdate(); }
+    @Override public void onMapWindow(Window window) {
+        if (flatPresentationEnabled) queueSceneUpdate();
+    }
 
     @Override
     public void onUnmapWindow(Window window) {
@@ -639,15 +659,18 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
         });
     }
 
-    @Override public void onChangeWindowZOrder(Window window) { queueSceneUpdate(); }
+    @Override public void onChangeWindowZOrder(Window window) {
+        if (flatPresentationEnabled) queueSceneUpdate();
+    }
 
     @Override
     public void onUpdateWindowGeometry(Window window, boolean resized) {
-        queueSceneUpdate();
+        if (flatPresentationEnabled) queueSceneUpdate();
     }
 
     @Override
     public void onUpdateWindowAttributes(Window window, Bitmask mask) {
+        if (!flatPresentationEnabled) return;
         if (mask.isSet(WindowAttributes.FLAG_CURSOR)) {
             synchronized (lock) {
                 Window pw = xServer.inputDeviceManager.getPointWindow();

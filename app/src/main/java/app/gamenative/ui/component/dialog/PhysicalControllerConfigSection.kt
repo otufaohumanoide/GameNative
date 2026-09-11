@@ -36,6 +36,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.gamenative.R
 import com.winlator.inputcontrols.Binding
+import com.winlator.inputcontrols.BindingCombo
 import com.winlator.inputcontrols.ControlsProfile
 import com.winlator.inputcontrols.ExternalControllerBinding
 
@@ -80,7 +81,7 @@ internal fun PhysicalControllerConfigSection(
                     for (binding in defaultController.getControllerBindings()) {
                         val newBinding = ExternalControllerBinding()
                         newBinding.setKeyCode(binding.getKeyCodeForAxis())
-                        newBinding.setBinding(binding.getBinding())
+                        newBinding.setBindingCombo(binding.getBindingCombo())
                         ctrl.addControllerBinding(newBinding)
                     }
 
@@ -115,17 +116,17 @@ internal fun PhysicalControllerConfigSection(
     // Create a snapshot of original bindings for cancel behavior
     val originalBindings = remember {
         controller?.getControllerBindings()?.map {
-            it.getKeyCodeForAxis() to it.getBinding()
+            it.getKeyCodeForAxis() to it.getBindingCombo()
         }?.toMap() ?: emptyMap()
     }
 
     // Working copy of bindings (memory only until Save is clicked)
-    val workingBindings = remember { mutableStateMapOf<Int, com.winlator.inputcontrols.Binding?>() }
+    val workingBindings = remember { mutableStateMapOf<Int, BindingCombo?>() }
 
     // Initialize working copy with current bindings
     LaunchedEffect(controller) {
         controller?.getControllerBindings()?.forEach {
-            workingBindings[it.getKeyCodeForAxis()] = it.getBinding()
+            workingBindings[it.getKeyCodeForAxis()] = it.getBindingCombo()
         }
     }
 
@@ -201,21 +202,21 @@ internal fun PhysicalControllerConfigSection(
         )
     }
 
+    fun restoreOriginalBindings() {
+        controller?.let { ctrl ->
+            ctrl.getControllerBindings().toList().forEach(ctrl::removeControllerBinding)
+            for ((keyCode, binding) in originalBindings) {
+                val restoredBinding = ExternalControllerBinding()
+                restoredBinding.setKeyCode(keyCode)
+                restoredBinding.setBindingCombo(binding)
+                ctrl.addControllerBinding(restoredBinding)
+            }
+        }
+    }
+
     Dialog(
         onDismissRequest = {
-            // Cancel: Restore original bindings
-            controller?.let { ctrl ->
-                val existingBindings = ctrl.getControllerBindings().toList()
-                for (binding in existingBindings) {
-                    ctrl.removeControllerBinding(binding)
-                }
-                for ((keyCode, binding) in originalBindings) {
-                    val newBinding = ExternalControllerBinding()
-                    newBinding.setKeyCode(keyCode)
-                    newBinding.setBinding(binding)
-                    ctrl.addControllerBinding(newBinding)
-                }
-            }
+            restoreOriginalBindings()
             onDismiss()
         },
         properties = DialogProperties(
@@ -244,22 +245,10 @@ internal fun PhysicalControllerConfigSection(
                     },
                     navigationIcon = {
                         IconButton(onClick = {
-                            // Cancel: Restore original bindings
-                            controller?.let { ctrl ->
-                                val existingBindings = ctrl.getControllerBindings().toList()
-                                for (binding in existingBindings) {
-                                    ctrl.removeControllerBinding(binding)
-                                }
-                                for ((keyCode, binding) in originalBindings) {
-                                    val newBinding = ExternalControllerBinding()
-                                    newBinding.setKeyCode(keyCode)
-                                    newBinding.setBinding(binding)
-                                    ctrl.addControllerBinding(newBinding)
-                                }
-                            }
+                            restoreOriginalBindings()
                             onDismiss()
                         }) {
-                            Icon(Icons.Default.Close, null)
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.close))
                         }
                     },
                     actions = {
@@ -275,13 +264,13 @@ internal fun PhysicalControllerConfigSection(
                                 if (defaultControllers.isNotEmpty()) {
                                     val defaultController = defaultControllers[0]
                                     for (binding in defaultController.getControllerBindings()) {
-                                        workingBindings[binding.getKeyCodeForAxis()] = binding.getBinding()
+                                        workingBindings[binding.getKeyCodeForAxis()] = binding.getBindingCombo()
                                     }
                                 }
                             }
 
                             // Ensure Home/Guide/PS button is always set to OPEN_NAVIGATION_MENU
-                            workingBindings[KeyEvent.KEYCODE_BUTTON_MODE] = com.winlator.inputcontrols.Binding.OPEN_NAVIGATION_MENU
+                            workingBindings[KeyEvent.KEYCODE_BUTTON_MODE] = BindingCombo.of(com.winlator.inputcontrols.Binding.OPEN_NAVIGATION_MENU)
                             Log.d("gncontrol", "Set Home button (KEYCODE_BUTTON_MODE) to OPEN_NAVIGATION_MENU")
 
                             refreshKey++
@@ -302,7 +291,7 @@ internal fun PhysicalControllerConfigSection(
                                     if (binding != null) {
                                         val newBinding = ExternalControllerBinding()
                                         newBinding.setKeyCode(keyCode)
-                                        newBinding.setBinding(binding)
+                                        newBinding.setBindingCombo(binding)
                                         ctrl.addControllerBinding(newBinding)
                                     }
                                 }
@@ -559,9 +548,11 @@ internal fun PhysicalControllerConfigSection(
 
         ControllerBindingDialog(
             buttonName = label,
-            currentBinding = currentBinding,
+            currentBinding = currentBinding?.primaryBinding,
+            currentBindingCombo = currentBinding,
             onDismiss = { showBindingDialog = null },
-            onBindingSelected = { binding ->
+            onBindingSelected = {},
+            onBindingComboSelected = { binding ->
                 if (binding != null) {
                     workingBindings[keyCode] = binding
                     Log.d("gncontrol", "Updated binding for keyCode $keyCode to $binding")
@@ -614,7 +605,7 @@ private fun CategoryButton(
 private fun ControllerBindingItem(
     label: String,
     keyCode: Int,
-    workingBindings: Map<Int, com.winlator.inputcontrols.Binding?>,
+    workingBindings: Map<Int, BindingCombo?>,
     onClick: () -> Unit
 ) {
     val binding = workingBindings[keyCode]
@@ -665,7 +656,7 @@ private fun PhysicalControlPresets(
     leftStickAxes: List<AnalogConfig>,
     rightStickAxes: List<AnalogConfig>,
     dpadButtons: List<ButtonConfig>,
-    workingBindings: MutableMap<Int, Binding?>,
+    workingBindings: MutableMap<Int, BindingCombo?>,
     onPresetsApplied: () -> Unit = {}
 ) {
     Card(
@@ -829,7 +820,7 @@ private fun applyPhysicalPreset(
     leftStickAxes: List<AnalogConfig>,
     rightStickAxes: List<AnalogConfig>,
     dpadButtons: List<ButtonConfig>,
-    workingBindings: MutableMap<Int, com.winlator.inputcontrols.Binding?>
+    workingBindings: MutableMap<Int, BindingCombo?>
 ) {
     // Define bindings for each preset (Up, Down, Left, Right order for sticks; Up, Down, Left, Right for dpad buttons)
     val bindings = when (preset) {
@@ -896,7 +887,7 @@ private fun applyPhysicalPreset(
     // Apply bindings
     keyCodes.forEachIndexed { index, keyCode ->
         if (keyCode != 0 && index < bindings.size) {
-            workingBindings[keyCode] = bindings[index]
+            workingBindings[keyCode] = BindingCombo.of(bindings[index])
         }
     }
 }
@@ -936,8 +927,8 @@ private fun copyElementsIfNeeded(context: android.content.Context, destProfile: 
                     if (element.has("bindings")) {
                         val bindings = element.getJSONArray("bindings")
                         for (j in 0 until bindings.length()) {
-                            val binding = bindings.getString(j)
-                            if (binding.startsWith("GAMEPAD_")) {
+                            val binding = BindingCombo.fromJsonValue(bindings.get(j))
+                            if (binding.containsGamepadBinding()) {
                                 hasGamepadBindings = true
                                 break
                             }

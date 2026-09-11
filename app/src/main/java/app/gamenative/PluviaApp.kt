@@ -12,6 +12,7 @@ import androidx.navigation.NavController
 import app.gamenative.db.dao.AmazonGameDao
 import app.gamenative.db.dao.GOGGameDao
 import app.gamenative.events.EventDispatcher
+import app.gamenative.mods.NexusAuthManager
 import app.gamenative.powercontrol.PowerManager
 import app.gamenative.gamepad.GamepadHub
 import app.gamenative.gamepad.GamepadSensorSource
@@ -87,6 +88,7 @@ class PluviaApp : SplitCompatApplication() {
 
         // Init our datastore preferences.
         PrefManager.init(this)
+        NexusAuthManager.initialize(this)
         FrontendSyncManager.init(this)
 
         // Sink de mouse compartilhado (U2 touchpad + U1 gyro MOUSE): injeta no XServer
@@ -275,6 +277,10 @@ class PluviaApp : SplitCompatApplication() {
         var isOverlayPaused by mutableStateOf(false)
         @Volatile
         var isActivityInForeground: Boolean = true
+        var isImmersiveActivityResumed: Boolean = false
+        // True while the booting splash covers the game screen (and its Resume overlay).
+        @Volatile
+        var isBootingSplashShowing: Boolean = false
 
         // Active runtime suspend policy for the current in-game session.
         var activeSuspendPolicy: String = Container.SUSPEND_POLICY_MANUAL
