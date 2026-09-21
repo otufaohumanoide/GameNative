@@ -7,7 +7,6 @@ import android.graphics.Color
 import android.os.Build
 import android.os.SystemClock
 import android.os.Handler
-import android.os.SystemClock
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
