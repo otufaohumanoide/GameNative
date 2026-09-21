@@ -145,6 +145,6 @@ class SteamInviteState private constructor() {
         @Volatile
         var openedForGameRequest: Long = 0L
         fun createIfAvailable(container: Container?): SteamInviteState? =
-            if (container != null && container.isLaunchBionicSteam) SteamInviteState() else null
+            if (container != null && (container.isLaunchBionicSteam || container.isLaunchHeadlessSteam)) SteamInviteState() else null
     }
 }

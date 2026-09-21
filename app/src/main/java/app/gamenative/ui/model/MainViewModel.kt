@@ -75,6 +75,7 @@ class MainViewModel @Inject constructor(
         private const val WARM_PITCH_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000L
         private const val SHORT_SESSION_MS = 90 * 1000L
         private const val AI_DEBUG_OFFER_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000L
+        private const val BOOT_GAME_SEEN_GRACE_MS = 15_000L
         private const val LOW_RATING_MAX = 3
         private val FAILURE_TAGS = setOf("does_not_open", "no_graphics", "directx_error")
         private const val BOOT_AD_REUSE_WINDOW_MS = 2 * 60 * 1000L
@@ -274,6 +275,7 @@ class MainViewModel @Inject constructor(
     private val onClearBootingSplash: (AndroidEvent.ClearBootingSplash) -> Unit = {
         bootingSplashTimeoutJob?.cancel()
         bootingSplashTimeoutJob = null
+        bootAwaitingGameWindow = false
         setShowBootingSplash(false)
     }
 
@@ -587,10 +589,11 @@ class MainViewModel @Inject constructor(
                 )
             }
 
-            bootAwaitingGameWindow = true
             // A new launch is a new impression: never reuse the previous launch's ad.
             bootAdHiddenAtMs = 0L
             setShowBootingSplash(true)
+            bootAwaitingGameWindow = _state.value.bootAd != null
+            if (bootAwaitingGameWindow) startBootGameExitWatch(context, appId)
             PluviaApp.events.emit(AndroidEvent.SetAllowedOrientation(PrefManager.allowedOrientation))
 
             val heroUrl = withContext(Dispatchers.IO) {
@@ -771,12 +774,12 @@ class MainViewModel @Inject constructor(
     }
 
     private suspend fun offerAiDebugRun(context: Context, appId: String, trigger: String): Boolean {
+        if (PrefManager.hideAiFeatures) return false
         return try {
             val container = ContainerUtils.getContainer(context, appId)
             val now = System.currentTimeMillis()
             val lastShownForGame = container.getExtra("ai_debug_offer_last_shown", "0").toLongOrNull() ?: 0L
             if (now - lastShownForGame < AI_DEBUG_OFFER_INTERVAL_MS) return false
-            if (now - PrefManager.lastWarmPitchTime < WARM_PITCH_COOLDOWN_MS) return false
 
             container.putExtra("ai_debug_offer_last_shown", now.toString())
             container.saveData()
@@ -861,16 +864,33 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    private fun startBootGameExitWatch(context: Context, appId: String) = viewModelScope.launch(Dispatchers.IO) {
+        val exe = runCatching { ContainerUtils.getContainer(context, appId) }.getOrNull()?.executablePath
+            ?.substringAfterLast('/')?.substringAfterLast('\\')?.lowercase() ?: return@launch
+        if (!exe.endsWith(".exe")) return@launch
+        var seenAt = 0L
+        while (bootAwaitingGameWindow) {
+            delay(200)
+            val running = WineProcessSnapshotHelper.readFromProc().any { it.name.lowercase().endsWith(exe) }
+            if (running && seenAt == 0L) seenAt = System.currentTimeMillis()
+            if (seenAt != 0L && (!running || System.currentTimeMillis() - seenAt >= BOOT_GAME_SEEN_GRACE_MS)) {
+                PluviaApp.events.emit(AndroidEvent.ClearBootingSplash)
+                return@launch
+            }
+        }
+    }
+
     fun onWindowMapped(context: Context, window: Window, appId: String) {
         viewModelScope.launch {
-            // Hide the booting splash when a window is mapped. During boot, Wine's own shell
-            // windows (explorer.exe etc.) map long before the game renders, so they must not
-            // end it; outside boot (exit/teardown re-shows) any window map hides it as before.
+            // Hide the booting splash when a window is mapped. While a boot card is showing,
+            // explorer's desktop window maps long before the game renders, so it must not
+            // end it; with no card (or outside boot) any window map hides it as before.
             if (window.isApplicationWindow() && !WineProcessSnapshotHelper.isSystemProcessName(window.className)) {
                 gameWindowSeen = true
             }
-            if (bootAwaitingGameWindow && WineProcessSnapshotHelper.isSystemProcessName(window.className)) {
-                Timber.tag("BootAdTrace").i("ignoring system window map: %s", window.className)
+            val windowClass = window.className.trim().lowercase()
+            if (bootAwaitingGameWindow && (windowClass.isEmpty() || windowClass == "explorer.exe")) {
+                Timber.tag("BootAdTrace").i("ignoring shell window map: %s", window.className)
             } else {
                 bootAwaitingGameWindow = false
                 bootingSplashTimeoutJob?.cancel()
@@ -958,6 +978,19 @@ class MainViewModel @Inject constructor(
 
             // You could also show an error dialog here if needed
             Timber.tag("MainViewModel").e("Game launch error: $error")
+        }
+    }
+
+    /** The splash's back button: hide the splash and close the guest the way a blocked session does. */
+    fun abortBoot() {
+        viewModelScope.launch {
+            Timber.tag("MainViewModel").i("Boot aborted from the splash")
+            bootAwaitingGameWindow = false
+            bootingSplashTimeoutJob?.cancel()
+            bootingSplashTimeoutJob = null
+            setShowBootingSplash(false)
+            PluviaApp.events.emit(AndroidEvent.ClearBootingSplash)
+            PluviaApp.events.emit(SteamEvent.ForceCloseApp)
         }
     }
 
