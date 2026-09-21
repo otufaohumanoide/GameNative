@@ -258,7 +258,6 @@ void VulkanRendererContext::loadDeviceDispatch() {
     LOAD_D2(CmdBlitImage);
     LOAD_D2(CmdCopyBufferToImage);
     LOAD_D2(CmdCopyImageToBuffer);
-    LOAD_D2(CmdBlitImage);
     LOAD_D2(UnmapMemory);
     LOAD_D2(CreateSampler);
     LOAD_D2(DestroySampler);
@@ -1859,6 +1858,7 @@ ok=true;}catch(...){}
 
         blitCompositeToSwapchain(cmdBufs[currentFrame], *compositeTarget, swapchainImages[imgIdx]);
     }
+    } // end else (upstream LSFG/composite path)
 
     auto recoverAcquiredFrame = [&]() -> bool {
         VkFence stale = inFlightFences[currentFrame];

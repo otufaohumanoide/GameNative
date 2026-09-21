@@ -81,7 +81,6 @@ struct VkTable {
     PFN_vkCmdBlitImage CmdBlitImage;
     PFN_vkCmdCopyBufferToImage CmdCopyBufferToImage;
     PFN_vkCmdCopyImageToBuffer CmdCopyImageToBuffer;
-    PFN_vkCmdBlitImage CmdBlitImage;
     PFN_vkUnmapMemory UnmapMemory;
     PFN_vkCreateSampler CreateSampler;
     PFN_vkDestroySampler DestroySampler;
