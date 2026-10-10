@@ -409,7 +409,7 @@ O que isso destrava e o que não destrava:
   `metrics-*.jsonl`), o que é interativo. O `libvulkan_wrapper.so` só é carregado quando um
   container é lançado.
 
-**Evidência real deste device (métricas de 2026-10-08, `metrics-{{...}}.jsonl`):** uma sessão de
+**Evidência real deste device (métricas de 2026-10-08, `metrics-1791469209842.jsonl`):** uma sessão de
 jogo rodou a **16–25 fps com p95 ~57–73 ms**, `gpuUsagePercent` 74–89 %, e o controle adaptativo
 de FPS entrou em ação (cap 60→45→30, `fpscap-*.jsonl`). `cpuTempC`/`gpuTempC` vêm **null** (o
 sysfs térmico é negado ao uid do app) e `cpuUsageSource = CPU_FREQUENCY` (o `/proc/stat` também
