@@ -8,7 +8,6 @@ import android.view.Display
 import app.gamenative.powercontrol.PowerBaselineScripts
 import app.gamenative.powercontrol.PowerManager
 import java.io.File
-import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -221,31 +220,7 @@ object PerformanceMetricsCollector {
     }
 
     private fun appendLog(snapshot: MetricsSnapshot) {
-        sessionLog.append(toJsonLine(snapshot))
-    }
-
-    private fun toJsonLine(snapshot: MetricsSnapshot): String {
-        return String.format(
-            Locale.US,
-            "{\"timestampMs\":%d,\"fps\":%.2f,\"frameTimeP50Ms\":%.2f,\"frameTimeP95Ms\":%.2f," +
-                "\"frameTimeMaxMs\":%.2f,\"slowFrameCount\":%d,\"totalFrameCount\":%d," +
-                "\"cpuUsagePercent\":%s,\"cpuUsageSource\":\"%s\",\"gpuUsagePercent\":%s," +
-                "\"cpuTempC\":%s,\"gpuTempC\":%s,\"gpuFreqMhz\":%s,\"thermalStatus\":%s}",
-            snapshot.timestampMs,
-            snapshot.fps,
-            snapshot.frameTimeP50Ms,
-            snapshot.frameTimeP95Ms,
-            snapshot.frameTimeMaxMs,
-            snapshot.slowFrameCount,
-            snapshot.totalFrameCount,
-            snapshot.cpuUsagePercent?.let { String.format(Locale.US, "%.1f", it) } ?: "null",
-            snapshot.cpuUsageSource.name,
-            snapshot.gpuUsagePercent?.let { String.format(Locale.US, "%.1f", it) } ?: "null",
-            snapshot.cpuTempC?.toString() ?: "null",
-            snapshot.gpuTempC?.toString() ?: "null",
-            snapshot.gpuFreqMhz?.toString() ?: "null",
-            snapshot.thermalStatus?.toString() ?: "null",
-        )
+        sessionLog.append(MetricsJson.line(snapshot))
     }
 
     private fun closeLog() {

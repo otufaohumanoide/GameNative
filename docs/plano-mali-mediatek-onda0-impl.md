@@ -426,3 +426,8 @@ sempre-ativo, que é o insumo dos protocolos de A/B do plano:
 
 **On-device pendente:** valores/visuais reais no device. `currentThermalStatus` é API 29+; fica
 guardada (no flavor legacy, minSdk 26, o campo fica `null`).
+
+
+O formato do `metrics-*.jsonl` foi extraído de `PerformanceMetricsCollector` para
+`MetricsJson` (puro, JVM-testável); `MetricsJsonTest` trava os campos, incluindo os novos
+`gpuFreqMhz`/`thermalStatus`.
