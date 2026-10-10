@@ -455,3 +455,25 @@ diretório do container, ler o arquivo e extrair o caminho (direct vs blit) para
 device que a linha aparece e com que frequência; (b) ligar o nível `info` em produção adiciona um
 `write` (com `fflush`) por evento no processo do jogo — um custo que precisa ser medido antes de
 virar default. Fica registrado o mecanismo para a sessão on-device.
+
+
+### 11.1 Inventário de nós GPU no A14 (Exynos 1330 / Mali-G68), lido por adb
+
+Levantado no device conectado (2026-10-10), para calibrar I2/I3/J1:
+
+- **Não existe nó devfreq de GPU** (`/sys/class/devfreq/*` só tem barramentos Exynos: `mif`, `int`,
+  `m2m0`, `disp`, `cam`, … — nenhum com `gpu`/`mali`/`g3d`/`kgsl`). Logo `gpuFreqPath()` (I3) **não
+  encontra caminho aqui** e `gpuFreqMhz` fica `null` neste device.
+- **Não existem** os caminhos MediaTek/outros que o I2 adicionou
+  (`/sys/module/ged/parameters/gpu_loading`, `/sys/module/mali{,_kbase}/parameters/…`), nem kgsl,
+  nem `/proc/mali/utilization` — consistente com serem MediaTek/Adreno.
+- **Existem** `/sys/class/misc/mali0/device/{utilization,gpuinfo}` (o app lê `utilization`, que dá
+  os 74–89 % das métricas; `shell` é negado) e `/sys/kernel/gpu/gpu_busy`.
+- O controle de frequência da GPU Mali aqui mora em `/sys/class/misc/mali0/device/dvfs*`
+  (`dvfs_table`, `dvfs_governor`, `dvfs_max_lock`, `dvfs_min_lock`, …) — insumo para um eventual
+  `MaliPerformanceDriver` (J1) cujo alvo principal, porém, é o devfreq de MediaTek
+  (`mtk-dvfs-gpu`), que **este** device não tem.
+
+Conclusão prática: I2 (utilização) é útil; I3 (frequência) fica `null` em Exynos/G68 e depende do
+nó devfreq de MediaTek; J1 precisa cobrir tanto devfreq (MediaTek) quanto `mali0/device/dvfs*`
+(Exynos) se quiser leitura de frequência em ambos.
