@@ -4,6 +4,7 @@ import android.os.SystemClock
 import java.io.File
 import java.util.Locale
 import timber.log.Timber
+import kotlin.math.roundToInt
 
 enum class CpuUsageSource {
     PROC_STAT,
@@ -39,6 +40,8 @@ object SystemMetricsSources {
         "/sys/class/kgsl/kgsl-3d0/devfreq/temp",
         "/sys/class/misc/mali0/device/temp",
         "/sys/kernel/gpu/temp",
+        // Samsung/Exynos Mali: temperatura da GPU em °C (verificado no A14: 37.0).
+        "/sys/kernel/gpu/gpu_tmu",
     )
 
     @Synchronized
@@ -131,6 +134,8 @@ object SystemMetricsSources {
             "/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq",
             "/sys/class/kgsl/kgsl-3d0/gpuclk",
             "/sys/class/kgsl/kgsl-3d0/clock_mhz",
+            // Samsung/Exynos Mali: kHz (verificado no A14; gpu_max_clock=949000).
+            "/sys/kernel/gpu/gpu_clock",
         ).firstOrNull { File(it).canRead() }?.let {
             gpuFreqPathCache = it
             return it
@@ -236,13 +241,20 @@ object SystemMetricsSources {
 
     fun readTemperatureC(paths: List<String>): Int? {
         for (path in paths.distinct()) {
-            val raw = readFirstLine(path)?.trim()?.toIntOrNull() ?: continue
-            val celsius = if (raw > 1000) (raw + 500) / 1000 else raw
-            if (celsius in 1..150) {
-                return celsius
-            }
+            parseTemperatureC(readFirstLine(path))?.let { return it }
         }
         return null
+    }
+
+    /**
+     * Normaliza o conteúdo de um nó de temperatura para °C. Aceita inteiro ou decimal (alguns
+     * nós Mali/Samsung reportam "37.0") e o formato em milésimos usado por vários kernels
+     * (ex.: 45000 -> 45 °C). `null` quando fora da faixa plausível (1..150 °C).
+     */
+    fun parseTemperatureC(raw: String?): Int? {
+        val value = raw?.trim()?.toDoubleOrNull() ?: return null
+        val celsius = if (value > 1000.0) ((value + 500.0) / 1000.0).toInt() else value.roundToInt()
+        return celsius.takeIf { it in 1..150 }
     }
 
     fun readFirstLine(path: String): String? {

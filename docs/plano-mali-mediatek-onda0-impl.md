@@ -468,13 +468,17 @@ virar default. Fica registrado o mecanismo para a sessão on-device.
 Levantado no device conectado (2026-10-10), para calibrar I2/I3/J1:
 
 - **Não existe nó devfreq de GPU** (`/sys/class/devfreq/*` só tem barramentos Exynos: `mif`, `int`,
-  `m2m0`, `disp`, `cam`, … — nenhum com `gpu`/`mali`/`g3d`/`kgsl`). Logo `gpuFreqPath()` (I3) **não
-  encontra caminho aqui** e `gpuFreqMhz` fica `null` neste device.
+  `m2m0`, `disp`, `cam`, … — nenhum com `gpu`/`mali`/`g3d`/`kgsl`). **Mas** há
+  `/sys/kernel/gpu/gpu_clock` (kHz, legível: `gpu_max_clock`=949000 e a tabela
+  `208000 … 949000`), que passou a ser candidato do `gpuFreqPath()` (I3) — então `gpuFreqMhz`
+  funciona neste device.
 - **Não existem** os caminhos MediaTek/outros que o I2 adicionou
   (`/sys/module/ged/parameters/gpu_loading`, `/sys/module/mali{,_kbase}/parameters/…`), nem kgsl,
   nem `/proc/mali/utilization` — consistente com serem MediaTek/Adreno.
 - **Existem** `/sys/class/misc/mali0/device/{utilization,gpuinfo}` (o app lê `utilization`, que dá
-  os 74–89 % das métricas; `shell` é negado) e `/sys/kernel/gpu/gpu_busy`.
+  os 74–89 % das métricas; `shell` é negado), `/sys/kernel/gpu/gpu_busy` e — legível —
+  `/sys/kernel/gpu/gpu_tmu` (temperatura da GPU em °C; ex. `37.0`), agora em `fixedGpuTempPaths`
+  (exigiu o parser aceitar decimal, ver `parseTemperatureC`).
 - O controle de frequência da GPU Mali aqui mora em `/sys/class/misc/mali0/device/dvfs*`
   (`dvfs_table`, `dvfs_governor`, `dvfs_max_lock`, `dvfs_min_lock`, …) — insumo para um eventual
   `MaliPerformanceDriver` (J1) cujo alvo principal, porém, é o devfreq de MediaTek
