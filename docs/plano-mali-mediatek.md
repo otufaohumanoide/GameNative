@@ -374,7 +374,10 @@ Detalhes e a tabela de tokens em `plano-mali-mediatek-onda0-impl.md` §8.
   device MediaTek; temperatura deste A14 é bloqueada ao adb.
 - **J1–J4** (driver de performance Mali): esforço alto e ganho limitado sem root — último da
   fila. **Escala verificada:** `PServerDriver.kt` tem **1906 linhas** (binder/root, snapshot de
-  permissões, presets, taskset); um peer Mali não é um patch. E `J3` não é mecânico:
+  permissões, presets, taskset); um peer Mali não é um patch. **J1 é subespecificado:** a API `PerformanceDriver` de GPU é
+  baseada em *power levels* (0 = mais rápido), mas devfreq/Mali expõe
+  `cur_freq`/`available_frequencies`/`governor` — mapear frequências para níveis (e min/max) é
+  uma decisão de design que o plano não fixa. E `J3` não é mecânico:
   `PowerManager.startClusterTuning` é **tipado em `PServerDriver`** (`PServerDriver.CpuCluster`),
   então integrar o tuner exige refatorar o tuner para uma abstração comum — decisão de
   arquitetura.
