@@ -346,6 +346,35 @@ curada por `maliModel`/`maliSeries` continua vazia até haver medição). Detalh
 custo, e continua bloqueado por device (K1). Nada de tuning virou default — a regra de ouro da §5
 foi respeitada.
 
+### 9.3 Correção da Frente F (F6, verificada)
+
+A conclusão 4 da §2.4 e o item **F6** confundem dois assets diferentes:
+
+- **`libvulkan_wrapper.tar.xz`** (o arquivo nomeado no F6) **não é consumido por nenhum caminho
+  do app** — a extração usa `graphics_driver/<driverId>.tzst`, e o id `libvulkan_wrapper` nunca é
+  usado. Atualizá-lo é **no-op**.
+- **`wrapper-gamenative.tzst`** (legacy) **já é** o blob jul/2026 — nada a corrigir.
+- Os assets realmente atrasados são `wrapper.tzst`, `wrapper-v2.tzst`, `wrapper-legacy.tzst` e
+  `wrapper-leegao.tzst` (verificados token a token); atualizá-los exige rebuild de cada variante
+  e **publicação no `downloads.gamenative.app`** + bump do manifesto — infraestrutura, não código
+  deste repo.
+
+Detalhes e a tabela de tokens em `plano-mali-mediatek-onda0-impl.md` §8.
+
+### 9.4 O que falta (só destrava com device ou decisão do usuário)
+
+- **F1/F2/F4/F5** (WSI): tuning/validação no device; F1 exige A/B (regra de ouro §5).
+- **G1/G3** (blacklist/preset): o wrapper já decide `extended_dynamic_state` (ver §9.1), então
+  só por modelo **medido**.
+- **H4** (mapa BCN por geração): só com medição on-device.
+- **I2 (frequência/temperatura GED)**: nomes de nó não verificados em referência → precisa de
+  device MediaTek; temperatura deste A14 é bloqueada ao adb.
+- **J1–J4** (driver de performance Mali): esforço alto e ganho limitado sem root — último da fila.
+- **K2–K5**: pendências on-device herdadas do commit `e4222aae`.
+
+Já entregues (device-independent): I1a/I1b/I1c, H1, G2, H2, F3, F6 (reescopado), I5, I2
+(utilização), I3, I4.
+
 ---
 
 ## 10. Device conectado em 2026-10-10 (não é o MediaTek de K1)
@@ -372,17 +401,3 @@ O que isso destrava e o que não destrava:
 - O A/B on-device de F1/F2/G1 continua exigindo **um jogo rodando** (e a coleta de
   `metrics-*.jsonl`), o que é interativo. O `libvulkan_wrapper.so` só é carregado quando um
   container é lançado.
-### 9.3 Correção da Frente F (F6, verificada)
-
-A conclusão 4 da §2.4 e o item **F6** confundem dois assets diferentes:
-
-- **`libvulkan_wrapper.tar.xz`** (o arquivo nomeado no F6) **não é consumido por nenhum caminho
-  do app** — a extração usa `graphics_driver/<driverId>.tzst`, e o id `libvulkan_wrapper` nunca é
-  usado. Atualizá-lo é **no-op**.
-- **`wrapper-gamenative.tzst`** (legacy) **já é** o blob jul/2026 — nada a corrigir.
-- Os assets realmente atrasados são `wrapper.tzst`, `wrapper-v2.tzst`, `wrapper-legacy.tzst` e
-  `wrapper-leegao.tzst` (verificados token a token); atualizá-los exige rebuild de cada variante
-  e **publicação no `downloads.gamenative.app`** + bump do manifesto — infraestrutura, não código
-  deste repo.
-
-Detalhes e a tabela de tokens em `plano-mali-mediatek-onda0-impl.md` §8.
