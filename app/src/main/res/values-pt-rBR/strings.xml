@@ -1769,6 +1769,8 @@
     <string name="bcn_astc_hint">Ligado por padrão. Desligado usa RGBA8 e desativa o transcodificador GPU.</string>
     <string name="bcn_gpu_cap_mb">Memória do transcode GPU (MB)</string>
     <string name="bcn_gpu_cap_mb_hint">Padrão 128, mínimo 16 (só no transcodificador GPU)</string>
+    <string name="bypass_swapchain_placed">Ignorar emulação de memória \"placed\" (Mali)</string>
+    <string name="bypass_swapchain_placed_hint">Desligado por padrão. No Mali o swapchain externo falha e cai num caminho de blit mais lento; ligar isto pula a emulação de VK_EXT_map_memory_placed para imagens de swapchain. Experimental — meça dos dois lados.</string>
     <string name="option_play_with_diagnostics">Execução de diagnóstico</string>
     <string name="option_share_diagnostics">Compartilhar diagnóstico</string>
     <string name="option_ai_debug_run">Obter ajuda de AI</string>

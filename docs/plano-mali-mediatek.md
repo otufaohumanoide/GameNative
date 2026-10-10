@@ -424,3 +424,77 @@ sysfs térmico é negado ao uid do app) e `cpuUsageSource = CPU_FREQUENCY` (o `/
 não rende delta). Ou seja: o A14 exibe exatamente o quadro de subdesempenho que o **F1** (bypass
 de WSI no Mali) tenta atacar — é um bom alvo de A/B, quando houver como rodar o jogo com um build
 nosso.
+
+---
+
+## 11. Verificação independente e conclusão (2026-10-10)
+
+### 11.1 Verificação dos commits da Onda 0 / Onda 1
+
+Revisão independente (re-execução de testes, `strings` nos binários, sysfs no device, leitura do
+fonte do wrapper) — **tudo conferiu**, incluindo as duas correções que apontaram erros do plano
+original:
+
+| Item | Como foi verificado | Resultado |
+|---|---|---|
+| Testes das frentes A/B/C + Onda 0 | 9 classes, **50 testes**, duas rodadas | ✅ 0 falhas, 0 erros |
+| I1a/I1b (`ThermalZoneClassification`) | Lógica lida + **está ligada**: `SystemMetricsReader.kt:183,198` (`cpuRank`/`gpuRank`) e `PerfSampler.kt:780` | ✅ correto e integrado |
+| H2 (`BcnTuning`) | Acoplamento ASTC⇒GPU comparado ao wrapper: `wrapper_bcn_gpu_format_id:4023-4038` devolve `-1` ("CPU only") quando o destino não é ASTC; teto mínimo conferido em `wrapper_device.c:4188-4189` (`if (mb < 16) mb = 16`) | ✅ bate exatamente |
+| **G1 reframeado** (correção ao plano) | `wrapper_physical_device.c:359-388`: em `VK_DRIVER_ID_ARM_PROPRIETARY`, desliga `extended_dynamic_state{,2}` **só** para engines não-D3D e **fakeia** para DXVK/vkd3d | ✅ a correção está certa; a G1 original seria no-op ou pior |
+| **F6 reescopado** (correção ao plano) | `libvulkan_wrapper` não é valor selecionável (`arrays.xml` só tem `Wrapper*`/`Vortek`/`Turnip`/`VirGL`); spot-check `strings` nos 4 blobs confirma que só o `wrapper-gamenative` tem `WRAPPER_BYPASS_SWAPCHAIN_PLACED`/`WRAPPER_BCN_ASTC` | ✅ a correção está certa |
+| Afirmações do device A14 | `gpu_tmu=36.0`, `gpu_max_clock=949000`, `gpu_model=Mali-G68 2 cores r1p1 0x9204`; proveniência `WinlatorMali/.../widget/HudDataSource.java:40-55` confere linha a linha | ✅ |
+| Bloqueio de deploy | APK do device puxado + `apksigner --print-certs`: `edd1fdec…`; nosso `debug.keystore`: `47332f43…` | ✅ divergem |
+| Regra de ouro §5 | `PrefManager` das métricas novas default **false**; nada de tuning virou default | ✅ respeitada |
+
+### 11.2 F1 entregue como **opt-in** (default OFF)
+
+`WRAPPER_BYPASS_SWAPCHAIN_PLACED` agora é emissível a partir de um toggle na aba Gráficos
+(bloco `wrapper-gamenative`), com normalização em `WrapperTuning` (pura, testada) e teste
+`WrapperTuningTest` (3 casos). **Default OFF de propósito:** o próprio wrapper mantém 0 com
+`// TODO: turn on by default if safe`, e a §7 (risco 4) trata isso como hipótese a medir — não
+como verdade. Ligar o toggle é o primeiro passo do A/B; virar default do Mali é o passo
+seguinte, só com medição.
+
+### 11.3 J1 deixa de ser subespecificado — mas é **read-only** neste device
+
+O SM-A146M responde a objeção registrada em §9.4 ("API por power levels × devfreq por
+frequência"): o nó expõe **frequências**, não níveis.
+
+| Nó | Valor lido | Permissão |
+|---|---|---|
+| `/sys/kernel/gpu/gpu_freq_table` | `208000 312000 403000 507000 611000 728000 845000 949000` (kHz, 8 níveis) | `-r--r--r--` |
+| `/sys/kernel/gpu/gpu_clock` | `0` (ocioso) | `-r--r--r--` |
+| `/sys/kernel/gpu/gpu_busy` | `2%` | `-r--r--r--` |
+| `/sys/kernel/gpu/gpu_governor` | `Interactive` | `-rw-r--r--` **system:system** |
+| `/sys/kernel/gpu/gpu_min_clock` / `gpu_max_clock` | `208000` / `949000` | `-rw-r--r--` **system:system** |
+
+`gpu_freq_table` mapeia direto em `PerformanceDriver.getAvailableGpuFrequencies(): List<Long>`
+(kHz) e `gpu_clock` em `getCurrentGpuValue()` — **dispensa a tradução para power levels** e
+resolve a parte "subespecificada" de J1. Porém os nós são `system:system` e o app é uid comum:
+**sem root só há leitura**. Logo um driver Mali aqui é de **monitoração**, e `setMinGpuValue`/
+`setMaxGpuValue`/`setGovernor` não são viáveis — o que **sobrepõe J1 à frente I** (telemetria).
+Mantém-se por último, agora por decisão informada e não por falta de especificação.
+
+### 11.4 Conclusão
+
+**Entregue e verificado:** frentes **A/B/C** (`e4222aae`), **Onda 0** completa
+(`docs/plano-mali-mediatek-onda0-impl.md`), **H2**, **I1a/I1b/I1c**, **I2** (utilização),
+**I3/I4** (HUD, off por padrão), **I5**, **G2** (desenho), **F3**, **F6** (reescopado) e
+**F1 como opt-in**.
+
+**Pendente, com a razão exata:**
+
+| Pendência | Bloqueio real |
+|---|---|
+| A/B de **F1**/**F2**/**G3** | Precisa de um **container com jogo rodando** com build nosso. O app foi desinstalado, então os dados de container da sessão de 2026-10-08 (16–25 fps) **não existem mais** — o setup é do zero. O `libvulkan_wrapper.so` só carrega quando um container é lançado |
+| **G1** (por modelo) e **H4** (mapa BCN por geração) | Só com medição; a chave (`GpuClassification.maliModel/maliSeries`) já está pronta e testada |
+| **I2** (frequência/temperatura GED) | Exige device **MediaTek**; este é Exynos 1330 |
+| **J1–J4** | Read-only sem root (§11.3); sobrepõe I |
+| **K2** (Immortalis), **K4** (present modes) | Precisam de device com esses cenários |
+
+**Próximo passo único e concreto:** instalar o build atual, criar **um** container e rodar o A/B
+do F1 (toggle **OFF** vs **ON**, mesmo jogo/cena) usando
+`tools/mali-metrics-report/mali_metrics_report.py --pull`, com o rótulo do wrapper para
+confirmar o caminho escolhido (`"Bypassing EXT_map_memory_placed emulation for swapchain image"`).
+Esse é o único item capaz de converter o F1 de alavanca em ganho medido — e o A14 já demonstrou
+o sintoma que ele ataca.

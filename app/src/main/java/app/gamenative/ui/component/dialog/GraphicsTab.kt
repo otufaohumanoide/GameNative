@@ -22,6 +22,7 @@ import app.gamenative.ui.theme.settingsTileColors
 import app.gamenative.ui.theme.settingsTileColorsAlt
 import app.gamenative.utils.BcnTuning
 import app.gamenative.utils.LsfgVkManager
+import app.gamenative.utils.WrapperTuning
 import com.alorma.compose.settings.ui.SettingsGroup
 import com.alorma.compose.settings.ui.SettingsSwitch
 import com.winlator.contents.ContentProfile
@@ -134,6 +135,25 @@ fun GraphicsTabContent(state: ContainerConfigState, default: Boolean = false) {
                         val digits = raw.filter { it.isDigit() }.take(5)
                         val cfg = KeyValueSet(config.graphicsDriverConfig)
                         cfg.put("bcnGpuCapMb", digits.ifEmpty { BcnTuning.DEFAULT_GPU_CAP_MB.toString() })
+                        state.config.value = config.copy(graphicsDriverConfig = cfg.toString())
+                    },
+                )
+                // F1 (plano-mali-mediatek.md): pula a emulação de VK_EXT_map_memory_placed em
+                // imagens de swapchain. Opt-in e DESLIGADO por padrão — o próprio wrapper mantém o
+                // default em 0 ("TODO: turn on by default if safe"); virar default do Mali exige
+                // A/B on-device (regra de ouro da §5). Normalização em WrapperTuning.
+                val bypassSwapchainPlaced = WrapperTuning.bypassSwapchainPlaced(
+                    KeyValueSet(config.graphicsDriverConfig)
+                        .get(WrapperTuning.KEY_BYPASS_SWAPCHAIN_PLACED),
+                )
+                SettingsSwitch(
+                    colors = settingsTileColors(),
+                    title = { Text(text = stringResource(R.string.bypass_swapchain_placed)) },
+                    subtitle = { Text(text = stringResource(R.string.bypass_swapchain_placed_hint)) },
+                    state = bypassSwapchainPlaced,
+                    onCheckedChange = { checked ->
+                        val cfg = KeyValueSet(config.graphicsDriverConfig)
+                        cfg.put(WrapperTuning.KEY_BYPASS_SWAPCHAIN_PLACED, if (checked) "1" else "0")
                         state.config.value = config.copy(graphicsDriverConfig = cfg.toString())
                     },
                 )

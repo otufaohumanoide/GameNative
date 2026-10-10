@@ -156,6 +156,7 @@ import app.gamenative.utils.SteamTokenLogin
 import app.gamenative.utils.SteamUtils
 import app.gamenative.utils.downloader.WinComponentDownloader
 import app.gamenative.utils.WineProcessSnapshotHelper
+import app.gamenative.utils.WrapperTuning
 import com.posthog.PostHog
 import com.winlator.alsaserver.ALSAClient
 import com.winlator.container.Container
@@ -6149,6 +6150,18 @@ private suspend fun extractGraphicsDriverFiles(
         envVars.put(
             "WRAPPER_BCN_GPU_CAP_MB",
             BcnTuning.gpuCapMb(graphicsDriverConfig.get("bcnGpuCapMb")).toString(),
+        )
+
+        // F1 (plano-mali-mediatek.md §2.2/§2.3): pula a emulação de VK_EXT_map_memory_placed para
+        // imagens de swapchain. Em todo Mali o AHB BGRA_8888 é ilegal, o swapchain direto falha e
+        // cai no caminho de blit. Opt-in (default OFF): o próprio wrapper mantém o default em 0
+        // com "TODO: turn on by default if safe" — virar default exige A/B on-device (regra §5).
+        // Presente no blob shipado. Normalização única em WrapperTuning.
+        envVars.put(
+            "WRAPPER_BYPASS_SWAPCHAIN_PLACED",
+            WrapperTuning.bypassSwapchainPlacedEnv(
+                graphicsDriverConfig.get(WrapperTuning.KEY_BYPASS_SWAPCHAIN_PLACED),
+            ),
         )
 
         val wrapperQuality = graphicsDriverConfig.get("quality", "low")

@@ -937,6 +937,8 @@
     <string name="bcn_astc_hint">On by default. Off falls back to RGBA8 and disables the GPU transcoder.</string>
     <string name="bcn_gpu_cap_mb">GPU transcode memory (MB)</string>
     <string name="bcn_gpu_cap_mb_hint">Default 128, minimum 16 (GPU transcoder only)</string>
+    <string name="bypass_swapchain_placed">Bypass placed-memory emulation (Mali)</string>
+    <string name="bypass_swapchain_placed_hint">Off by default. On Mali the external swapchain fails and falls back to a slower blit path; enabling this skips the VK_EXT_map_memory_placed emulation for swapchain images. Experimental — measure both ways.</string>
     <string name="sharpness_effect">Sharpness Boost</string>
     <string name="sharpness_level">Sharpness Level</string>
     <string name="sharpness_denoise">Sharpness Denoise</string>
