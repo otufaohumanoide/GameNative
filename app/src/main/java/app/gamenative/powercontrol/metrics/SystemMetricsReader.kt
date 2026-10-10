@@ -63,6 +63,12 @@ object SystemMetricsSources {
             "/sys/kernel/gpu/gpu_busy",
             "/sys/class/misc/pvrsrvkm/device/utilisation",
             "/sys/class/devfreq/gpu/load",
+            // MediaTek GED e Mali kbase (frente I2 do plano mali). Paths verificados em
+            // reference/WinlatorMali/.../HudDataSource.java:46-55; todos são porcentagens.
+            "/sys/module/ged/parameters/gpu_loading",
+            "/sys/module/mali_kbase/parameters/mali_gpu_utilization",
+            "/sys/module/mali/parameters/mali_gpu_utilization",
+            "/proc/mali/utilization",
         ).forEach(::add)
 
         listOf(
@@ -79,6 +85,7 @@ object SystemMetricsSources {
                 val usageFiles = listOf(
                     "gpu_busy_percentage",
                     "gpu_load",
+                    "gpu_loading", // MediaTek GED (ex.: /sys/class/devfreq/mtk-dvfs-gpu)
                     "utilisation",
                     "utilization",
                     "load",

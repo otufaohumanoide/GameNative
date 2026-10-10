@@ -384,3 +384,23 @@ conectado (A14) não foi exercitado; em qualquer device sem esse nó nada muda (
 **Verificação (2026-10-10):** `:app:testModernDebugUnitTest --tests "*GpuBusyDelta*" --tests "*BcnTuning*"
 --tests "*ThermalZoneClassification*"` → **BUILD SUCCESSFUL**, `GpuBusyDeltaTest` 5/5,
 `BcnTuningTest` 5/5, `ThermalZoneClassificationTest` 10/10.
+
+
+---
+
+## 11. I2 (parcial) — leitores de utilização de GPU MediaTek/Mali
+
+O plano (I2) aponta "zero leitores" de MediaTek. Nesta passada foram adicionados apenas os nós de
+**utilização de GPU** cujos caminhos estão verificados numa referência real
+(`reference/WinlatorMali/.../HudDataSource.java:46-55`), todos percentuais:
+
+- `SystemMetricsSources.gpuUsagePaths()`: candidatos explícitos
+  `/sys/module/ged/parameters/gpu_loading`,
+  `/sys/module/mali_kbase/parameters/mali_gpu_utilization`,
+  `/sys/module/mali/parameters/mali_gpu_utilization` e `/proc/mali/utilization`; e `gpu_loading`
+  entra na varredura de nós devfreq (ex.: `/sys/class/devfreq/mtk-dvfs-gpu`).
+- Tudo `canRead`-guardado e **depois** dos caminhos existentes: em device sem esses nós, nada muda.
+
+**Fora desta passada (nomes não verificados em nenhuma referência):** frequência de GPU via
+`/proc/gpufreq/*` (I2/I3) e temperatura de GPU em `/sys/kernel/ged/*`. Implementá-los exigiria
+adivinhar nomes de nó — o erro que o §7 do plano alerta. Ficam para quando houver device MediaTek.
