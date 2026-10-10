@@ -408,3 +408,11 @@ O que isso destrava e o que não destrava:
 - O A/B on-device de F1/F2/G1 continua exigindo **um jogo rodando** (e a coleta de
   `metrics-*.jsonl`), o que é interativo. O `libvulkan_wrapper.so` só é carregado quando um
   container é lançado.
+
+**Evidência real deste device (métricas de 2026-10-08, `metrics-{{...}}.jsonl`):** uma sessão de
+jogo rodou a **16–25 fps com p95 ~57–73 ms**, `gpuUsagePercent` 74–89 %, e o controle adaptativo
+de FPS entrou em ação (cap 60→45→30, `fpscap-*.jsonl`). `cpuTempC`/`gpuTempC` vêm **null** (o
+sysfs térmico é negado ao uid do app) e `cpuUsageSource = CPU_FREQUENCY` (o `/proc/stat` também
+não rende delta). Ou seja: o A14 exibe exatamente o quadro de subdesempenho que o **F1** (bypass
+de WSI no Mali) tenta atacar — é um bom alvo de A/B, quando houver como rodar o jogo com um build
+nosso.
