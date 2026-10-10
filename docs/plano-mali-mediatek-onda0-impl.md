@@ -431,3 +431,27 @@ guardada (no flavor legacy, minSdk 26, o campo fica `null`).
 O formato do `metrics-*.jsonl` foi extraído de `PerformanceMetricsCollector` para
 `MetricsJson` (puro, JVM-testável); `MetricsJsonTest` trava os campos, incluindo os novos
 `gpuFreqMhz`/`thermalStatus`.
+
+
+---
+
+## 13. F5 — mecanismo de log do wrapper (levantado, não implementado)
+
+Para tornar o "penhasco de blit" atribuível, o plano quer registrar no JSONL qual caminho de WSI
+foi escolhido. Levantei *onde* essa informação vive, no fonte do wrapper
+(`reference/GameNative-mesa/src/vulkan/wrapper/wrapper_log.c`):
+
+- O wrapper sempre escreve em **arquivo**: `WRAPPER_LOG_FILE` se setado, senão
+  `/sdcard/wrapper/logs/<exe>_<data>` (o diretório é criado por `init_wrapper_logging`).
+- O nível é controlado por `WRAPPER_LOG_LEVEL` (ex.: `info`); a linha
+  `Bypassing EXT_map_memory_placed emulation for swapchain image` é `WRAPPER_LOG(info, …)`.
+- Com `WRAPPER_DIAG=1` o mesmo texto também vai para `stderr` (redirecionado ao arquivo único de
+  diagnóstico por jogo).
+
+Ou seja, **F5 é implementável sem logcat**: setar `WRAPPER_LOG_LEVEL`/`WRAPPER_LOG_FILE` para o
+diretório do container, ler o arquivo e extrair o caminho (direct vs blit) para o JSONL.
+
+**Por que não implementei agora:** (a) é Onda 1 (`Depende de K1`) — o plano exige confirmar no
+device que a linha aparece e com que frequência; (b) ligar o nível `info` em produção adiciona um
+`write` (com `fflush`) por evento no processo do jogo — um custo que precisa ser medido antes de
+virar default. Fica registrado o mecanismo para a sessão on-device.
