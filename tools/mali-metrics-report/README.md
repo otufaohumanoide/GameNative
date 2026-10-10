@@ -23,7 +23,8 @@ regressão**, e registrar o resultado no spec antes de virar default (regra de o
 - amostras totais e "jogando" (`fps > 0`; ignora o aquecimento);
 - fps médio, p95 mediano e p95 máximo (só amostras com `fps > 0`);
 - total de slow frames, média de GPU% e CPU%;
-- quantas amostras trazem temperatura (`cpuTempC`/`gpuTempC`) e nível térmico (`thermalStatus`) —
-  útil para saber se o device expõe esses nós.
+- quantas amostras trazem temperatura (`cpuTempC`/`gpuTempC`), nível térmico (`thermalStatus`) e
+  headroom (`thermalHeadroom`, média e máximo) — útil para saber se o device expõe esses nós e
+  para detectar throttling durante o A/B.
 
 Só usa a biblioteca padrão do Python 3.

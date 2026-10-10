@@ -79,6 +79,8 @@ def summarize(path: str) -> dict:
         "mean_cpu": statistics.fmean(_values(rows, "cpuUsagePercent")) if _values(rows, "cpuUsagePercent") else None,
         "temp_samples": sum(1 for r in rows if r.get("cpuTempC") is not None or r.get("gpuTempC") is not None),
         "thermal_samples": sum(1 for r in rows if r.get("thermalStatus") is not None),
+        "mean_headroom": statistics.fmean(_values(rows, "thermalHeadroom")) if _values(rows, "thermalHeadroom") else None,
+        "max_headroom": max(_values(rows, "thermalHeadroom")) if _values(rows, "thermalHeadroom") else None,
     }
 
 
@@ -96,6 +98,7 @@ def print_row(s: dict) -> None:
     print(f"  slow frames: {s['slow_frames']}  gpu% médio: {fmt(s['mean_gpu'])}  "
           f"cpu% médio: {fmt(s['mean_cpu'])}")
     print(f"  amostras com temperatura: {s['temp_samples']}  com nível térmico: {s['thermal_samples']}")
+    print(f"  headroom médio: {fmt(s['mean_headroom'], '', 2)}  headroom máx: {fmt(s['max_headroom'], '', 2)}")
 
 
 def main() -> None:
