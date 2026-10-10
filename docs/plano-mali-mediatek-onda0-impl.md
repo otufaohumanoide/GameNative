@@ -483,3 +483,11 @@ Levantado no device conectado (2026-10-10), para calibrar I2/I3/J1:
 Conclusão prática: I2 (utilização) é útil; I3 (frequência) fica `null` em Exynos/G68 e depende do
 nó devfreq de MediaTek; J1 precisa cobrir tanto devfreq (MediaTek) quanto `mali0/device/dvfs*`
 (Exynos) se quiser leitura de frequência em ambos.
+
+**CPU via `/proc/stat`:** o `shell` do adb **lê** `/proc/stat` neste device, mas **todas** as
+amostras de `metrics-*.jsonl` vêm com `cpuUsageSource = CPU_FREQUENCY`. Como o parser de
+`CpuUsageSampler` está coberto e usa só a primeira linha (`cpu …`), a explicação provável é
+**SELinux/Knox negando `/proc/stat` ao domínio do app**, não um bug do parser — o fallback de
+frequência está fazendo seu trabalho. Fica registrado para ninguém "consertar" o parser sem
+antes confirmar o acesso no domínio do app. (No A14 a temperatura também é negada ⇒ telemetria
+térmica nula; ver §7.)
