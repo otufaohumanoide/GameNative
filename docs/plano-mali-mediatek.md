@@ -303,3 +303,40 @@ spec — a §2 mostra que assumptions de tuning neste domínio erram com facilid
 | J (driver) | `winlator_mali/README.md` (governors); nosso `powercontrol/README.md:481` |
 | LSFG (K3) | `LSFG-Android/lsfg-vk-android/src/context.cpp`; `lsfg-vk-upstream` |
 | OpSpecConstant | `winlator-internals/_posts/2025-08-10-OpCompositeConstant.md` + nosso `WRAPPER_NO_PATCH_OPCONSTCOMP` (`XServerScreen.kt:5983`) |
+
+---
+
+## 9. Status após a Onda 0 (2026-10-10)
+
+A Onda 0 (itens sem device) foi executada. Registro completo — mudanças, investigações e
+verificação — em **`docs/plano-mali-mediatek-onda0-impl.md`**.
+
+| Item da Onda 0 | Resultado |
+|---|---|
+| I1a/I1b — trip points `*-step` e `soc` isolado | Entregue (`ThermalZoneClassification` + testes) |
+| I1c — `gpuss` | Confirmado como não-problema; correção do doc de referências |
+| H1 — `ENABLE_BCN_COMPUTE` | Mantido como inofensivo/no-op, com comentário e correção no spec §4.1 |
+| G2 — `enumerateExtensions` / decisão por capacidade | Design registrado; **G1 reframeado** (abaixo) |
+| F3 — proveniência do blob | `b8663654f7ea` (`GameNative/mesa`, `wrapper-25`); doc dedicado |
+| H3 — transcode BCN por GPU | Fluxo mapeado; `WRAPPER_BCN_GPU_CAP_MB` é o lever novo seguro de expor |
+
+### 9.1 Correção da Frente G (o que a Onda 0 mudou)
+
+O **G1** ("pré-popular `blacklistedExtensions` com `VK_EXT_extended_dynamic_state` no Mali") foi
+escrito a partir do `winlator_mali`, que descreve o **Vortex**. Verificado no binário que
+shipamos: o `wrapper-gamenative` **já decide** isso no nível nativo e ciente do engine
+(`wrapper_physical_device.c:355-390`) — em ARM Mali ele **desliga** `..._state`/`..._state2` para
+engines não-D3D e **mantém** para DXVK/vkd3d. Portanto:
+
+- para jogos Vulkan nativos, a blacklist é **no-op**;
+- para DXVK/vkd3d, ela **contradiz** o wrapper e pode custar desempenho.
+
+**G1 deixa de ser "pré-popular por ser Mali"** e vira **opt-in por modelo medido** (a tabela
+curada por `maliModel`/`maliSeries` continua vazia até haver medição). Detalhes e desenho em
+`plano-mali-mediatek-onda0-impl.md` §4.2.
+
+### 9.2 O que continua pendente
+
+**F1** (`WRAPPER_BYPASS_SWAPCHAIN_PLACED=1` no Mali) segue sendo o item de maior valor e menor
+custo, e continua bloqueado por device (K1). Nada de tuning virou default — a regra de ouro da §5
+foi respeitada.

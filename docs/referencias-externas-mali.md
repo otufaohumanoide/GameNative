@@ -142,7 +142,10 @@ não lê nada de `mali0`/MediaTek GPU sysfs (ver §3).
 
 ---
 
-## 4. Itens acionáveis destilados (prioridade — nenhum implementado ainda)
+## 4. Itens acionáveis destilados (prioridade)
+
+> Status de execução: `docs/plano-mali-mediatek.md` é o roadmap; a Onda 0 está registrada em
+> `docs/plano-mali-mediatek-onda0-impl.md`.
 
 1. **ALTA — caminho de blit no Mali (`wsi-woes`).** É o maior ganho de desempenho plausível
    documentado: em todo Mali o swapchain direto falha e tudo vira blit. Relaciona-se
@@ -153,10 +156,13 @@ não lê nada de `mali0`/MediaTek GPU sysfs (ver §3).
    texturas ausentes em alguns drivers Mali. Ação concreta possível: pré-popular
    `blacklistedExtensions` para Mali no preset/default (`graphicsDriverConfig`), sem código
    novo de motor.
-3. **MÉDIA — `gpuss` na leitura de temperatura.** Nosso ranker de GPU
-   (`SystemMetricsReader.kt:138-147`) cobre `gpu-silicon/gpu/g3d/kgsl/mali` mas **não** `gpuss`,
-   que é como MediaTek/Exynos nomeiam a zona. Correção de 1 linha, com fonte
-   (`SocThermalMonitor.kt:263-286`). Pertence à frente **D** (deferida).
+3. **CORRIGIDO (não havia bug) — `gpuss` na leitura de temperatura.** A versão original deste
+   item dizia que o ranker de GPU não cobria `gpuss`. **É falso:** `"gpuss".contains("gpu")` é
+   `true`, então `gpuss-*` já casa o rank 1 (`SystemMetricsReader.kt:141`, hoje
+   `ThermalZoneClassification.gpuRank`). Registrado aqui para ninguém "consertar" um
+   não-problema (item **I1c** do `plano-mali-mediatek.md`). Os bugs reais de telemetria são
+   outros dois: trip points `*-step` e `soc` isolado (State of Charge em %) — itens **I1a/I1b**,
+   entregues na Onda 0.
 4. **MÉDIA — `OpSpecConstant`/`WRAPPER_NO_PATCH_OPCONSTCOMP`.** O `winlator-internals`
    documenta o bug de Mali que o nosso próprio `WRAPPER_NO_PATCH_OPCONSTCOMP` endereça —
    leitura obrigatória antes de mexer nesse caminho.

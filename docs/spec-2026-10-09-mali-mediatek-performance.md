@@ -140,6 +140,19 @@ protocolo A/B descrito em §8.
 Aceite: comportamento Adreno/Xclipse byte-idêntico (testes de regressão); Mali com wrapper-gamenative
 sem `ENABLE_BCN_COMPUTE`; demais combinações inalteradas.
 
+### 4.1 Correção pós-entrega (plano `plano-mali-mediatek.md` §2.1/§2.4) — B1 é no-op com o wrapper que shipamos
+
+Verificação posterior no **binário distribuído** mostrou que `ENABLE_BCN_COMPUTE`/`BCN_COMPUTE_AUTO`
+**não existem** no `libvulkan_wrapper.so` do `wrapper-gamenative.tzst` (nem em nenhum arquivo-fonte
+do `GameNative-mesa`): são legado da linhagem Winlator que o driver ignora. Portanto a mudança B1 é
+**correta e inofensiva, mas não entrega ganho** — a motivação "fechar a lacuna de BCN do PR #1673"
+não se sustenta como tuning. **Decisão (H1):** manter como está (preserva a decisão histórica de
+Adreno/Xclipse byte-idêntica, custo zero) com comentário explícito no código; **nunca** apresentar
+`ENABLE_BCN_COMPUTE` como lever. Os levers de BCN realmente lidos pelo wrapper são
+`WRAPPER_BCN_ASTC`/`WRAPPER_BCN_GPU`/`WRAPPER_BCN_GPU_CAP_MB` (frente H2 do plano);
+`WRAPPER_BCN_POLICY` está no fonte mas não no blob (exige bump de wrapper).
+Evidência e verificação: `docs/plano-mali-mediatek-onda0-impl.md`.
+
 ---
 
 ## 5. Frente C — expor `immediate`/`relaxed`
@@ -194,9 +207,11 @@ sem `ENABLE_BCN_COMPUTE`; demais combinações inalteradas.
 1. Legibilidade e valores reais dos nós Mali no DDK do aparelho alvo; se o kernel expõe
    `/sys/class/misc/mali0/device/`.
 2. Veredito real de `supportsFrameGeneration` no device (A4a loga; com ele, decidir A4b).
-3. Protocolo A/B de BCN: mesmo jogo/cena com BCN compute ON vs OFF, capturando `metrics-*.jsonl`
-   (sempre ativo) e o relatório de debug (`PerfSampler`, só em debug run) para FPS/p95/slow-frames.
-   **Critério:** manter a exclusão só se OFF ≥ paridade e sem regressão; senão reverter B1.
+3. Protocolo A/B de BCN — **reframado (K5 do plano):** testar os levers que o wrapper realmente lê
+   (`WRAPPER_BCN_ASTC`, `WRAPPER_BCN_GPU`, `WRAPPER_BCN_GPU_CAP_MB`, `WRAPPER_EMULATE_BCN`), **não**
+   `ENABLE_BCN_COMPUTE` (no-op — ver §4.1). Mesmo jogo/cena com o lever ON vs OFF, capturando
+   `metrics-*.jsonl` (sempre ativo) e o relatório de debug (`PerfSampler`, só em debug run) para
+   FPS/p95/slow-frames.
 4. Mudança de comportamento em Immortalis (R1).
 5. Present mode `immediate`/`relaxed` sem tearing perceptível no device (escolha do usuário; o
    fallback nativo já protege o caso de modo não suportado).

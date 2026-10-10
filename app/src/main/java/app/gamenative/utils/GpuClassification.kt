@@ -102,6 +102,15 @@ object GpuClassification {
      *
      * Não altera `WRAPPER_EMULATE_BCN`: apenas `ENABLE_BCN_COMPUTE` e
      * `BCN_COMPUTE_AUTO` são gateados por este predicado.
+     *
+     * **H1 (plano-mali-mediatek.md §2.1/§2.4): o gate é NO-OP no wrapper que shipamos.**
+     * `ENABLE_BCN_COMPUTE`/`BCN_COMPUTE_AUTO` não existem em nenhum arquivo do
+     * `GameNative-mesa` (fonte do `wrapper-gamenative`) nem no `libvulkan_wrapper.so`
+     * do blob distribuído — são legado da linhagem Winlator. Mantido de propósito:
+     * preserva a decisão histórica de Adreno/Xclipse byte-idêntica e não custa nada;
+     * a exclusão de Mali é defesa em profundidade, **não** entrega ganho. Os levers
+     * de BCN realmente lidos são `WRAPPER_BCN_ASTC`/`WRAPPER_BCN_GPU`/
+     * `WRAPPER_BCN_GPU_CAP_MB` (frente H2) e `WRAPPER_EMULATE_BCN`.
      */
     fun shouldExcludeBcnCompute(
         vendorId: Int,

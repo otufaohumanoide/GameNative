@@ -6099,6 +6099,12 @@ private suspend fun extractGraphicsDriverFiles(
             GPUInformation.getRenderer(context),
             isWrapperGamenative,
         )
+        // H1 (plano-mali-mediatek.md §2.1/§2.4): ENABLE_BCN_COMPUTE/BCN_COMPUTE_AUTO são legado
+        // da linhagem Winlator e NÃO são lidos pelo wrapper que shipamos (ausentes em
+        // `strings libvulkan_wrapper.so` do `wrapper-gamenative.tzst`). Mantidos por serem
+        // inofensivos e preservarem a decisão histórica de Adreno/Xclipse, mas NÃO são lever de
+        // desempenho. Os levers de BCN realmente lidos são WRAPPER_BCN_ASTC/_GPU/_GPU_CAP_MB
+        // (frente H2) e WRAPPER_EMULATE_BCN logo abaixo.
         val bcnEmulation = graphicsDriverConfig.get("bcnEmulation")
         val bcnEmulationType = graphicsDriverConfig.get("bcnEmulationType")
         when (bcnEmulation) {
