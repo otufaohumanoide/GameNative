@@ -340,3 +340,30 @@ curada por `maliModel`/`maliSeries` continua vazia até haver medição). Detalh
 **F1** (`WRAPPER_BYPASS_SWAPCHAIN_PLACED=1` no Mali) segue sendo o item de maior valor e menor
 custo, e continua bloqueado por device (K1). Nada de tuning virou default — a regra de ouro da §5
 foi respeitada.
+
+---
+
+## 10. Device conectado em 2026-10-10 (não é o MediaTek de K1)
+
+Durante a execução da Onda 0 apareceu um device via adb:
+
+| Item | Valor |
+|---|---|
+| Modelo | Samsung **SM-A146M** (Galaxy A14 5G), Android 15 |
+| SoC | Exynos 1330 (`s5e8535`) — **não** MediaTek |
+| GPU | **ARM Mali-G68** (driver `v1.r38p1`, driverID 9 = ARM proprietary) |
+| Vulkan | 1.3; expõe `VK_EXT_extended_dynamic_state` e `..._state2`; **não** expõe `VK_EXT_map_memory_placed`; ASTC HDR presente |
+| Root | não (`su` ausente) |
+| `app.gamenative` | instalado (v0.0.1, 2026-08-16 — anterior ao fork atual) |
+| sysfs térmico | **negado** para o usuário `shell`; as métricas gravadas mostram `cpuTempC`/`gpuTempC` **null** |
+
+O que isso destrava e o que não destrava:
+
+- **Destrava parcialmente** as frentes **Mali** (F/G/H/J): é hardware Mali real, e o `cmd gpu vkjson`
+  confirma a premissa de G2 (o driver base anuncia `extended_dynamic_state{,2}`; o wrapper os
+  desliga para engines não-D3D).
+- **Não destrava** as frentes **MediaTek** (I2–I5: GED/gpufreq) nem a verificação térmica — este
+  device é Exynos e bloqueia o sysfs térmico para o adb.
+- O A/B on-device de F1/F2/G1 continua exigindo **um jogo rodando** (e a coleta de
+  `metrics-*.jsonl`), o que é interativo. O `libvulkan_wrapper.so` só é carregado quando um
+  container é lançado.

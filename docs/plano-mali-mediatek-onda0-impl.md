@@ -202,7 +202,9 @@ token (seria tuning falso, o mesmo erro de `ENABLE_BCN_COMPUTE`).
 
 ## 5. Pendente (bloqueado por device — K1)
 
-Nenhum item abaixo foi tocado: todos exigem device MediaTek com adb, que não está conectado.
+Nenhum item abaixo foi tocado. Quase todos exigem device adb; em 2026-10-10 apareceu um device
+**Mali** (Samsung SM-A146M, Mali-G68 — ver §7), que destrava as frentes Mali mas **não** é o
+MediaTek de K1.
 
 - **F1** — `WRAPPER_BYPASS_SWAPCHAIN_PLACED=1` no Mali. Maior valor/menor custo; medir **primeiro**
   quando houver device. Não virou default porque a regra de ouro exige A/B (o próprio autor
@@ -259,3 +261,24 @@ Notas de toolchain (divergem do `AGENTS.md`): `JAVA_HOME` desta máquina é
 `/home/marcos/android-studio/jbr` (o `AGENTS.md` aponta `/home/annapaula/...`), `java` não está no
 PATH e `--no-configuration-cache` é necessário pelos problemas pré-existentes das tasks
 `librashader`.
+
+
+---
+
+## 7. Device conectado em 2026-10-10
+
+Apareceu um device via adb durante a execução: Samsung **SM-A146M** (Galaxy A14 5G), Exynos 1330,
+**Mali-G68**, Android 15, sem root. Confirmações lidas só com `adb` (nada instalado/alterado):
+
+- `cmd gpu vkjson`: Vulkan 1.3, driverID 9 (ARM proprietary), expõe
+  `VK_EXT_extended_dynamic_state` e `VK_EXT_extended_dynamic_state2`, **não** expõe
+  `VK_EXT_map_memory_placed`, tem ASTC HDR. Isso confirma a premissa de G2 (§4.2) em hardware
+  Mali real.
+- `/sys/class/thermal` é **negado** ao usuário `shell`; as métricas já gravadas pelo app
+  (`metrics-*.jsonl`) mostram `cpuTempC`/`gpuTempC` **null** — a correção I1a/I1b não é
+  observável neste device porque não há leitura nenhuma.
+- É hardware **Mali**, não MediaTek: destrava as frentes Mali (F/G/H/J) para A/B, mas **não** as
+  MediaTek (I2–I5) nem satisfaz o K1 como escrito.
+
+O A/B on-device de F1/F2/G1 exige um jogo rodando (o wrapper só carrega no launch do container) e
+coleta de `metrics-*.jsonl`; é interativo e não foi feito.
