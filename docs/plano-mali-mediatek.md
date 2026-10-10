@@ -320,6 +320,7 @@ verificação — em **`docs/plano-mali-mediatek-onda0-impl.md`**.
 | F3 — proveniência do blob | `b8663654f7ea` (`GameNative/mesa`, `wrapper-25`); doc dedicado |
 | H3 — transcode BCN por GPU | Fluxo mapeado; `WRAPPER_BCN_GPU_CAP_MB` é o lever novo seguro de expor |
 | H2 — expor levers de BCN | `WRAPPER_BCN_GPU_CAP_MB` e `WRAPPER_BCN_ASTC` (acoplado: ASTC off ⇒ GPU off) expostos; POLICY fora (ausente do blob). Sem mudar defaults |
+| I5 — contadores devfreq | `busy_time`/`total_time` de nós GPU alimentam o `GpuBusyDelta`; testes puros do delta. Verificação on-device pendente |
 
 ### 9.1 Correção da Frente G (o que a Onda 0 mudou)
 

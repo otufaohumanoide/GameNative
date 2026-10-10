@@ -91,6 +91,15 @@ object SystemMetricsSources {
                         candidates += file.path
                     }
                 }
+                // devfreq expõe o par `busy_time`/`total_time` (cumulativo) em vez de uma linha só;
+                // em nós de GPU alimentamos o mesmo GpuBusyDelta (frente I5 do plano mali). Fica por
+                // último para não roubar a prioridade dos nós de porcentagem acima.
+                if (looksLikeGpuNode &&
+                    File(nodeDir, "busy_time").canRead() &&
+                    File(nodeDir, "total_time").canRead()
+                ) {
+                    candidates += File(nodeDir, "busy_time").path
+                }
             }
         }
 
@@ -391,6 +400,14 @@ class GpuUsageSampler {
                 if (wallDelta <= 0L) return null
                 val gpuDelta = (gpuMs - previousMs).coerceAtLeast(0L)
                 GpuUsageReading(((gpuDelta * 100L) / wallDelta).toInt().coerceIn(0, 100), path)
+            }
+            // devfreq: `busy_time` e `total_time` são arquivos separados no diretório do nó.
+            "busy_time" -> {
+                val busy = SystemMetricsSources.readLongFromLine(path) ?: return null
+                val total = SystemMetricsSources.readLongFromLine(
+                    path.substringBeforeLast('/') + "/total_time",
+                ) ?: return null
+                busyDelta.update(busy, total)?.let { GpuUsageReading(it, path) }
             }
             else -> SystemMetricsSources.readPercentFromLine(path)?.let { percent ->
                 GpuUsageReading(percent, path)

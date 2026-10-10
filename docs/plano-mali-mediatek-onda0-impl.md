@@ -358,3 +358,29 @@ JAVA_HOME=/home/marcos/android-studio/jbr ./gradlew :app:testModernDebugUnitTest
 ```
 
 **BUILD SUCCESSFUL** — `BcnTuningTest` 5/5 e `ThermalZoneClassificationTest` 10/10, 0 falhas.
+
+
+---
+
+## 10. I5 — contadores devfreq `busy_time`/`total_time`
+
+O plano (I5) aponta que o `GpuUsageSampler` só entendia o par kgsl (`gpubusy`, uma linha só). O
+par devfreq expõe `busy_time` e `total_time` como **arquivos separados**; agora nós de GPU também
+alimentam o mesmo `GpuBusyDelta`.
+
+- `SystemMetricsSources.gpuUsagePaths()` — em nós devfreq com cara de GPU que tenham `busy_time` e
+  `total_time`, adiciona o caminho de `busy_time` **por último** (não rouba a prioridade dos nós de
+  porcentagem).
+- `GpuUsageSampler.readSample` — trata um caminho terminado em `busy_time`, lendo o `total_time` do
+  mesmo diretório e passando o par ao `GpuBusyDelta`.
+- `GpuBusyDeltaTest` (novo) — trava a semântica pura do delta: baseline na primeira leitura, carga
+  por intervalo, entradas inválidas, detecção de contador "per-read" (duas quedas) e reset.
+
+**On-device pendente:** a verificação depende de um device com nó devfreq de GPU. O Mali/Exynos
+conectado (A14) não foi exercitado; em qualquer device sem esse nó nada muda (os caminhos são
+`canRead`-guardados e ficam depois dos existentes).
+
+
+**Verificação (2026-10-10):** `:app:testModernDebugUnitTest --tests "*GpuBusyDelta*" --tests "*BcnTuning*"
+--tests "*ThermalZoneClassification*"` → **BUILD SUCCESSFUL**, `GpuBusyDeltaTest` 5/5,
+`BcnTuningTest` 5/5, `ThermalZoneClassificationTest` 10/10.
