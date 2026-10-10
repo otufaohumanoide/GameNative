@@ -1674,6 +1674,26 @@ private fun PerformanceHudQuickMenuTab(
             },
             accentColor = accentColor,
         )
+        QuickMenuToggleRow(
+            title = stringResource(R.string.performance_hud_gpu_clock),
+            enabled = performanceHudConfig.showGpuClock,
+            onToggle = {
+                onPerformanceHudConfigChanged(
+                    performanceHudConfig.copy(showGpuClock = !performanceHudConfig.showGpuClock),
+                )
+            },
+            accentColor = accentColor,
+        )
+        QuickMenuToggleRow(
+            title = stringResource(R.string.performance_hud_thermal),
+            enabled = performanceHudConfig.showThermalStatus,
+            onToggle = {
+                onPerformanceHudConfigChanged(
+                    performanceHudConfig.copy(showThermalStatus = !performanceHudConfig.showThermalStatus),
+                )
+            },
+            accentColor = accentColor,
+        )
         if (PowerManager.isFanControlAvailable()) {
             var showFan by remember { mutableStateOf(PrefManager.showPerformanceHudFan) }
             QuickMenuToggleRow(

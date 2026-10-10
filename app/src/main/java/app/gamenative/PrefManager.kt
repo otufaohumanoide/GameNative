@@ -469,6 +469,20 @@ object PrefManager {
             setPref(PERFORMANCE_HUD_SHOW_GPU_TEMPERATURE, value)
         }
 
+    private val PERFORMANCE_HUD_SHOW_GPU_CLOCK = booleanPreferencesKey("performance_hud_show_gpu_clock")
+    var performanceHudShowGpuClock: Boolean
+        get() = getPref(PERFORMANCE_HUD_SHOW_GPU_CLOCK, false)
+        set(value) {
+            setPref(PERFORMANCE_HUD_SHOW_GPU_CLOCK, value)
+        }
+
+    private val PERFORMANCE_HUD_SHOW_THERMAL_STATUS = booleanPreferencesKey("performance_hud_show_thermal_status")
+    var performanceHudShowThermalStatus: Boolean
+        get() = getPref(PERFORMANCE_HUD_SHOW_THERMAL_STATUS, false)
+        set(value) {
+            setPref(PERFORMANCE_HUD_SHOW_THERMAL_STATUS, value)
+        }
+
     private val PERFORMANCE_HUD_SHOW_FAN = booleanPreferencesKey("performance_hud_show_fan")
     var showPerformanceHudFan: Boolean
         get() = getPref(PERFORMANCE_HUD_SHOW_FAN, true)

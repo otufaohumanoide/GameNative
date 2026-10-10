@@ -11,6 +11,8 @@ import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
+import android.os.Build
+import android.os.PowerManager as AndroidPowerManager
 import android.text.TextUtils
 import android.text.format.DateFormat
 import android.util.TypedValue
@@ -29,6 +31,7 @@ import app.gamenative.powercontrol.metrics.SystemMetricsSources
 import app.gamenative.ui.data.PerformanceHudConfig
 import app.gamenative.ui.data.PerformanceHudSize
 import app.gamenative.utils.DateTimeUtils.formatRuntimeHours
+import app.gamenative.utils.ThermalStatuses
 import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
@@ -110,6 +113,8 @@ class PerformanceHudView(
     private val clockMetric = createMetricViews(MetricId.CLOCK, 0xFFFFCC80.toInt())
     private val cpuTempMetric = createMetricViews(MetricId.CPU_TEMP, 0xFFBDBDBD.toInt())
     private val gpuTempMetric = createMetricViews(MetricId.GPU_TEMP, 0xFFBDBDBD.toInt())
+    private val gpuClockMetric = createMetricViews(MetricId.GPU_CLOCK, 0xFF9CCC65.toInt())
+    private val thermalMetric = createMetricViews(MetricId.THERMAL, 0xFFFF8A65.toInt())
     private val batteryTempMetric = createMetricViews(MetricId.BATTERY_TEMP, 0xFFBDBDBD.toInt())
     private val fanMetric = createMetricViews(MetricId.FAN, 0xFF80DEEA.toInt())
     private val tuneMetric = createMetricViews(MetricId.TUNE, 0xFFCE93D8.toInt())
@@ -126,6 +131,8 @@ class PerformanceHudView(
         cpuTempMetric,
         gpuTempMetric,
         batteryTempMetric,
+        gpuClockMetric,
+        thermalMetric,
         fanMetric,
         tuneMetric,
     )
@@ -329,9 +336,21 @@ class PerformanceHudView(
                 ?.let { "CPU TEMP ${it}°C" },
             gpuTemp = SystemMetricsSources.readTemperatureC(SystemMetricsSources.gpuTempPaths())
                 ?.let { "GPU TEMP ${it}°C" },
+            gpuClock = readGpuClockText(),
+            thermal = readThermalText(),
             fan = readFanText(),
             tune = readTuneText(),
         )
+    }
+
+    private fun readGpuClockText(): String? =
+        SystemMetricsSources.readGpuFreqMhz()?.let { "GPU CLK ${it}MHz" }
+
+    private fun readThermalText(): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? AndroidPowerManager
+            ?: return null
+        return ThermalStatuses.label(powerManager.currentThermalStatus)?.let { "THERMAL $it" }
     }
 
     private fun readFanText(): String? {
@@ -436,6 +455,8 @@ class PerformanceHudView(
         updateMetricText(clockMetric, snapshot.clock)
         updateMetricText(cpuTempMetric, snapshot.cpuTemp)
         updateMetricText(gpuTempMetric, snapshot.gpuTemp)
+        updateMetricText(gpuClockMetric, snapshot.gpuClock)
+        updateMetricText(thermalMetric, snapshot.thermal)
         updateMetricText(fanMetric, snapshot.fan)
         updateMetricText(tuneMetric, snapshot.tune)
     }
@@ -459,6 +480,8 @@ class PerformanceHudView(
             addMetricIfVisible(cpuTempMetric, config.showCpuTemperature)
             addMetricIfVisible(gpuTempMetric, config.showGpuTemperature)
             addMetricIfVisible(batteryTempMetric, config.showBatteryTemperature)
+            addMetricIfVisible(gpuClockMetric, config.showGpuClock)
+            addMetricIfVisible(thermalMetric, config.showThermalStatus)
             addMetricIfVisible(fanMetric, true)
             addMetricIfVisible(tuneMetric, true)
         }

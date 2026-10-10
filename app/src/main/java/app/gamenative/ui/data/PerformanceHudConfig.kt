@@ -31,6 +31,8 @@ data class PerformanceHudConfig(
     val showClockTime: Boolean = false,
     val showCpuTemperature: Boolean = true,
     val showGpuTemperature: Boolean = true,
+    val showGpuClock: Boolean = false,
+    val showThermalStatus: Boolean = false,
     val showFrameRateGraph: Boolean = false,
     val showCpuUsageGraph: Boolean = false,
     val showGpuUsageGraph: Boolean = false,

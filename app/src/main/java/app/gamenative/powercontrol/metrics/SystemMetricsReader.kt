@@ -116,6 +116,54 @@ object SystemMetricsSources {
         return paths
     }
 
+    @Volatile
+    private var gpuFreqPathCache: String? = null
+
+    /**
+     * Caminho do `cur_freq` da GPU (kgsl ou devfreq). Ponto único de descoberta para o HUD,
+     * o collector sempre-ativo e o sampler de debug (frente I3 do plano mali).
+     */
+    @Synchronized
+    fun gpuFreqPath(): String? {
+        gpuFreqPathCache?.let { return it }
+
+        listOf(
+            "/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq",
+            "/sys/class/kgsl/kgsl-3d0/gpuclk",
+            "/sys/class/kgsl/kgsl-3d0/clock_mhz",
+        ).firstOrNull { File(it).canRead() }?.let {
+            gpuFreqPathCache = it
+            return it
+        }
+
+        for (root in listOf(File("/sys/class/devfreq"), File("/sys/devices/virtual/devfreq"))) {
+            val nodes = root.listFiles { file -> file.isDirectory } ?: continue
+            for (node in nodes) {
+                val path = node.path.lowercase(Locale.US)
+                if (listOf("gpu", "mali", "g3d", "kgsl").none { path.contains(it) }) continue
+                val file = File(node, "cur_freq")
+                if (file.canRead()) {
+                    gpuFreqPathCache = file.path
+                    return file.path
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Frequência atual da GPU em MHz. O nó pode estar em Hz ou kHz (kgsl/devfreq variam); a
+     * normalização é a mesma que o sampler de debug usava.
+     */
+    fun readGpuFreqMhz(): Int? {
+        val raw = readLongFromLine(gpuFreqPath() ?: return null) ?: return null
+        return when {
+            raw >= 100_000_000L -> (raw / 1_000_000L).toInt()
+            raw >= 100_000L -> (raw / 1_000L).toInt()
+            else -> raw.toInt()
+        }
+    }
+
     /**
      * Thermal zones ranked for CPU representativeness (lower rank wins):
      * cpu-silicon, cpu-0, generic cpu, soc, s5p-tmu, cputop, tsens, cluster, big/little.

@@ -672,6 +672,8 @@ fun XServerScreen(
             showClockTime = PrefManager.performanceHudShowClockTime,
             showCpuTemperature = PrefManager.performanceHudShowCpuTemperature,
             showGpuTemperature = PrefManager.performanceHudShowGpuTemperature,
+            showGpuClock = PrefManager.performanceHudShowGpuClock,
+            showThermalStatus = PrefManager.performanceHudShowThermalStatus,
             showFrameRateGraph = PrefManager.performanceHudShowFrameRateGraph,
             showCpuUsageGraph = PrefManager.performanceHudShowCpuUsageGraph,
             showGpuUsageGraph = PrefManager.performanceHudShowGpuUsageGraph,
@@ -705,6 +707,8 @@ fun XServerScreen(
         PrefManager.performanceHudShowClockTime = config.showClockTime
         PrefManager.performanceHudShowCpuTemperature = config.showCpuTemperature
         PrefManager.performanceHudShowGpuTemperature = config.showGpuTemperature
+        PrefManager.performanceHudShowGpuClock = config.showGpuClock
+        PrefManager.performanceHudShowThermalStatus = config.showThermalStatus
         PrefManager.performanceHudShowFrameRateGraph = config.showFrameRateGraph
         PrefManager.performanceHudShowCpuUsageGraph = config.showCpuUsageGraph
         PrefManager.performanceHudShowGpuUsageGraph = config.showGpuUsageGraph

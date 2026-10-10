@@ -17,4 +17,8 @@ data class MetricsSnapshot(
     val gpuUsagePercent: Float?,
     val cpuTempC: Int?,
     val gpuTempC: Int?,
+    /** Frequência atual da GPU em MHz (frente I3 do plano mali), quando descoberta. */
+    val gpuFreqMhz: Int? = null,
+    /** `android.os.PowerManager.getCurrentThermalStatus()` (frente I4 do plano mali). */
+    val thermalStatus: Int? = null,
 )

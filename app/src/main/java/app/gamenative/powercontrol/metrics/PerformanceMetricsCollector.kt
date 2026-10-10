@@ -2,6 +2,8 @@ package app.gamenative.powercontrol.metrics
 
 import android.content.Context
 import android.hardware.display.DisplayManager
+import android.os.Build
+import android.os.PowerManager as AndroidPowerManager
 import android.view.Display
 import app.gamenative.powercontrol.PowerBaselineScripts
 import app.gamenative.powercontrol.PowerManager
@@ -50,6 +52,8 @@ object PerformanceMetricsCollector {
     @Volatile
     private var paused = false
 
+    private var androidPowerManager: AndroidPowerManager? = null
+
     @Volatile
     var isRunning: Boolean = false
         private set
@@ -58,6 +62,7 @@ object PerformanceMetricsCollector {
         if (isRunning) return
 
         val appContext = context.applicationContext
+        androidPowerManager = appContext.getSystemService(Context.POWER_SERVICE) as? AndroidPowerManager
         displayRefreshRate = readDisplayRefreshRate(appContext)
         cpuSampler.reset()
         gpuSampler.reset()
@@ -131,6 +136,9 @@ object PerformanceMetricsCollector {
         val cpu = cpuSampler.sample()
         val gpu = gpuSampler.sample()
 
+        val gpuFreqMhz = SystemMetricsSources.readGpuFreqMhz()
+        val thermalStatus = readThermalStatus()
+
         val snapshot = MetricsSnapshot(
             timestampMs = System.currentTimeMillis(),
             fps = frameStats.fps,
@@ -144,6 +152,8 @@ object PerformanceMetricsCollector {
             gpuUsagePercent = gpu?.percent?.toFloat(),
             cpuTempC = SystemMetricsSources.readTemperatureC(SystemMetricsSources.cpuTempPaths()),
             gpuTempC = SystemMetricsSources.readTemperatureC(SystemMetricsSources.gpuTempPaths()),
+            gpuFreqMhz = gpuFreqMhz,
+            thermalStatus = thermalStatus,
         )
 
         publish(snapshot)
@@ -180,6 +190,15 @@ object PerformanceMetricsCollector {
         return (SLOW_FRAME_FACTOR * 1_000_000_000.0 / referenceFps).toLong()
     }
 
+    private fun readThermalStatus(): Int? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return try {
+            androidPowerManager?.currentThermalStatus?.takeIf { it >= 0 }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun readDisplayRefreshRate(context: Context): Float {
         return try {
             val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
@@ -211,7 +230,7 @@ object PerformanceMetricsCollector {
             "{\"timestampMs\":%d,\"fps\":%.2f,\"frameTimeP50Ms\":%.2f,\"frameTimeP95Ms\":%.2f," +
                 "\"frameTimeMaxMs\":%.2f,\"slowFrameCount\":%d,\"totalFrameCount\":%d," +
                 "\"cpuUsagePercent\":%s,\"cpuUsageSource\":\"%s\",\"gpuUsagePercent\":%s," +
-                "\"cpuTempC\":%s,\"gpuTempC\":%s}",
+                "\"cpuTempC\":%s,\"gpuTempC\":%s,\"gpuFreqMhz\":%s,\"thermalStatus\":%s}",
             snapshot.timestampMs,
             snapshot.fps,
             snapshot.frameTimeP50Ms,
@@ -224,6 +243,8 @@ object PerformanceMetricsCollector {
             snapshot.gpuUsagePercent?.let { String.format(Locale.US, "%.1f", it) } ?: "null",
             snapshot.cpuTempC?.toString() ?: "null",
             snapshot.gpuTempC?.toString() ?: "null",
+            snapshot.gpuFreqMhz?.toString() ?: "null",
+            snapshot.thermalStatus?.toString() ?: "null",
         )
     }
 

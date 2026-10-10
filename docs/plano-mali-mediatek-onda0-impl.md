@@ -404,3 +404,25 @@ O plano (I2) aponta "zero leitores" de MediaTek. Nesta passada foram adicionados
 **Fora desta passada (nomes não verificados em nenhuma referência):** frequência de GPU via
 `/proc/gpufreq/*` (I2/I3) e temperatura de GPU em `/sys/kernel/ged/*`. Implementá-los exigiria
 adivinhar nomes de nó — o erro que o §7 do plano alerta. Ficam para quando houver device MediaTek.
+
+
+---
+
+## 12. I3/I4 — clock da GPU e throttling térmico no caminho live
+
+Os dois já existiam **só no diagnóstico** (`PerfSampler`, debug) e agora chegam ao caminho
+sempre-ativo, que é o insumo dos protocolos de A/B do plano:
+
+- **Fonte única de frequência de GPU:** `SystemMetricsSources.gpuFreqPath()` /
+  `readGpuFreqMhz()` (kgsl + devfreq, normalizando Hz/kHz); o `PerfSampler` (debug) passou a
+  delegar a ela em vez de duplicar a descoberta.
+- **`MetricsSnapshot`** ganhou `gpuFreqMhz` e `thermalStatus`; o `PerformanceMetricsCollector`
+  lê ambos por ciclo e os grava no `metrics-*.jsonl` (`"gpuFreqMhz"`, `"thermalStatus"`).
+- **HUD:** novas métricas `GPU_CLOCK` ("GPU CLK …MHz") e `THERMAL` ("THERMAL <nível>"), com
+  toggle no QuickMenu e preferências próprias — **desligadas por padrão**, então o layout não
+  muda para quem não liga. `ThermalStatuses` (puro, JVM-testável) mapeia o código de
+  `android.os.PowerManager` para rótulo.
+- **Strings** EN (`values/`) e pt-rBR (`values-pt-rBR/`).
+
+**On-device pendente:** valores/visuais reais no device. `currentThermalStatus` é API 29+; fica
+guardada (no flavor legacy, minSdk 26, o campo fica `null`).

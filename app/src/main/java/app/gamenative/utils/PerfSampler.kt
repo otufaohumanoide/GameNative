@@ -309,7 +309,7 @@ object PerfSampler {
 
         private val clusters: List<PerfCluster> = runCatching { discoverClusters() }.getOrDefault(emptyList())
         private val coreCount: Int = runCatching { discoverCoreCount() }.getOrDefault(Runtime.getRuntime().availableProcessors())
-        private val gpuFreqPath: String? = runCatching { discoverGpuFreqPath() }.getOrNull()
+        private val gpuFreqPath: String? = runCatching { SystemMetricsSources.gpuFreqPath() }.getOrNull()
         private val skinTempPaths: List<String> = runCatching { discoverSkinTempPaths() }.getOrDefault(emptyList())
         private val refreshRateHz: Float = runCatching { readRefreshRate() }.getOrDefault(60f)
         private val maxAvailableKhz: Long? = runCatching { PowerManager.getAvailableCpuFrequencies().maxOrNull() }.getOrNull()
@@ -710,14 +710,7 @@ object PerfSampler {
             mhz
         }
 
-        private fun readGpuMhz(): Int? {
-            val raw = SystemMetricsSources.readLongFromLine(gpuFreqPath ?: return null) ?: return null
-            return when {
-                raw >= 100_000_000L -> (raw / 1_000_000L).toInt()
-                raw >= 100_000L -> (raw / 1_000L).toInt()
-                else -> raw.toInt()
-            }
-        }
+        private fun readGpuMhz(): Int? = SystemMetricsSources.readGpuFreqMhz()
 
         @RequiresApi(Build.VERSION_CODES.Q)
         private fun readThermalStatus(): Int? =
@@ -780,24 +773,6 @@ object PerfSampler {
                 byMax.getOrPut(max) { mutableListOf() } += index
             }
             return byMax.map { (max, cores) -> PerfCluster(cores.sorted().toIntArray(), max) }
-        }
-
-        private fun discoverGpuFreqPath(): String? {
-            listOf(
-                "/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq",
-                "/sys/class/kgsl/kgsl-3d0/gpuclk",
-                "/sys/class/kgsl/kgsl-3d0/clock_mhz",
-            ).firstOrNull { File(it).canRead() }?.let { return it }
-            for (root in listOf(File("/sys/class/devfreq"), File("/sys/devices/virtual/devfreq"))) {
-                val nodes = root.listFiles { file -> file.isDirectory } ?: continue
-                for (node in nodes) {
-                    val path = node.path.lowercase(Locale.US)
-                    if (listOf("gpu", "mali", "g3d", "kgsl").none { path.contains(it) }) continue
-                    val file = File(node, "cur_freq")
-                    if (file.canRead()) return file.path
-                }
-            }
-            return null
         }
 
         private fun discoverSkinTempPaths(): List<String> {
