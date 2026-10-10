@@ -7,6 +7,8 @@ import com.winlator.container.Container;
 import com.winlator.core.KeyValueSet;
 
 import java.io.File;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class LosslessScaling {
     private static final String TAG = "LosslessScaling";
@@ -14,6 +16,16 @@ public final class LosslessScaling {
     private static final String STORE_DIR = "lsfg";
     private static final String CACHE_FP16 = "lossless_fp16.lsfgcache";
     private static final String CACHE_FP32 = "lossless_fp32.lsfgcache";
+
+    /**
+     * Cache of the native frame-generation capability probe, keyed by driver name.
+     *
+     * Diagnostic only (spec 2026-10-09-mali-mediatek-performance, item A4a). The
+     * probe must NOT gate arming yet: acting on an unvalidated verdict would risk
+     * disabling frame generation that works today on Adreno. Gating is item A4b,
+     * blocked on on-device evidence.
+     */
+    private static final Map<String, Boolean> FG_SUPPORT_CACHE = new ConcurrentHashMap<>();
 
     static {
         try {
@@ -75,9 +87,34 @@ public final class LosslessScaling {
         }
     }
 
+    /**
+     * Runs the native frame-generation capability probe once per driver and caches
+     * the verdict. Diagnostics only — see {@link #FG_SUPPORT_CACHE}. Call it off the
+     * main thread: the probe creates and destroys a Vulkan instance.
+     */
+    public static boolean supportsFrameGeneration(Context context, String driverName) {
+        String key = driverName != null ? driverName : "";
+        Boolean cached = FG_SUPPORT_CACHE.get(key);
+        if (cached != null) return cached;
+
+        boolean supported;
+        try {
+            supported = nativeSupportsFrameGeneration(driverName, context);
+        } catch (Throwable t) {
+            Log.w(TAG, "Frame generation capability probe failed: " + t.getMessage());
+            supported = false;
+        }
+        FG_SUPPORT_CACHE.put(key, supported);
+        Log.i(TAG, "Frame generation capability probe: driver=" + (key.isEmpty() ? "System" : key)
+                + " supported=" + supported);
+        return supported;
+    }
+
     private static native int nativeBuildCache(String dllPath, String cachePath, boolean preferFp16);
 
     private static native boolean nativeCacheMatchesSource(String cachePath, String dllPath);
 
     private static native boolean nativeSupportsFp16(String driverName, Context context);
+
+    private static native boolean nativeSupportsFrameGeneration(String driverName, Context context);
 }

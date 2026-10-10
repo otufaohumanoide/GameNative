@@ -314,6 +314,8 @@ object LsfgVkManager {
         val multiplier = multiplier(container)
         val enabled = isArmed(container) && isNativeBackend(container) && multiplier >= 2
 
+        if (enabled) logFrameGenerationCapability(context, container)
+
         renderer.setFrameGenerationMode(
             multiplier.coerceAtLeast(2),
             0,
@@ -334,6 +336,29 @@ object LsfgVkManager {
 
         if (cachePath != null) renderer.setFrameGenerationShaders(cachePath)
         renderer.setFrameGenerationEnabled(enabled)
+    }
+
+    /**
+     * Diagnostic only (spec 2026-10-09-mali-mediatek-performance, item A4a).
+     *
+     * Runs the previously unreachable native capability probe once per process, off
+     * the main thread, so that a frame generation that silently does not engage is
+     * attributable from logcat instead of leaving the user to notice the fps simply
+     * did not rise. It deliberately does NOT feed [isSupported]/[isArmed]: turning an
+     * unvalidated probe into a gate is item A4b, which needs on-device evidence that
+     * the probe agrees with reality before it can disable anything.
+     */
+    private fun logFrameGenerationCapability(context: Context, container: Container) {
+        val driverName = LosslessScaling.getDriverName(container)
+        val appCtx = context.applicationContext
+        vsyncWriteExecutor.execute {
+            val supported = LosslessScaling.supportsFrameGeneration(appCtx, driverName)
+            Timber.tag(TAG).i(
+                "Frame generation capability probe: driver=%s supported=%s (diagnostic only)",
+                driverName ?: "System",
+                supported,
+            )
+        }
     }
 
     /** Re-push settings to the renderer captured by [applyNativeRuntime], if any. */

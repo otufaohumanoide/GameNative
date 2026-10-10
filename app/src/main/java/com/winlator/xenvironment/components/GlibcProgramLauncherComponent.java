@@ -8,6 +8,7 @@ import android.os.Process;
 import android.util.Log;
 
 import app.gamenative.BuildConfig;
+import app.gamenative.utils.GpuClassification;
 import com.winlator.PrefManager;
 import com.winlator.box86_64.Box86_64Preset;
 import com.winlator.box86_64.Box86_64PresetManager;
@@ -274,7 +275,7 @@ public class GlibcProgramLauncherComponent extends GuestProgramLauncherComponent
 
         envVars.putAll(Box86_64PresetManager.getEnvVars("box64", environment.getContext(), box64Preset));
         String renderer = GPUInformation.getRenderer(context);
-        if (renderer.contains("Mali"))
+        if (GpuClassification.INSTANCE.isMali(renderer))
             envVars.put("BOX64_MMAP32", "0");
         envVars.put("BOX64_X11GLX", "1");
         File box64RCFile = new File(imageFs.getRootDir(), "/etc/config.box64rc");

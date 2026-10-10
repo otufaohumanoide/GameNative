@@ -136,6 +136,7 @@ import app.gamenative.utils.downloader.CoreDriverDownloader
 import app.gamenative.utils.CustomGameScanner
 import app.gamenative.utils.DebugReportUtils
 import app.gamenative.utils.ExecutableSelectionUtils
+import app.gamenative.utils.GpuClassification
 import app.gamenative.utils.LsfgQuickMenuHelper
 import app.gamenative.utils.LsfgVkManager
 import app.gamenative.utils.ManifestComponentHelper
@@ -146,6 +147,7 @@ import app.gamenative.utils.launchdependencies.BionicSteamAssetsDependency
 import app.gamenative.utils.downloader.DXWrapperDownloader
 import app.gamenative.utils.downloader.GraphicsDriverDownloader
 import app.gamenative.utils.PreInstallSteps
+import app.gamenative.utils.PresentModeMapping
 import app.gamenative.utils.SteamHostAuth
 import app.gamenative.utils.SteamInstallScriptRegistry
 import app.gamenative.utils.BrightnessManager
@@ -2018,10 +2020,11 @@ fun XServerScreen(
                 usrGlibc,
                 mouseDragCompatibility,
             )
-            // VirGL containers always need GL (shared EGL context for the
-            // VirGL passthrough). Default to the legacy GL renderer for all
-            // other containers as well. Uncheck the per-container useLegacyRenderer
-            // setting to switch to the Vulkan renderer.
+            // VirGL containers always need GL (shared EGL context for the VirGL
+            // passthrough). Every other container uses its persisted display
+            // renderer, which defaults to Vulkan
+            // (Container.DEFAULT_DISPLAY_RENDERER) and is selected per container
+            // in the graphics settings.
             val useGLRenderer = container.graphicsDriver == "virgl" || container.displayRenderer.equals("gl", true)
             val xServerViewInstance: XServerRendererView = if (useGLRenderer) {
                 XServerViewGL(context, xServerToUse)
@@ -2035,12 +2038,7 @@ fun XServerScreen(
                 if (!useGLRenderer && renderer is VulkanRenderer) {
                     renderer.setFrameGenerationArmed(isLsfgAvailable)
                     val pm = container.rendererPresentMode.ifEmpty { "fifo" }
-                    val vkMode = when (pm.lowercase(Locale.getDefault())) {
-                        "mailbox" -> 1
-                        "immediate" -> 0
-                        "relaxed" -> 3
-                        else -> 2
-                    }
+                    val vkMode = PresentModeMapping.toVkPresentMode(pm)
                     renderer.setVkPresentMode(vkMode)
                 }
                 if (renderer is ASurfaceRenderer) {
@@ -6041,7 +6039,7 @@ private suspend fun extractGraphicsDriverFiles(
                 Log.d("XServerDisplayActivity", "First time container boot, extracting extra_libs.tzst")
                 extractGraphicsDriverComponent(context, "extra_libs", rootDir!!)
                 val renderer = GPUInformation.getRenderer(null, null)
-                if (container.wineVersion.contains("arm64ec") && renderer?.contains("Mali") != true) {
+                if (container.wineVersion.contains("arm64ec") && !GpuClassification.isMali(renderer)) {
                     extractGraphicsDriverComponent(
                         context,
                         "zink_dlls",
@@ -6093,9 +6091,14 @@ private suspend fun extractGraphicsDriverFiles(
 
         val isWrapperGamenative = graphicsDriver.equals("wrapper-gamenative", ignoreCase = true)
         val vendorId = GPUInformation.getVendorID(null, null)
-        val isAdreno = vendorId == 0x5143
-        val isXclipse = vendorId == 0x144D
-        val excludeBcnCompute = isAdreno || (isWrapperGamenative && isXclipse)
+        // Classificação central (GpuClassification, lógica pura testada em
+        // GpuClassificationTest): Adreno sempre excluído; Xclipse e Mali/Immortalis
+        // excluídos quando o driver é o wrapper-gamenative. Não duplicar a regra.
+        val excludeBcnCompute = GpuClassification.shouldExcludeBcnCompute(
+            vendorId,
+            GPUInformation.getRenderer(context),
+            isWrapperGamenative,
+        )
         val bcnEmulation = graphicsDriverConfig.get("bcnEmulation")
         val bcnEmulationType = graphicsDriverConfig.get("bcnEmulationType")
         when (bcnEmulation) {

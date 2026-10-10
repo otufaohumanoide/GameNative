@@ -17,6 +17,7 @@ import androidx.annotation.NonNull;
 
 import com.winlator.PrefManager;
 
+import app.gamenative.utils.GpuClassification;
 import app.gamenative.utils.LsfgVkManager;
 import com.winlator.box86_64.Box86_64Preset;
 import com.winlator.box86_64.Box86_64PresetManager;
@@ -256,7 +257,7 @@ public class BionicProgramLauncherComponent extends GuestProgramLauncherComponen
 
         String renderer = GPUInformation.getRenderer(context);
 
-        if (renderer.contains("Mali"))
+        if (GpuClassification.INSTANCE.isMali(renderer))
             envVars.put("BOX64_MMAP32", "0");
 
         if (envVars.get("BOX64_MMAP32").equals("1") && !wineInfo.isArm64EC())

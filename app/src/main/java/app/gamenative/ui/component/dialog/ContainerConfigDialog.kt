@@ -104,6 +104,7 @@ import app.gamenative.service.SteamService
 import app.gamenative.utils.ManifestComponentHelper.VersionOptionList
 import app.gamenative.utils.ManifestRepository
 import app.gamenative.utils.PaddingUtils
+import app.gamenative.utils.PresentModeMapping
 import com.winlator.contents.ContentProfile
 import com.alorma.compose.settings.ui.SettingsGroup
 import com.alorma.compose.settings.ui.SettingsMenuLink
@@ -223,7 +224,7 @@ private fun rememberContainerConfigDialogStaticData(): ContainerConfigDialogStat
         audioDrivers = stringArrayResource(R.array.audio_driver_entries).toList(),
         gpuCards = ContainerUtils.getGPUCards(context),
         presentModes = stringArrayResource(R.array.present_mode_entries).toList(),
-        rendererPresentModes = listOf("fifo", "mailbox"),
+        rendererPresentModes = PresentModeMapping.UI_MODES,
         resourceTypes = stringArrayResource(R.array.resource_type_entries).toList(),
         bcnEmulationEntries = stringArrayResource(R.array.bcn_emulation_entries).toList(),
         bcnEmulationTypeEntries = stringArrayResource(R.array.bcn_emulation_type_entries).toList(),

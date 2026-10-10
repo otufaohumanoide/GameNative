@@ -1567,7 +1567,7 @@
 
     <!-- LSFG-VK frame generation -->
     <string name="lsfg_tab_title">LSFG-VK</string>
-    <string name="lsfg_description">Gerar quadros intermediários usando a camada Vulkan do Lossless Scaling. Funciona apenas em Adreno 6xx e posteriores, conforme se sabe.</string>
+    <string name="lsfg_description">Gerar quadros intermediários usando a camada Vulkan do Lossless Scaling. Exige driver Vulkan 1.3 com compute e storage image; melhor validado em Adreno 6xx e posteriores, e pode não funcionar em alguns drivers Mali ou PowerVR.</string>
     <string name="lsfg_enable">Ativar geração de quadros LSFG-VK</string>
     <string name="lsfg_multiplier">Multiplicador de quadros</string>
     <string name="lsfg_flow_scale">Escala de fluxo</string>
@@ -1580,7 +1580,7 @@
     <string name="lsfg_backend_legacy">Legacy (camada)</string>
     <string name="lsfg_backend_native">Nativo (renderizador)</string>
     <string name="lsfg_not_supported">A geração de quadros requer um contêiner Bionic</string>
-    <string name="lsfg_install_prompt">Lossless Scaling não instalado. Toque para instalar. Funciona apenas em Adreno 6xx e posteriores, conforme se sabe.</string>
+    <string name="lsfg_install_prompt">Lossless Scaling não instalado. Toque para instalar. Melhor validado em Adreno 6xx e posteriores; pode não funcionar em alguns drivers Mali ou PowerVR.</string>
     <string name="lsfg_not_in_library">Lossless Scaling não está na sua biblioteca Steam</string>
     <string name="lsfg_install_title">Instalar Lossless Scaling?</string>
     <string name="lsfg_install_message">Isso baixará o Lossless Scaling do Steam para ativar a geração de quadros.</string>
