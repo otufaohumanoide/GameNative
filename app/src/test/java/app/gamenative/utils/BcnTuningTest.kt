@@ -31,4 +31,24 @@ class BcnTuningTest {
         assertEquals(128, BcnTuning.gpuCapMb("128"))
         assertEquals(512, BcnTuning.gpuCapMb("  512  "))
     }
+
+    @Test
+    fun `astc defaults on and only explicit zero turns it off`() {
+        assertEquals(true, BcnTuning.astcEnabled(null))
+        assertEquals(true, BcnTuning.astcEnabled(""))
+        assertEquals(true, BcnTuning.astcEnabled("1"))
+        assertEquals(true, BcnTuning.astcEnabled("true"))
+        assertEquals(false, BcnTuning.astcEnabled("0"))
+        assertEquals(false, BcnTuning.astcEnabled(" 0 "))
+    }
+
+    @Test
+    fun `gpu transcode requires the gpu transcoder and astc`() {
+        assertEquals(true, BcnTuning.gpuTranscodeEnabled("gpu", astcEnabled = true))
+        assertEquals(true, BcnTuning.gpuTranscodeEnabled("GPU", astcEnabled = true))
+        assertEquals(false, BcnTuning.gpuTranscodeEnabled("cpu", astcEnabled = true))
+        assertEquals(false, BcnTuning.gpuTranscodeEnabled(null, astcEnabled = true))
+        // ASTC off also disables the GPU path: the shader would write ASTC into RGBA8 (H3).
+        assertEquals(false, BcnTuning.gpuTranscodeEnabled("gpu", astcEnabled = false))
+    }
 }

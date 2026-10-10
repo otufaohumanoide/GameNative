@@ -90,6 +90,21 @@ fun GraphicsTabContent(state: ContainerConfigState, default: Boolean = false) {
                         state.config.value = config.copy(graphicsDriverConfig = cfg.toString())
                     },
                 )
+                // ASTC is the transcode target (native on Mali). Turning it off falls back to
+                // RGBA8 and forces the CPU path, since the GPU shader assumes ASTC output.
+                val bcnAstcValue = KeyValueSet(config.graphicsDriverConfig)
+                    .get("bcnAstc", "1") != "0"
+                SettingsSwitch(
+                    colors = settingsTileColors(),
+                    title = { Text(text = stringResource(R.string.bcn_astc)) },
+                    subtitle = { Text(text = stringResource(R.string.bcn_astc_hint)) },
+                    state = bcnAstcValue,
+                    onCheckedChange = { checked ->
+                        val cfg = KeyValueSet(config.graphicsDriverConfig)
+                        cfg.put("bcnAstc", if (checked) "1" else "0")
+                        state.config.value = config.copy(graphicsDriverConfig = cfg.toString())
+                    },
+                )
                 val qualityValue = KeyValueSet(config.graphicsDriverConfig).get("quality", "low")
                 SettingsListDropdown(
                     colors = settingsTileColors(),

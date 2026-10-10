@@ -1763,6 +1763,8 @@
     <string name="transcoder_gpu">GPU (experimental, pode ser mais rápido)</string>
     <string name="wrapper_quality_low">Baixa (imagens mais suaves, usa menos RAM)</string>
     <string name="wrapper_quality_high">Alta (imagens mais nítidas, usa mais RAM)</string>
+    <string name="bcn_astc">Transcode ASTC</string>
+    <string name="bcn_astc_hint">Ligado por padrão. Desligado usa RGBA8 e desativa o transcodificador GPU.</string>
     <string name="bcn_gpu_cap_mb">Memória do transcode GPU (MB)</string>
     <string name="bcn_gpu_cap_mb_hint">Padrão 128, mínimo 16 (só no transcodificador GPU)</string>
     <string name="option_play_with_diagnostics">Execução de diagnóstico</string>

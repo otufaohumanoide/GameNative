@@ -24,4 +24,14 @@ object BcnTuning {
         val parsed = raw?.trim()?.toIntOrNull() ?: return DEFAULT_GPU_CAP_MB
         return parsed.coerceAtLeast(MIN_GPU_CAP_MB)
     }
+
+    /** `WRAPPER_BCN_ASTC` default é 1 (ASTC nativo no Mali); só o valor "0" desliga. */
+    fun astcEnabled(raw: String?): Boolean = raw?.trim() != "0"
+
+    /**
+     * O shader do transcode GPU **assume destino ASTC**; com ASTC desligado o destino vira RGBA8 e
+     * o compute escreveria ASTC no lugar errado (H3 §1.4). Por isso o caminho GPU exige ASTC ligado.
+     */
+    fun gpuTranscodeEnabled(transcoder: String?, astcEnabled: Boolean): Boolean =
+        astcEnabled && transcoder.equals("gpu", ignoreCase = true)
 }

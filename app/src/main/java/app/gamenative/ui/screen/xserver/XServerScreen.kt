@@ -6131,7 +6131,14 @@ private suspend fun extractGraphicsDriverFiles(
         envVars.put("WRAPPER_USE_BCN_CACHE", bcnEmulationCache)
 
         val transcoder = graphicsDriverConfig.get("transcoder", "cpu")
-        envVars.put("WRAPPER_BCN_GPU", if (transcoder.equals("gpu", ignoreCase = true)) "1" else "0")
+        // H2/H3: ASTC é o alvo do transcode (nativo no Mali). O shader do caminho GPU assume
+        // destino ASTC, então ASTC=0 força o caminho CPU (senão escreveria ASTC em RGBA8).
+        val bcnAstc = BcnTuning.astcEnabled(graphicsDriverConfig.get("bcnAstc"))
+        envVars.put("WRAPPER_BCN_ASTC", if (bcnAstc) "1" else "0")
+        envVars.put(
+            "WRAPPER_BCN_GPU",
+            if (BcnTuning.gpuTranscodeEnabled(transcoder, bcnAstc)) "1" else "0",
+        )
 
         // H2/H3: teto de memória transiente do transcode GPU. Presente no blob shipado
         // (default 128 MB, mínimo 16); normalização única em BcnTuning.
