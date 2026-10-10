@@ -346,6 +346,9 @@ curada por `maliModel`/`maliSeries` continua vazia até haver medição). Detalh
 custo, e continua bloqueado por device (K1). Nada de tuning virou default — a regra de ouro da §5
 foi respeitada.
 
+Para os A/B, há `tools/mali-metrics-report/` (resume/compare `metrics-*.jsonl`, inclusive
+`--pull` via adb).
+
 ### 9.3 Correção da Frente F (F6, verificada)
 
 A conclusão 4 da §2.4 e o item **F6** confundem dois assets diferentes:
