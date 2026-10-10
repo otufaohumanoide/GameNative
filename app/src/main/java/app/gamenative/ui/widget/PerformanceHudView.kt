@@ -11,8 +11,6 @@ import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
-import android.os.Build
-import android.os.PowerManager as AndroidPowerManager
 import android.text.TextUtils
 import android.text.format.DateFormat
 import android.util.TypedValue
@@ -28,6 +26,7 @@ import app.gamenative.powercontrol.fan.FanController
 import app.gamenative.powercontrol.metrics.CpuUsageSampler
 import app.gamenative.powercontrol.metrics.GpuUsageSampler
 import app.gamenative.powercontrol.metrics.SystemMetricsSources
+import app.gamenative.powercontrol.metrics.ThermalReadings
 import app.gamenative.ui.data.PerformanceHudConfig
 import app.gamenative.ui.data.PerformanceHudSize
 import app.gamenative.utils.DateTimeUtils.formatRuntimeHours
@@ -347,10 +346,8 @@ class PerformanceHudView(
         SystemMetricsSources.readGpuFreqMhz()?.let { "GPU CLK ${it}MHz" }
 
     private fun readThermalText(): String? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? AndroidPowerManager
-            ?: return null
-        return ThermalStatuses.label(powerManager.currentThermalStatus)?.let { "THERMAL $it" }
+        val status = ThermalReadings.status(context) ?: return null
+        return ThermalStatuses.label(status)?.let { "THERMAL $it" }
     }
 
     private fun readFanText(): String? {

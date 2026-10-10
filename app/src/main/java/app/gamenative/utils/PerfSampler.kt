@@ -6,17 +6,16 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.display.DisplayManager
 import android.os.BatteryManager
-import android.os.Build
 import android.os.Debug
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
 import android.view.Display
-import androidx.annotation.RequiresApi
 import app.gamenative.powercontrol.PowerManager
 import app.gamenative.powercontrol.metrics.FrameTimeRing
 import app.gamenative.powercontrol.metrics.GpuUsageSampler
 import app.gamenative.powercontrol.metrics.SystemMetricsSources
+import app.gamenative.powercontrol.metrics.ThermalReadings
 import app.gamenative.powercontrol.metrics.ThermalZoneClassification
 import com.winlator.container.Container
 import org.json.JSONArray
@@ -27,7 +26,6 @@ import java.util.Locale
 import java.util.TreeMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import android.os.PowerManager as AndroidPowerManager
 
 internal class PerfCluster(val cores: IntArray, val maxKhz: Long)
 
@@ -449,8 +447,8 @@ object PerfSampler {
             val curMhz = if (clusters.isEmpty()) null else safe { readClusterFreq("scaling_cur_freq") }
             val maxMhz = if (clusters.isEmpty()) null else safe { readClusterFreq("scaling_max_freq") }
 
-            val thermalStatus = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) safe { readThermalStatus() } else null
-            val headroom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) safe { readThermalHeadroom() } else null
+            val thermalStatus = safe { readThermalStatus() }
+            val headroom = safe { readThermalHeadroom() }
             if (thermalStatus != null && thermalStatus != lastThermalStatus) {
                 lastThermalStatus = thermalStatus
                 synchronized(samples) { thermalTransitions += t to thermalStatus }
@@ -712,15 +710,9 @@ object PerfSampler {
 
         private fun readGpuMhz(): Int? = SystemMetricsSources.readGpuFreqMhz()
 
-        @RequiresApi(Build.VERSION_CODES.Q)
-        private fun readThermalStatus(): Int? =
-            (context.getSystemService(Context.POWER_SERVICE) as? AndroidPowerManager)?.currentThermalStatus
+        private fun readThermalStatus(): Int? = ThermalReadings.status(context)
 
-        @RequiresApi(Build.VERSION_CODES.R)
-        private fun readThermalHeadroom(): Float? =
-            (context.getSystemService(Context.POWER_SERVICE) as? AndroidPowerManager)
-                ?.getThermalHeadroom(10)
-                ?.takeIf { it.isFinite() }
+        private fun readThermalHeadroom(): Float? = ThermalReadings.headroom(context)
 
         private fun readBatteryTempC(): Int? {
             val intent: Intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return null

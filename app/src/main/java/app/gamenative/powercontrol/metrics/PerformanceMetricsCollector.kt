@@ -2,8 +2,6 @@ package app.gamenative.powercontrol.metrics
 
 import android.content.Context
 import android.hardware.display.DisplayManager
-import android.os.Build
-import android.os.PowerManager as AndroidPowerManager
 import android.view.Display
 import app.gamenative.powercontrol.PowerBaselineScripts
 import app.gamenative.powercontrol.PowerManager
@@ -51,7 +49,7 @@ object PerformanceMetricsCollector {
     @Volatile
     private var paused = false
 
-    private var androidPowerManager: AndroidPowerManager? = null
+    private var thermalContext: Context? = null
 
     @Volatile
     var isRunning: Boolean = false
@@ -61,7 +59,7 @@ object PerformanceMetricsCollector {
         if (isRunning) return
 
         val appContext = context.applicationContext
-        androidPowerManager = appContext.getSystemService(Context.POWER_SERVICE) as? AndroidPowerManager
+        thermalContext = appContext
         displayRefreshRate = readDisplayRefreshRate(appContext)
         cpuSampler.reset()
         gpuSampler.reset()
@@ -136,7 +134,8 @@ object PerformanceMetricsCollector {
         val gpu = gpuSampler.sample()
 
         val gpuFreqMhz = SystemMetricsSources.readGpuFreqMhz()
-        val thermalStatus = readThermalStatus()
+        val thermalStatus = thermalContext?.let { ThermalReadings.status(it) }
+        val thermalHeadroom = thermalContext?.let { ThermalReadings.headroom(it) }
 
         val snapshot = MetricsSnapshot(
             timestampMs = System.currentTimeMillis(),
@@ -153,6 +152,7 @@ object PerformanceMetricsCollector {
             gpuTempC = SystemMetricsSources.readTemperatureC(SystemMetricsSources.gpuTempPaths()),
             gpuFreqMhz = gpuFreqMhz,
             thermalStatus = thermalStatus,
+            thermalHeadroom = thermalHeadroom,
         )
 
         publish(snapshot)
@@ -187,15 +187,6 @@ object PerformanceMetricsCollector {
         val referenceFps = if (targetFps > 0) targetFps.toFloat() else displayRefreshRate
         if (referenceFps <= 0f) return 0L
         return (SLOW_FRAME_FACTOR * 1_000_000_000.0 / referenceFps).toLong()
-    }
-
-    private fun readThermalStatus(): Int? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
-        return try {
-            androidPowerManager?.currentThermalStatus?.takeIf { it >= 0 }
-        } catch (_: Exception) {
-            null
-        }
     }
 
     private fun readDisplayRefreshRate(context: Context): Float {

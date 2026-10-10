@@ -416,8 +416,13 @@ sempre-ativo, que é o insumo dos protocolos de A/B do plano:
 - **Fonte única de frequência de GPU:** `SystemMetricsSources.gpuFreqPath()` /
   `readGpuFreqMhz()` (kgsl + devfreq, normalizando Hz/kHz); o `PerfSampler` (debug) passou a
   delegar a ela em vez de duplicar a descoberta.
-- **`MetricsSnapshot`** ganhou `gpuFreqMhz` e `thermalStatus`; o `PerformanceMetricsCollector`
-  lê ambos por ciclo e os grava no `metrics-*.jsonl` (`"gpuFreqMhz"`, `"thermalStatus"`).
+- **`MetricsSnapshot`** ganhou `gpuFreqMhz`, `thermalStatus` e `thermalHeadroom`; o
+  `PerformanceMetricsCollector` lê os três por ciclo e os grava no `metrics-*.jsonl`
+  (`"gpuFreqMhz"`, `"thermalStatus"`, `"thermalHeadroom"`). Headroom é a razão de proximidade do
+  limite térmico (≈1,0 = no limiar), o sinal que faltava para o "throttling" do I4.
+- **`ThermalReadings`** é o ponto único de acesso a `getCurrentThermalStatus`/`getThermalHeadroom`
+  (com as guardas de API); collector, HUD e `PerfSampler` delegam a ele (removeu a duplicação de
+  boilerplate de `getSystemService`).
 - **HUD:** novas métricas `GPU_CLOCK` ("GPU CLK …MHz") e `THERMAL` ("THERMAL <nível>"), com
   toggle no QuickMenu e preferências próprias — **desligadas por padrão**, então o layout não
   muda para quem não liga. `ThermalStatuses` (puro, JVM-testável) mapeia o código de

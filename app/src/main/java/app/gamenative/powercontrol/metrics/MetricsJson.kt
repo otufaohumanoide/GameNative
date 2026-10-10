@@ -17,7 +17,8 @@ object MetricsJson {
             "{\"timestampMs\":%d,\"fps\":%.2f,\"frameTimeP50Ms\":%.2f,\"frameTimeP95Ms\":%.2f," +
                 "\"frameTimeMaxMs\":%.2f,\"slowFrameCount\":%d,\"totalFrameCount\":%d," +
                 "\"cpuUsagePercent\":%s,\"cpuUsageSource\":\"%s\",\"gpuUsagePercent\":%s," +
-                "\"cpuTempC\":%s,\"gpuTempC\":%s,\"gpuFreqMhz\":%s,\"thermalStatus\":%s}",
+                "\"cpuTempC\":%s,\"gpuTempC\":%s,\"gpuFreqMhz\":%s,\"thermalStatus\":%s," +
+                "\"thermalHeadroom\":%s}",
             snapshot.timestampMs,
             snapshot.fps,
             snapshot.frameTimeP50Ms,
@@ -32,9 +33,13 @@ object MetricsJson {
             snapshot.gpuTempC?.toString() ?: "null",
             snapshot.gpuFreqMhz?.toString() ?: "null",
             snapshot.thermalStatus?.toString() ?: "null",
+            ratio(snapshot.thermalHeadroom),
         )
     }
 
     private fun percent(value: Float?): String =
         value?.let { String.format(Locale.US, "%.1f", it) } ?: "null"
+
+    private fun ratio(value: Float?): String =
+        value?.let { String.format(Locale.US, "%.2f", it) } ?: "null"
 }

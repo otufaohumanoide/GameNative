@@ -27,6 +27,7 @@ class MetricsJsonTest {
                 gpuTempC = 61,
                 gpuFreqMhz = 850,
                 thermalStatus = 3,
+                thermalHeadroom = 1.43f,
             ),
         )
 
@@ -34,7 +35,8 @@ class MetricsJsonTest {
             "{\"timestampMs\":1234,\"fps\":59.94,\"frameTimeP50Ms\":16.67,\"frameTimeP95Ms\":20.00," +
                 "\"frameTimeMaxMs\":33.00,\"slowFrameCount\":2,\"totalFrameCount\":100," +
                 "\"cpuUsagePercent\":42.5,\"cpuUsageSource\":\"PROC_STAT\",\"gpuUsagePercent\":87.0," +
-                "\"cpuTempC\":55,\"gpuTempC\":61,\"gpuFreqMhz\":850,\"thermalStatus\":3}",
+                "\"cpuTempC\":55,\"gpuTempC\":61,\"gpuFreqMhz\":850,\"thermalStatus\":3," +
+                "\"thermalHeadroom\":1.43}",
             line,
         )
     }
@@ -62,7 +64,8 @@ class MetricsJsonTest {
             "{\"timestampMs\":7,\"fps\":0.00,\"frameTimeP50Ms\":0.00,\"frameTimeP95Ms\":0.00," +
                 "\"frameTimeMaxMs\":0.00,\"slowFrameCount\":0,\"totalFrameCount\":0," +
                 "\"cpuUsagePercent\":null,\"cpuUsageSource\":\"UNAVAILABLE\",\"gpuUsagePercent\":null," +
-                "\"cpuTempC\":null,\"gpuTempC\":null,\"gpuFreqMhz\":null,\"thermalStatus\":null}",
+                "\"cpuTempC\":null,\"gpuTempC\":null,\"gpuFreqMhz\":null,\"thermalStatus\":null," +
+                "\"thermalHeadroom\":null}",
             line,
         )
     }

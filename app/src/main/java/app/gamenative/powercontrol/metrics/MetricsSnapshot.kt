@@ -21,4 +21,6 @@ data class MetricsSnapshot(
     val gpuFreqMhz: Int? = null,
     /** `android.os.PowerManager.getCurrentThermalStatus()` (frente I4 do plano mali). */
     val thermalStatus: Int? = null,
+    /** Razão de headroom térmico (≈1,0 = no limiar; API 30+); frente I4. */
+    val thermalHeadroom: Float? = null,
 )
