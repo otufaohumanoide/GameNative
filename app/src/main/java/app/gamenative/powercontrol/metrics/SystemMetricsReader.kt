@@ -103,25 +103,15 @@ object SystemMetricsSources {
     /**
      * Thermal zones ranked for CPU representativeness (lower rank wins):
      * cpu-silicon, cpu-0, generic cpu, soc, s5p-tmu, cputop, tsens, cluster, big/little.
+     *
+     * O ranker é [ThermalZoneClassification], que descarta trip points de mitigação (`*-step`)
+     * e `soc` isolado (State of Charge da bateria em %) - itens I1a/I1b do spec Mali/MediaTek.
      */
     @Synchronized
     fun cpuTempPaths(): List<String> {
         cpuTempPathsCache?.let { return it }
 
-        val paths = prioritizePaths(allThermalZones()) { type ->
-            when {
-                type.contains("cpu-silicon") -> 0
-                type.contains("cpu-0") -> 1
-                type.contains("cpu") && !type.contains("gpu") -> 2
-                type.contains("soc") -> 3
-                type.contains("s5p-tmu") -> 4
-                type.contains("cputop") -> 5
-                type.contains("tsens") -> 6
-                type.contains("cluster") -> 7
-                type.contains("big") || type.contains("little") -> 8
-                else -> null
-            }
-        }
+        val paths = prioritizePaths(allThermalZones(), ThermalZoneClassification::cpuRank)
 
         cpuTempPathsCache = paths
         return paths
@@ -129,22 +119,14 @@ object SystemMetricsSources {
 
     /**
      * Vendor GPU temperature nodes first, then thermal zones ranked by
-     * gpu-silicon, generic gpu, g3d, kgsl, mali.
+     * gpu-silicon, generic gpu, g3d, kgsl, mali. Trip points de mitigação (`*-step`) são
+     * descartados por [ThermalZoneClassification] (item I1a do spec Mali/MediaTek).
      */
     @Synchronized
     fun gpuTempPaths(): List<String> {
         gpuTempPathsCache?.let { return it }
 
-        val zonePaths = prioritizePaths(allThermalZones()) { type ->
-            when {
-                type.contains("gpu-silicon") -> 0
-                type.contains("gpu") -> 1
-                type.contains("g3d") -> 2
-                type.contains("kgsl") -> 3
-                type.contains("mali") -> 4
-                else -> null
-            }
-        }
+        val zonePaths = prioritizePaths(allThermalZones(), ThermalZoneClassification::gpuRank)
 
         val paths = (fixedGpuTempPaths + zonePaths).distinct()
         gpuTempPathsCache = paths

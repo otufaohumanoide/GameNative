@@ -17,6 +17,7 @@ import app.gamenative.powercontrol.PowerManager
 import app.gamenative.powercontrol.metrics.FrameTimeRing
 import app.gamenative.powercontrol.metrics.GpuUsageSampler
 import app.gamenative.powercontrol.metrics.SystemMetricsSources
+import app.gamenative.powercontrol.metrics.ThermalZoneClassification
 import com.winlator.container.Container
 import org.json.JSONArray
 import org.json.JSONObject
@@ -806,7 +807,15 @@ object PerfSampler {
                 zones.mapNotNull { zone ->
                     val type = SystemMetricsSources.readFirstLine(File(zone, "type").path)?.trim()?.lowercase(Locale.US)
                         ?: return@mapNotNull null
-                    if (type.contains("skin")) File(zone, "temp").path else null
+                    // Trip points `*-step` não são leituras de temperatura (item I1a do
+                    // spec Mali/MediaTek); o mesmo guarda do ranking de CPU/GPU.
+                    if (type.contains("skin") &&
+                        !ThermalZoneClassification.isExcludedZoneType(type)
+                    ) {
+                        File(zone, "temp").path
+                    } else {
+                        null
+                    }
                 }
             }.distinct()
         }
