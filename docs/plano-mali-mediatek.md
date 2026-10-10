@@ -391,7 +391,11 @@ Durante a execução da Onda 0 apareceu um device via adb:
 | GPU | **ARM Mali-G68** (driver `v1.r38p1`, driverID 9 = ARM proprietary) |
 | Vulkan | 1.3; expõe `VK_EXT_extended_dynamic_state` e `..._state2`; **não** expõe `VK_EXT_map_memory_placed`; ASTC HDR presente |
 | Root | não (`su` ausente) |
-| `app.gamenative` | instalado (v0.0.1, 2026-08-16 — anterior ao fork atual) |
+| `app.gamenative` | instalado (v0.0.1/21, 2026-08-16 — anterior ao fork atual), **não-debuggable** e
+  assinado por um **keystore de debug de outra máquina** (`CN=Android Debug`, SHA-256
+  `edd1fdec867407f65aa071ddd12f05c128118a8fd909d9d333de04a93e450ddf`) — não é o
+  `~/.android/debug.keystore` desta máquina (`47332f43…`). Logo `adb install -r` do nosso
+  build falha por assinatura; atualizar in-place exigiria aquele keystore |
 | sysfs térmico | **negado** para o usuário `shell`; as métricas gravadas mostram `cpuTempC`/`gpuTempC` **null** |
 
 O que isso destrava e o que não destrava:
