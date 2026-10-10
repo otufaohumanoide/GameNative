@@ -10,7 +10,6 @@ internal object PerfVerdicts {
     private const val THERMAL_MODERATE = 2
     private const val SUSTAINED_SEC = 20
     private const val CEILING_RATIO = 0.85
-    private val thermalNames = arrayOf("NONE", "LIGHT", "MODERATE", "SEVERE", "CRITICAL", "EMERGENCY", "SHUTDOWN")
 
     private class Sustained(val maxSec: Int, val firstStartT: Int?)
 
@@ -300,7 +299,7 @@ internal object PerfVerdicts {
         }
     }
 
-    private fun thermalName(status: Int): String = thermalNames.getOrElse(status) { status.toString() }
+    private fun thermalName(status: Int): String = ThermalStatuses.name(status)
 
     private fun clock(seconds: Int): String = "${seconds / 60}m${seconds % 60}s"
 

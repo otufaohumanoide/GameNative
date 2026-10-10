@@ -1,8 +1,9 @@
 package app.gamenative.utils
 
 /**
- * Rótulos dos estados térmicos de `android.os.PowerManager` (API 29+) usados pelo HUD
- * (frente I4 do `docs/plano-mali-mediatek.md`). Pura e JVM-testável; não duplicar o mapeamento.
+ * Estados térmicos de `android.os.PowerManager` (API 29+) e seus rótulos, usados pelo HUD e
+ * pelos relatórios de diagnóstico (frentes I4 do `docs/plano-mali-mediatek.md`). Pura e
+ * JVM-testável; é a única fonte dos nomes (não duplicar em outro arquivo).
  */
 object ThermalStatuses {
 
@@ -15,14 +16,11 @@ object ThermalStatuses {
     const val EMERGENCY = 5
     const val SHUTDOWN = 6
 
-    /** `null` para [NONE] e valores desconhecidos: nada é exibido quando não há throttling. */
-    fun label(status: Int): String? = when (status) {
-        LIGHT -> "LIGHT"
-        MODERATE -> "MODERATE"
-        SEVERE -> "SEVERE"
-        CRITICAL -> "CRITICAL"
-        EMERGENCY -> "EMERGENCY"
-        SHUTDOWN -> "SHUTDOWN"
-        else -> null
-    }
+    private val NAMES = arrayOf("NONE", "LIGHT", "MODERATE", "SEVERE", "CRITICAL", "EMERGENCY", "SHUTDOWN")
+
+    /** Rótulo para o HUD: `null` em [NONE] (nada a exibir) e em valores desconhecidos. */
+    fun label(status: Int): String? = if (status in LIGHT..SHUTDOWN) NAMES[status] else null
+
+    /** Nome completo para relatórios: inclui "NONE"; valor fora da faixa vira o próprio número. */
+    fun name(status: Int): String = NAMES.getOrElse(status) { status.toString() }
 }

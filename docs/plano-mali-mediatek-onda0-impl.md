@@ -421,7 +421,8 @@ sempre-ativo, que é o insumo dos protocolos de A/B do plano:
 - **HUD:** novas métricas `GPU_CLOCK` ("GPU CLK …MHz") e `THERMAL` ("THERMAL <nível>"), com
   toggle no QuickMenu e preferências próprias — **desligadas por padrão**, então o layout não
   muda para quem não liga. `ThermalStatuses` (puro, JVM-testável) mapeia o código de
-  `android.os.PowerManager` para rótulo.
+  `android.os.PowerManager` para rótulo — é a **fonte única** dos nomes; `PerfVerdicts.thermalName`
+  passou a delegar a ela (removeu a cópia local `thermalNames`).
 - **Strings** EN (`values/`) e pt-rBR (`values-pt-rBR/`).
 
 **On-device pendente:** valores/visuais reais no device. `currentThermalStatus` é API 29+; fica
