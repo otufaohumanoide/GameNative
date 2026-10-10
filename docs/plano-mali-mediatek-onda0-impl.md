@@ -1,4 +1,4 @@
-# Impl doc — Onda 0 do plano Mali/MediaTek (sem device)
+# Impl doc — plano Mali/MediaTek: Onda 0 e itens sem device
 
 **Data:** 2026-10-10
 **Executa:** `docs/plano-mali-mediatek.md` §5 "Onda 0 — sem device (pode começar já)"
@@ -321,3 +321,38 @@ A verificação do plano §2.4/F6 não se sustentou totalmente. Fatos apurados (
 seria "reconstruir e publicar os assets `wrapper*` antigos", que é infraestrutura (build +
 upload), não uma mudança de código — e depende de qual upstream cada variante deve seguir. Fica
 registrado para decisão do usuário; nada foi alterado nos binários.
+
+
+---
+
+## 9. H2 (parte segura) — `WRAPPER_BCN_GPU_CAP_MB` exposto
+
+O plano lista H2 na Onda 2, mas o item é **device-independent**: H3 confirmou no binário que
+`WRAPPER_BCN_GPU_CAP_MB` existe no blob e é o lever novo seguro de expor. Não muda default nenhum
+(o wrapper já usa 128 MB) e não toca no caminho de validação de nenhuma onda.
+
+- `app/src/main/java/app/gamenative/utils/BcnTuning.kt` — normalização pura/JVM-testável:
+  vazio/não numérico → 128; abaixo de 16 → 16 (contrato do wrapper, `wrapper_device.c:4186-4191`).
+- `GraphicsTab.kt` — campo numérico "Memória do transcode GPU (MB)" (chave `bcnGpuCapMb`), só no
+  bloco do `wrapper-gamenative`.
+- `XServerScreen.kt` — seta `WRAPPER_BCN_GPU_CAP_MB` com o valor normalizado, ao lado de
+  `WRAPPER_BCN_GPU`/`WRAPPER_ASTC_BLOCK`.
+- Strings EN (`values/`) e pt-rBR (`values-pt-rBR/`).
+
+**Deliberadamente não expostos, com motivo:**
+
+- `WRAPPER_BCN_ASTC` — o caminho GPU **assume destino ASTC**; expor o desligamento exige acoplar
+  `ASTC=0 ⇒ WRAPPER_BCN_GPU=0` em código, senão o shader escreve ASTC num destino RGBA8 (H3 §1.4).
+  Fica para quando essa decisão for tomada junto com medição.
+- `WRAPPER_BCN_POLICY` — está no fonte do wrapper mas **ausente do blob**; expô-lo seria tuning
+  falso (mesmo erro de `ENABLE_BCN_COMPUTE`).
+
+
+**Verificação (2026-10-10):**
+
+```bash
+JAVA_HOME=/home/marcos/android-studio/jbr ./gradlew :app:testModernDebugUnitTest \
+  --tests "*BcnTuning*" --tests "*ThermalZoneClassification*" --no-configuration-cache
+```
+
+**BUILD SUCCESSFUL** — `BcnTuningTest` 3/3 e `ThermalZoneClassificationTest` 10/10, 0 falhas.

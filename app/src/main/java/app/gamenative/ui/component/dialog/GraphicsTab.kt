@@ -17,8 +17,10 @@ import app.gamenative.R
 import app.gamenative.ui.component.settings.SettingsListDropdown
 import app.gamenative.ui.component.settings.SettingsListDropdownSearchable
 import app.gamenative.ui.component.settings.SettingsMultiListDropdown
+import app.gamenative.ui.component.settings.SettingsTextField
 import app.gamenative.ui.theme.settingsTileColors
 import app.gamenative.ui.theme.settingsTileColorsAlt
+import app.gamenative.utils.BcnTuning
 import app.gamenative.utils.LsfgVkManager
 import com.alorma.compose.settings.ui.SettingsGroup
 import com.alorma.compose.settings.ui.SettingsSwitch
@@ -100,6 +102,23 @@ fun GraphicsTabContent(state: ContainerConfigState, default: Boolean = false) {
                     onItemSelected = { idx ->
                         val cfg = KeyValueSet(config.graphicsDriverConfig)
                         cfg.put("quality", if (idx == 1) "high" else "low")
+                        state.config.value = config.copy(graphicsDriverConfig = cfg.toString())
+                    },
+                )
+                // GPU transcode memory cap (WRAPPER_BCN_GPU_CAP_MB). Only read by the wrapper's
+                // GPU BCn path; default 128 MB, minimum 16 MB (wrapper_device.c). Normalization
+                // lives in BcnTuning so the field and the env var agree.
+                val bcnGpuCapMbValue = KeyValueSet(config.graphicsDriverConfig)
+                    .get("bcnGpuCapMb", BcnTuning.DEFAULT_GPU_CAP_MB.toString())
+                SettingsTextField(
+                    colors = settingsTileColors(),
+                    title = { Text(text = stringResource(R.string.bcn_gpu_cap_mb)) },
+                    subtitle = { Text(text = stringResource(R.string.bcn_gpu_cap_mb_hint)) },
+                    value = bcnGpuCapMbValue,
+                    onValueChange = { raw ->
+                        val digits = raw.filter { it.isDigit() }.take(5)
+                        val cfg = KeyValueSet(config.graphicsDriverConfig)
+                        cfg.put("bcnGpuCapMb", digits.ifEmpty { BcnTuning.DEFAULT_GPU_CAP_MB.toString() })
                         state.config.value = config.copy(graphicsDriverConfig = cfg.toString())
                     },
                 )

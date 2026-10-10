@@ -131,6 +131,7 @@ import app.gamenative.ui.data.PerformanceHudSize
 import app.gamenative.ui.data.XServerState
 import app.gamenative.ui.widget.PerformanceHudView
 import app.gamenative.utils.AssetUtils
+import app.gamenative.utils.BcnTuning
 import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.downloader.CoreDriverDownloader
 import app.gamenative.utils.CustomGameScanner
@@ -6131,6 +6132,13 @@ private suspend fun extractGraphicsDriverFiles(
 
         val transcoder = graphicsDriverConfig.get("transcoder", "cpu")
         envVars.put("WRAPPER_BCN_GPU", if (transcoder.equals("gpu", ignoreCase = true)) "1" else "0")
+
+        // H2/H3: teto de memória transiente do transcode GPU. Presente no blob shipado
+        // (default 128 MB, mínimo 16); normalização única em BcnTuning.
+        envVars.put(
+            "WRAPPER_BCN_GPU_CAP_MB",
+            BcnTuning.gpuCapMb(graphicsDriverConfig.get("bcnGpuCapMb")).toString(),
+        )
 
         val wrapperQuality = graphicsDriverConfig.get("quality", "low")
         envVars.put("WRAPPER_ASTC_BLOCK", if (wrapperQuality.equals("high", ignoreCase = true)) "4x4" else "8x8")

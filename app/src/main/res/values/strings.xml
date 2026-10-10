@@ -931,6 +931,8 @@
     <string name="wrapper_quality">Quality</string>
     <string name="wrapper_quality_low">Low (softer images, uses less RAM)</string>
     <string name="wrapper_quality_high">High (sharper images, uses more RAM)</string>
+    <string name="bcn_gpu_cap_mb">GPU transcode memory (MB)</string>
+    <string name="bcn_gpu_cap_mb_hint">Default 128, minimum 16 (GPU transcoder only)</string>
     <string name="sharpness_effect">Sharpness Boost</string>
     <string name="sharpness_level">Sharpness Level</string>
     <string name="sharpness_denoise">Sharpness Denoise</string>
