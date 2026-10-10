@@ -373,9 +373,11 @@ Detalhes e a tabela de tokens em `plano-mali-mediatek-onda0-impl.md` §8.
 - **I2 (frequência/temperatura GED)**: nomes de nó não verificados em referência → precisa de
   device MediaTek; temperatura deste A14 é bloqueada ao adb.
 - **J1–J4** (driver de performance Mali): esforço alto e ganho limitado sem root — último da
-  fila. `J3` não é mecânico: `PowerManager.startClusterTuning` é tipado em `PServerDriver`
-  (`PServerDriver.CpuCluster`), então integrar o tuner a um driver Mali exige refatorar o
-  tuner para uma abstração comum — decisão de arquitetura, não um patch. Ver 2026-10-10 abaixo.
+  fila. **Escala verificada:** `PServerDriver.kt` tem **1906 linhas** (binder/root, snapshot de
+  permissões, presets, taskset); um peer Mali não é um patch. E `J3` não é mecânico:
+  `PowerManager.startClusterTuning` é **tipado em `PServerDriver`** (`PServerDriver.CpuCluster`),
+  então integrar o tuner exige refatorar o tuner para uma abstração comum — decisão de
+  arquitetura.
 - **K2–K5**: pendências on-device herdadas do commit `e4222aae`.
 
 Já entregues (device-independent): I1a/I1b/I1c, H1, G2, H2, F3, F6 (reescopado), I5, I2
