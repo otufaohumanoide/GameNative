@@ -367,3 +367,17 @@ O que isso destrava e o que não destrava:
 - O A/B on-device de F1/F2/G1 continua exigindo **um jogo rodando** (e a coleta de
   `metrics-*.jsonl`), o que é interativo. O `libvulkan_wrapper.so` só é carregado quando um
   container é lançado.
+### 9.3 Correção da Frente F (F6, verificada)
+
+A conclusão 4 da §2.4 e o item **F6** confundem dois assets diferentes:
+
+- **`libvulkan_wrapper.tar.xz`** (o arquivo nomeado no F6) **não é consumido por nenhum caminho
+  do app** — a extração usa `graphics_driver/<driverId>.tzst`, e o id `libvulkan_wrapper` nunca é
+  usado. Atualizá-lo é **no-op**.
+- **`wrapper-gamenative.tzst`** (legacy) **já é** o blob jul/2026 — nada a corrigir.
+- Os assets realmente atrasados são `wrapper.tzst`, `wrapper-v2.tzst`, `wrapper-legacy.tzst` e
+  `wrapper-leegao.tzst` (verificados token a token); atualizá-los exige rebuild de cada variante
+  e **publicação no `downloads.gamenative.app`** + bump do manifesto — infraestrutura, não código
+  deste repo.
+
+Detalhes e a tabela de tokens em `plano-mali-mediatek-onda0-impl.md` §8.

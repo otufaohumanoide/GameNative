@@ -211,8 +211,10 @@ MediaTek de K1.
   marcou `TODO: turn on by default if safe`).
 - **F2** — A/B de `WRAPPER_DISABLE_PLACED` no Mali.
 - **F5** — instrumentar o log de WSI (direct vs blit) no JSONL de métricas.
-- **F6** — atualizar o asset legacy `libvulkan_wrapper.tar.xz` (ago/2025) para paridade com o
-  blob jul/2026; hoje ele não tem BCN-ASTC, bypass de WSI nem `WRAPPER_NO_REMOVE_CLIP_DISTANCE`.
+- **F6** — atualizar o asset legacy — **reescopado após verificação, ver §8**: o alvo nomeado no
+  plano (`libvulkan_wrapper.tar.xz`) não é consumido por nenhum caminho do app; o
+  `wrapper-gamenative.tzst` legacy já está no blob jul/2026; os demais `wrapper*.tzst` exigem
+  rebuild upstream + publicação.
 - **G1/G3** — blacklist `VK_EXT_extended_dynamic_state` e preset "Mali Otimizado". **Reframeados
   por G2 (§4.2):** G1 vira opt-in por modelo **medido** (não por "ser Mali"), pois o wrapper já
   decide isso nativamente; depende de K1.
@@ -282,3 +284,40 @@ Apareceu um device via adb durante a execução: Samsung **SM-A146M** (Galaxy A1
 
 O A/B on-device de F1/F2/G1 exige um jogo rodando (o wrapper só carrega no launch do container) e
 coleta de `metrics-*.jsonl`; é interativo e não foi feito.
+
+
+---
+
+## 8. F6 — verificação do "asset legacy" e reescopo
+
+A verificação do plano §2.4/F6 não se sustentou totalmente. Fatos apurados (2026-10-10):
+
+1. **`libvulkan_wrapper.tar.xz` não tem consumidor.** O único uso é o manifesto
+   (`graphics_driver_download.json`) e o teste `GraphicsDriverDownloaderTest`. A extração de
+   driver usa `graphics_driver/$componentId.tzst` (`XServerScreen.kt:5483-5486`), onde
+   `componentId` é o id do driver (`wrapper`, `wrapper-v2`, `wrapper-gamenative`,
+   `wrapper-legacy`, `wrapper-leegao`). Nenhum caminho usa `libvulkan_wrapper` como id. O
+   arquivo é um `.so` de ago/2025 (18.4 MB, sem nenhum dos tokens novos), mas atualizá-lo
+   **não muda comportamento nenhum**.
+2. **O `wrapper-gamenative.tzst` legacy já está atualizado**: é byte-idêntico ao blob
+   jul/2026 que shipamos (o F3 já provou blob == publicado). Não há o que corrigir nele.
+3. **Os assets legacy realmente atrasados são os outros wrappers.** Verificado nos `.tzst` de
+   `app/src/legacy/assets/graphics_driver/` (token presente?):
+
+   | Asset legacy | tamanho do `.so` | `WRAPPER_EMULATE_BCN` | `WRAPPER_BCN_ASTC` | `WRAPPER_BYPASS_SWAPCHAIN_PLACED` |
+   |---|---:|:--:|:--:|:--:|
+   | `wrapper-gamenative.tzst` | 2.710.376 | ✅ | ✅ | ✅ |
+   | `wrapper.tzst` | 19.021.832 | ✅ | ❌ | ❌ |
+   | `wrapper-v2.tzst` | 18.454.184 | ❌ | ❌ | ❌ |
+   | `wrapper-legacy.tzst` | 27.317.184 | ❌ | ❌ | ❌ |
+   | `wrapper-leegao.tzst` | 8.709.528 | ❌ | ❌ | ❌ |
+
+4. **Atualizá-los não é código deste repo.** Cada `wrapper*` vem de uma origem/variante
+   distinta; é preciso rebuild (NDK) + empacotamento + **publicação em
+   `downloads.gamenative.app`** + bump do manifesto. Só o `wrapper-gamenative` tem receita de CI
+   pronta (PR #16 do `GameNative-mesa`), e ele já está atual.
+
+**Conclusão:** F6, como escrito (atualizar `libvulkan_wrapper.tar.xz`), é **no-op**. O item real
+seria "reconstruir e publicar os assets `wrapper*` antigos", que é infraestrutura (build +
+upload), não uma mudança de código — e depende de qual upstream cada variante deve seguir. Fica
+registrado para decisão do usuário; nada foi alterado nos binários.
