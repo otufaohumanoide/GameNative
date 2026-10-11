@@ -561,3 +561,46 @@ confundida e o instrumento é fraco para este alvo:
   `gpuTempC=50`, `gpuFreqMhz=208`, `thermalStatus=1`, `thermalHeadroom=0.86` — com `cpuTempC`
   `null` e `cpuUsageSource=CPU_FREQUENCY`, exatamente como documentado em §10 (sysfs térmico
   negado ao app).
+
+### 11.6 Correção de método e escolha do alvo (2026-10-10)
+
+**A métrica principal estava errada.** O painel do A14 tem modos de **60 e 90 Hz**
+(`dumpsys display`) e a perna A mediu **62,6 fps** — ou seja, o jogo estava **limitado por
+vsync**. Sob vsync, um ganho no caminho de WSI/blit **não pode** aparecer como fps: ele aparece
+como **menos GPU por quadro** e **frame-time p95 menor**. Medir fps como métrica primária
+mascarou qualquer efeito possível.
+
+**Confound duplo:** além do teto de vsync, GPU ~22 % contra CPU ~60 % mostra que o jogo era
+**CPU-bound** (box64/FEX emulando x86). O F1 otimiza o *present*; sem pressão de GPU, o custo que
+ele remove é irrelevante naquele título.
+
+**Critérios para o próximo alvo (o que vale instalar):**
+
+1. **GPU-bound**, não CPU-bound: GPU% alto (idealmente > 70 %) na cena medida.
+2. **Com benchmark embutido** — cena determinística elimina o confound "mesma cena" de uma vez.
+   Exemplos leves o suficiente para Mali-G68: *Resident Evil 6 Benchmark Tool*, *Street Fighter IV
+   benchmark*, *Devil May Cry 4 benchmark*.
+3. **Sem teto de 60 fps** (vsync/limiter desligado). Se não der, medir por GPU% e p95, com fps
+   apenas como sanidade.
+4. **Resolução de render que faça o present custar**: 720p deixa o blit barato; 1080p exerce mais
+   o caminho de blit que o F1 contorna.
+
+**Bloqueio do log do wrapper — resolvido.** O default do wrapper é `/sdcard/wrapper/logs`, que
+hoje pertence ao uid do **app antigo** (`u0_a216`) e não é gravável pelo uid atual. Use
+`WRAPPER_LOG_FILE=/sdcard/Android/data/app.gamenative/files/powercontrol/wrapper-<perna>.log`:
+esse diretório é **comprovadamente gravável** pelo uid do app, porque é exatamente onde o coletor
+escreve os `metrics-*.jsonl`.
+
+**Executor do protocolo:** `tools/mali-f1-ab/f1_ab.py`. Roda as duas pernas com **duração
+idêntica**, liga o log do wrapper **nas duas**, verifica o env var realmente entregue ao processo
+Wine, registra o caminho de WSI escolhido (`Bypassing…` vs `Emulating…`) e **restaura o
+`.container` original** no fim. Corrige os quatro confounds da §11.5 de uma vez.
+
+```bash
+python3 tools/mali-f1-ab/f1_ab.py --container STEAM_205910 --dry-run   # valida sem tocar no device
+python3 tools/mali-f1-ab/f1_ab.py --container STEAM_205910 --seconds 120
+```
+
+**Nota de convivência:** durante a §11.5 o container e o jogo avaliados foram removidos por
+atividade concorrente no aparelho, e as tarefas do app trocaram de id entre comandos. Rodar A/B
+exige **janela exclusiva** no device — medição de tuning com o aparelho em uso não é confiável.
