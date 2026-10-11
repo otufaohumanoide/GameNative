@@ -49,6 +49,31 @@ Os 12 arquivos auto-mesclados (revisar call sites, não reimplementar):
 | Data | Hash upstream | Arquivos em conflito | Decisões novas |
 |---|---|---|---|
 | 2026-09-11 | `5cdc906a` | 9 (36 hunks) — lista acima | gyro do fork removido em favor do #1882; combos #1833 adotados; shaders seguem só no fork |
+| 2026-10-11 | `c78519cd9` (104 commits) | 7 (2 modify/delete + 5 conteúdo) | ver §Costuras 2026-10-11 |
+
+## Costuras do sync 2026-10-11
+
+**31 arquivos** tocados pelos dois lados, 7 em conflito. Detalhamento completo (com o porquê
+de cada decisão e as evidências) em `docs/upstream-sync-2026-10-11-impl.md`.
+
+| Arquivo | Conflito | Regra de resolução |
+|---|---|---|
+| `app/src/{legacy,modern}/jniLibs/arm64-v8a/libvulkan_renderer.so` | modify/delete | **manter deletado** — o fork compila o renderer do fonte (`CMakeLists.txt` inclui `VulkanLibrashader.cpp`); adotar o `.so` do upstream sobrescreveria o renderer com shader |
+| `SettingsScreen.kt` | conteúdo | manter **as duas** seções (conta do upstream + gamepad do fork) |
+| `ElementEditorDialog.kt` | conteúdo | P1: entra o `Slider` de opacidade do upstream |
+| `TouchGestureSettingsDialog.kt` | conteúdo | picker do upstream (keys estáveis) + reaplicar o foco do fork |
+| `PerfVerdicts.kt` | conteúdo | `HELPER_*` do upstream ficam; `thermalNames` **não volta** (o fork fez `ThermalStatuses` ser fonte única) |
+| `WinHandler.java` | conteúdo | upstream integral como base + reancorar o rumble do fork num único hook |
+
+**Arquivos auto-mesclados que agora também são costura** (revisar call sites, não reimplementar):
+`VulkanRendererContext.cpp`, `PerformanceMetricsCollector.kt`, `LsfgVkManager.kt`, `PerfSampler.kt`,
+`BionicProgramLauncherComponent.java`, `Library*` (`AppItem`/`CarouselPane`/`GridCard`/`ListCard`/`ListPane`)
+e `PhysicalControllerConfigSection.kt`.
+
+**Regra que se firmou:** quando o upstream passa a ter implementação própria de uma feature do fork
+(rumble nesta rodada, gyro na anterior), a base é **a dele** e o fork reancora **um** hook — não se
+mantêm as duas implementações em paralelo. O que o fork preserva é o comportamento documentado
+(dual-motor + gate global no rumble), não o código original.
 
 ## Receita de emergência
 
