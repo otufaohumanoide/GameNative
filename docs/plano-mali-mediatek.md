@@ -498,3 +498,66 @@ do F1 (toggle **OFF** vs **ON**, mesmo jogo/cena) usando
 confirmar o caminho escolhido (`"Bypassing EXT_map_memory_placed emulation for swapchain image"`).
 Esse é o único item capaz de converter o F1 de alavanca em ganho medido — e o A14 já demonstrou
 o sintoma que ele ataca.
+
+### 11.5 Primeiro A/B real do F1 no device (2026-10-10) — **inconclusivo, e por quê**
+
+O A/B foi executado com o jogo **Tiny and Big: Grandpa's Leftovers** (container
+`STEAM_205910`, `graphicsDriver: Wrapper-gamenative`, `dxwrapper: dxvk`), no SM-A146M, com o
+nosso build (`v1.2.1/23`, arm64-v8a). A alavanca foi o caminho de produção: a chave
+`bypassSwapchainPlaced=1` no `graphicsDriverConfig` do container, lida por `WrapperTuning`.
+
+**O plumbing foi confirmado no device** — o log do processo Wine mostra o env var real, antes e
+depois:
+
+```
+WRAPPER_BYPASS_SWAPCHAIN_PLACED=0     # default (toggle OFF)
+WRAPPER_BYPASS_SWAPCHAIN_PLACED=1     # após bypassSwapchainPlaced=1
+```
+
+O mesmo log confirma que **o H2 também está vivo**: `WRAPPER_BCN_ASTC=1`, `WRAPPER_BCN_GPU=0`,
+`WRAPPER_BCN_GPU_CAP_MB=128`, `WRAPPER_EMULATE_BCN=3` — e que a regra de Mali do fork se aplica:
+`BOX64_MMAP32=0`.
+
+**Resultado da medição** (`tools/mali-metrics-report`, cena estática do menu de opções):
+
+| | F1 OFF | F1 ON | Δ (B−A) |
+|---|---|---|---|
+| amostras (jogando) | 789 (763) | 401 (343) | — |
+| fps médio | **62.6** | 61.7 | **−0.9** |
+| p95 mediano | **20.6 ms** | 21.1 ms | +0.5 ms |
+| gpu% médio | 22.6 | 23.2 | +0.6 |
+| cpu% médio | 59.8 | 64.5 | +4.7 |
+| headroom médio | 0.87 | 0.88 | — |
+
+**Leitura honesta: não há evidência de ganho, e não há como concluir que não há** — a medição é
+confundida e o instrumento é fraco para este alvo:
+
+1. **O jogo é limitado por CPU, não pelo caminho de present.** GPU a ~22% contra CPU a ~60 %
+   (box64/FEX emulando x86) — o F1 otimiza um custo de WSI/blit, que neste cenário não é o
+   gargalo. Um resultado nulo aqui **não falsifica** o F1; apenas mostra que a cena não o
+   exerce.
+2. **Comparação não controlada.** As durações diferem (789 vs 401 amostras), a corrida A
+   incluiu o *warm-up* de instalação do Mono (p95 máx 1356 ms vs 216 ms na B) e a cena não foi
+   fixada por tempo igual nas duas pernas.
+3. **O device mudou durante o teste.** O container `STEAM_205910` (e o jogo) foi removido por
+   atividade concorrente no aparelho e outro título apareceu instalado; o estado não era
+   estável entre as pernas.
+
+**Consequências para o plano:**
+
+- **O default do F1 NÃO deve ser alterado** (a regra de ouro da §5 se mantém: sem ganho medido,
+  não vira default). O toggle continua opt-in.
+- **Este jogo é um probe ruim para F1.** Para decidir, o alvo precisa ser um cenário limitado
+  pelo caminho de present (GPU alta / blit-bound), ou — melhor — **verificar o mecanismo**
+  diretamente: `WRAPPER_LOG_LEVEL=info` + `WRAPPER_LOG_FILE` e procurar
+  `"Bypassing EXT_map_memory_placed emulation for swapchain image"` (ON) contra
+  `"Emulating vkAllocateMemory"` (OFF). Isso é binário e independe de o jogo ser CPU-bound.
+  **Atenção:** o diretório padrão do wrapper é `/sdcard/wrapper/logs`, que hoje pertence ao uid
+  do **app antigo** (`u0_a216`) — o `WRAPPER_LOG_FILE` precisa apontar para um caminho gravável
+  pelo uid atual.
+- **O protocolo precisa de cena e duração iguais** nas duas pernas (ex.: menu estático, 120 s
+  cada, com o mesmo `screenSize`), senão o Δ fica dentro do ruído.
+- A telemetria que a Onda 0 entregou **funcionou ao vivo** e é o que tornou este A/B possível:
+  `gpuTempC=50`, `gpuFreqMhz=208`, `thermalStatus=1`, `thermalHeadroom=0.86` — com `cpuTempC`
+  `null` e `cpuUsageSource=CPU_FREQUENCY`, exatamente como documentado em §10 (sysfs térmico
+  negado ao app).
