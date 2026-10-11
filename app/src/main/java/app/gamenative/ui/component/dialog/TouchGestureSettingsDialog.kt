@@ -881,7 +881,7 @@ private fun TouchActionComboPicker(
                     initialFocusRequester = pickerInitialFocus,
                 ) {
                     LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                    item {
+                    item(key = "selected-actions") {
                         val selectedLabels = mutableListOf<String>()
                         for (action in selectedActions) selectedLabels += actionLabel(action)
                         Text(
@@ -895,7 +895,7 @@ private fun TouchActionComboPicker(
                         )
                     }
                     if (canChooseMode) {
-                        item {
+                        item(key = "combination-mode") {
                             SingleChoiceSegmentedButtonRow(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -916,7 +916,7 @@ private fun TouchActionComboPicker(
                             }
                         }
                         if (selectedSequence) {
-                            item {
+                            item(key = "sequence-delay") {
                                 DelayTextField(
                                     label = stringResource(R.string.binding_sequence_delay_ms),
                                     value = selectedSequenceDelayMs,
@@ -927,9 +927,8 @@ private fun TouchActionComboPicker(
                             }
                         }
                     }
-                    var actionOffset = 0
-                    categories.forEach { category ->
-                        item {
+                    categories.forEachIndexed { categoryIndex, category ->
+                        item(key = "category-$categoryIndex") {
                             Text(
                                 text = category.header,
                                 style = MaterialTheme.typography.labelMedium,
@@ -938,15 +937,18 @@ private fun TouchActionComboPicker(
                                 modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                             )
                         }
-                        val categoryOffset = actionOffset
-                        actionOffset += category.actions.size
-                        itemsIndexed(category.actions) { actionIndex, (actionKey, actionText) ->
+                        // Keys estáveis do upstream + o índice que o bootstrap de foco do fork
+                        // precisa (`isFirstRow`). `itemsIndexed` com `key` dá os dois.
+                        itemsIndexed(
+                            category.actions,
+                            key = { _, (actionKey, _) -> "action-$categoryIndex-$actionKey" },
+                        ) { actionIndex, (actionKey, actionText) ->
                             val isSelected = actionKey in selectedActions
                             val replacesRequiredAction = actionKey in requiredSingleSelectionActions &&
                                 selectedActions.any { it in requiredSingleSelectionActions }
                             val enabled = isSelected || replacesRequiredAction ||
                                 selectedActions.size < TouchGestureConfig.MAX_ACTION_COMBO_SIZE
-                            val isFirstRow = categoryOffset == 0 && actionIndex == 0
+                            val isFirstRow = categoryIndex == 0 && actionIndex == 0
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()

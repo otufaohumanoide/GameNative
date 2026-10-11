@@ -901,6 +901,16 @@ fun ElementEditorDialog(
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp),
                     ) {
+                        Slider(
+                            value = currentButtonOpacity,
+                            onValueChange = {
+                                currentButtonOpacity = it
+                                currentButtonOpacityInherited = false
+                                hasUnsavedChanges = true
+                            },
+                            valueRange = 0.0f..1.0f,
+                            modifier = Modifier.weight(1f)
+                        )
                         Text(
                             text = "${(currentButtonOpacity * 100).roundToInt()}%",
                             style = MaterialTheme.typography.bodyMedium,

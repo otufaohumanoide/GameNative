@@ -51,6 +51,7 @@ import app.gamenative.data.GameSource
 import app.gamenative.data.LibraryItem
 import app.gamenative.data.PreferredCopyOption
 import app.gamenative.enums.LoginResult
+import app.gamenative.data.StoreGameDetails
 import app.gamenative.enums.Marker
 import app.gamenative.enums.PathType
 import app.gamenative.enums.SyncResult
@@ -59,6 +60,7 @@ import app.gamenative.events.SteamEvent
 import app.gamenative.service.DownloadService
 import app.gamenative.service.SteamService
 import app.gamenative.service.SteamService.Companion.getAppDirPath
+import app.gamenative.service.download.SteamDownloadMode
 import app.gamenative.ui.component.dialog.MessageDialog
 import app.gamenative.ui.component.dialog.LoadingDialog
 import app.gamenative.ui.component.dialog.state.MessageDialogState
@@ -75,6 +77,7 @@ import app.gamenative.workshop.WorkshopManager
 import app.gamenative.NetworkMonitor
 import app.gamenative.service.SteamService.Companion.getInstalledApp
 import com.google.android.play.core.splitcompat.SplitCompat
+import app.gamenative.utils.ConversionTracker
 import com.posthog.PostHog
 import com.winlator.container.Container
 import com.winlator.container.ContainerData
@@ -397,11 +400,6 @@ class SteamAppScreen : BaseAppScreen() {
             }
         }
 
-        val (compatibilityMessage, compatibilityColor) = rememberCompatibilityInfo(
-            context = context,
-            gameName = appInfo.name,
-        )
-
         // Read companion Snapshot map so status recomposes when the change-copy dialog updates it.
         val preferredCopyUi = preferredCopyUiByAppId[gameId]
         // familyGroupId flips early on LoggedOn; dataVersion bumps after shared-library refresh.
@@ -445,13 +443,14 @@ class SteamAppScreen : BaseAppScreen() {
             sizeFromStore = sizeFromStore,
             lastPlayedText = lastPlayedText,
             playtimeText = playtimeText,
-            compatibilityMessage = compatibilityMessage,
-            compatibilityColor = compatibilityColor,
             preferredCopyStatusText = preferredCopyUi?.statusText,
             showChangePreferredCopy = preferredCopyUi?.showChange == true,
             onChangePreferredCopy = { showPreferredCopyDialog(gameId) },
             isLoadingPreferredCopy = preferredCopyUi?.isLoading == true ||
                 (preferredCopyUi == null && familyGroupId != 0L),
+            storeDetails = StoreGameDetails(
+                reviewPercentage = appInfo.reviewPercentage.toInt().takeIf { it in 1..100 },
+            ),
         )
     }
 
@@ -626,7 +625,9 @@ class SteamAppScreen : BaseAppScreen() {
             resumeWorkshopDownload(gameId, context)
         } else if (SteamService.hasPartialDownload(gameId)) {
             CoroutineScope(Dispatchers.IO).launch {
-                SteamService.downloadApp(gameId)
+                // Resuming an interrupted transfer keeps the mode it was started with (an
+                // interrupted verify stays a verify; an install stays an install).
+                SteamService.downloadApp(gameId, SteamService.resumeModeFor(gameId))
             }
         } else if (!isInstalled) {
             // Request storage permissions first, then show install dialog
@@ -652,7 +653,8 @@ class SteamAppScreen : BaseAppScreen() {
             resumeWorkshopDownload(gameId, context)
         } else {
             CoroutineScope(Dispatchers.IO).launch {
-                SteamService.downloadApp(gameId)
+                // Resume of an interrupted run: the download record remembers its mode.
+                SteamService.downloadApp(gameId, SteamService.resumeModeFor(gameId))
             }
         }
     }
@@ -683,7 +685,7 @@ class SteamAppScreen : BaseAppScreen() {
 
     override fun onUpdateClick(context: Context, libraryItem: LibraryItem) {
         CoroutineScope(Dispatchers.IO).launch {
-            SteamService.downloadApp(libraryItem.gameId)
+            SteamService.downloadApp(libraryItem.gameId, SteamDownloadMode.UPDATE)
         }
     }
 
@@ -1002,7 +1004,7 @@ class SteamAppScreen : BaseAppScreen() {
 
         if (container.language != config.language) {
             CoroutineScope(Dispatchers.IO).launch {
-                SteamService.downloadApp(libraryItem.gameId)
+                SteamService.downloadApp(libraryItem.gameId, SteamDownloadMode.UPDATE)
             }
         }
     }
@@ -1238,11 +1240,16 @@ class SteamAppScreen : BaseAppScreen() {
                     {
                         PostHog.capture(
                             event = "game_install_started",
-                            properties = mapOf("game_name" to (appInfo?.name ?: "")),
+                            properties = mapOf("game_name" to (appInfo?.name ?: "")) +
+                                ConversionTracker.campaignAttribution(gameId),
                         )
                         hideInstallDialog(gameId)
                         CoroutineScope(Dispatchers.IO).launch {
-                            SteamService.downloadApp(gameId)
+                            // UPDATE, not INSTALL: this dialog confirms an install, but the run
+                            // must re-hash any leftover files and re-check every depot (INSTALL
+                            // skips depots the app already records as downloaded, which would
+                            // leave a half-broken install half-broken).
+                            SteamService.downloadApp(gameId, SteamDownloadMode.UPDATE)
                         }
                     }
                 }
@@ -1287,7 +1294,16 @@ class SteamAppScreen : BaseAppScreen() {
                         if (operation != null) {
                             CoroutineScope(Dispatchers.IO).launch {
                                 val container = ContainerUtils.getOrCreateContainer(context, libraryItem.appId)
-                                val downloadInfo = SteamService.downloadApp(gameId)
+                                // "Verify Files" repairs the installed build (pinned to the
+                                // manifest this app recorded as installed); "Update" fetches the
+                                // current one. Both used to run the same update-all path, so
+                                // verifying silently upgraded the game.
+                                val mode = if (operation == AppOptionMenuType.VerifyFiles) {
+                                    SteamDownloadMode.VERIFY
+                                } else {
+                                    SteamDownloadMode.UPDATE
+                                }
+                                val downloadInfo = SteamService.downloadApp(gameId, mode)
                                 MarkerUtils.removeMarker(getAppDirPath(gameId), Marker.STEAM_DLL_REPLACED)
                                 MarkerUtils.removeMarker(getAppDirPath(gameId), Marker.STEAM_DLL_RESTORED)
                                 MarkerUtils.removeMarker(getAppDirPath(gameId), Marker.STEAM_COLDCLIENT_USED)
@@ -1490,10 +1506,11 @@ class SteamAppScreen : BaseAppScreen() {
 
                     PostHog.capture(
                         event = "game_install_started",
-                        properties = mapOf("game_name" to (appInfo?.name ?: ""))
+                        properties = mapOf("game_name" to (appInfo?.name ?: "")) +
+                            ConversionTracker.campaignAttribution(gameId),
                     )
                     CoroutineScope(Dispatchers.IO).launch {
-                        SteamService.downloadApp(gameId, dlcAppIds, branch = branch, isUpdateOrVerify = false)
+                        SteamService.downloadApp(gameId, dlcAppIds, branch = branch, mode = SteamDownloadMode.INSTALL)
                     }
                 },
                 onDismissRequest = {
@@ -1648,11 +1665,13 @@ class SteamAppScreen : BaseAppScreen() {
                             val container = ContainerUtils.getOrCreateContainer(context, libraryItem.appId)
                             val dlcAppIds = SteamService.getInstalledApp(gameId)
                                 ?.dlcDepots.orEmpty()
+                            // Switching branch: take that branch's CURRENT manifests (an update
+                            // against the newly selected branch), not the installed build's.
                             SteamService.downloadApp(
                                 gameId,
                                 dlcAppIds,
                                 branch = selectedBranch,
-                                isUpdateOrVerify = true,
+                                mode = SteamDownloadMode.UPDATE,
                             )
                             container.isNeedsUnpacking = true
                             container.saveData()

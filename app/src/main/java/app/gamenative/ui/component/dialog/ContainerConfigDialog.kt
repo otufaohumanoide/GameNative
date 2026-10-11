@@ -101,6 +101,7 @@ import app.gamenative.utils.ManifestData
 import app.gamenative.utils.ManifestEntry
 import app.gamenative.utils.ManifestInstaller
 import app.gamenative.service.SteamService
+import app.gamenative.service.download.SteamDownloadMode
 import app.gamenative.utils.ManifestComponentHelper.VersionOptionList
 import app.gamenative.utils.ManifestRepository
 import app.gamenative.utils.PaddingUtils
@@ -550,7 +551,7 @@ fun ContainerConfigDialog(
 
         fun launchSteamAppDownload(appId: Int, label: String, onDownloaded: () -> Unit) {
             if (manifestInstallInProgress) return
-            val downloadInfo = SteamService.downloadApp(appId) ?: run {
+            val downloadInfo = SteamService.downloadApp(appId, SteamDownloadMode.UPDATE) ?: run {
                 onDownloaded()
                 return
             }
@@ -697,6 +698,8 @@ fun ContainerConfigDialog(
         var sharpnessLevel by sharpnessLevelRef
         val sharpnessDenoiseRef = rememberSaveable { mutableIntStateOf(config.sharpnessDenoise.coerceIn(0, 100)) }
         var sharpnessDenoise by sharpnessDenoiseRef
+        val vibrationIntensityRef = rememberSaveable { mutableIntStateOf(config.vibrationIntensity.coerceIn(0, 100)) }
+        var vibrationIntensity by vibrationIntensityRef
         val adrenotoolsTurnipCheckedRef = rememberSaveable {
             val cfg = KeyValueSet(config.graphicsDriverConfig)
             mutableStateOf(cfg.get("adrenotoolsTurnip", "1") != "0")
@@ -741,6 +744,10 @@ fun ContainerConfigDialog(
             sharpnessEffectIndex = sharpnessEffects.indexOfFirst { it.equals(config.sharpnessEffect, true) }.coerceAtLeast(0)
             sharpnessLevel = config.sharpnessLevel.coerceIn(0, 100)
             sharpnessDenoise = config.sharpnessDenoise.coerceIn(0, 100)
+        }
+
+        LaunchedEffect(config.vibrationIntensity) {
+            vibrationIntensity = config.vibrationIntensity.coerceIn(0, 100)
         }
 
         LaunchedEffect(versionsLoaded, wrapperOptions, config.graphicsDriverConfig) {
@@ -1059,9 +1066,6 @@ fun ContainerConfigDialog(
         val nonzeroResolutionError = stringResource(
             R.string.container_config_custom_resolution_error_nonzero
         )
-        val aspectResolutionError = stringResource(
-            R.string.container_config_custom_resolution_error_aspect
-        )
 
         val state = ContainerConfigState(
             config = configState,
@@ -1090,6 +1094,7 @@ fun ContainerConfigDialog(
             sharpnessEffectIndex = sharpnessEffectIndexRef,
             sharpnessLevel = sharpnessLevelRef,
             sharpnessDenoise = sharpnessDenoiseRef,
+            vibrationIntensity = vibrationIntensityRef,
             adrenotoolsTurnipChecked = adrenotoolsTurnipCheckedRef,
             emulator64Index = emulator64IndexRef,
             emulator32Index = emulator32IndexRef,
@@ -1318,7 +1323,7 @@ fun ContainerConfigDialog(
                                 .verticalScroll(scrollState)
                                 .weight(1f),
                         ) {
-                            if (selectedTab == 0) GeneralTabContent(state, nonzeroResolutionError, aspectResolutionError)
+                            if (selectedTab == 0) GeneralTabContent(state, nonzeroResolutionError)
                             if (selectedTab == 1) GraphicsTabContent(state, default)
                             if (selectedTab == 2) EmulationTabContent(state)
                             if (selectedTab == 3) ControllerTabContent(state, default)

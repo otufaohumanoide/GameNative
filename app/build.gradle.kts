@@ -107,7 +107,7 @@ android {
         buildConfigField("boolean", "MODERN_XR", "false")
 
         versionCode = 23
-        versionName = "1.2.1"
+        versionName = "1.3.0"
 
         buildConfigField("boolean", "GOLD", "false")
         fun secret(name: String) =
@@ -507,6 +507,7 @@ dependencies {
     implementation(libs.libarchive.android)
     implementation(libs.zstd.jni) { artifact { type = "aar" } }
     implementation(libs.xz)
+    implementation(libs.jzlib)
 
     // Jetpack Compose
     implementation(platform(libs.androidx.compose.bom))
@@ -546,6 +547,7 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(libs.androidx.runner)
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.test.manifest)

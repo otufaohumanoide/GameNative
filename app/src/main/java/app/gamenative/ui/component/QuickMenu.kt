@@ -104,6 +104,7 @@ import app.gamenative.R
 import app.gamenative.data.GyroSettings
 import app.gamenative.powercontrol.PowerManager
 import app.gamenative.ui.component.dialog.GyroSettingsDialog
+import app.gamenative.ui.component.dialog.ControlProfileLibraryDialog
 import app.gamenative.ui.component.quickMenus.PowerControlQuickMenuTab
 import app.gamenative.ui.data.PerformanceHudConfig
 import app.gamenative.ui.data.PerformanceHudSize
@@ -130,6 +131,14 @@ object QuickMenuAction {
     const val SHOOTER_MODE = 9
     const val RADIAL_MENU = 10
     const val GYRO = 11
+    const val CONTROL_PROFILES = 12
+    const val CONTROL_PROFILE_APPLIED = 13
+    const val PHYSICAL_CONTROLLER_SETTINGS = 14
+    // Steam Controller (Triton) live editors — shown in the CONTROLLER tab only when an SC is connected.
+    const val SC_BINDINGS = 15
+    const val SC_LAYOUT = 16
+    // Single root entry that opens the Steam Controller editor hub (lists the editors above).
+    const val SC_ROOT = 17
 }
 
 private object QuickMenuTab {
@@ -163,6 +172,11 @@ private class GyroQuickMenuState(private val container: Container) {
     fun persistSettings(value: GyroSettings) {
         settings = value.normalized()
         settings.saveTo(container)
+        applyToCurrentView()
+    }
+
+    fun reloadFromContainer() {
+        settings = GyroSettings.fromContainer(container)
         applyToCurrentView()
     }
 
@@ -383,6 +397,9 @@ fun QuickMenu(
     onEndWineProcess: (ProcessInfo) -> Unit = {},
     performance: PerformanceQuickMenuState = PerformanceQuickMenuState(),
     hasPhysicalController: Boolean = false,
+    /** A Steam Controller (Triton) is live this session — surface its rich editors and hide the generic gamepad
+     *  mapper (the BLE Triton isn't an Android input device, so the generic mapper doesn't apply to it). */
+    isSteamControllerLive: Boolean = false,
     isTouchscreenModeActive: Boolean = false,
     onTouchGestureSettingsClick: () -> Unit = {},
     isShooterModeActive: Boolean = false,
@@ -449,6 +466,10 @@ fun QuickMenu(
     val gyroMenu = remember(container?.id) { container?.let(::GyroQuickMenuState) }
 
     val controllerItems = buildList {
+        // Steam Controller editors live behind a single root entry (most relevant when a Triton is connected).
+        if (isSteamControllerLive) {
+            add(QuickMenuItem(QuickMenuAction.SC_ROOT, Icons.Filled.Gamepad, R.string.sc_edit_root, PluviaTheme.colors.accentPurple))
+        }
         add(
             QuickMenuItem(
                 id = QuickMenuAction.DISABLE_MOUSE,
@@ -473,7 +494,8 @@ fun QuickMenu(
                 accentColor = PluviaTheme.colors.accentPurple,
             )
         )
-        if (hasPhysicalController) {
+        // The generic gamepad mapper doesn't apply to the BLE Steam Controller — hide it when an SC is live.
+        if (hasPhysicalController && !isSteamControllerLive) {
             add(
                 QuickMenuItem(
                     id = QuickMenuAction.EDIT_PHYSICAL_CONTROLLER,
@@ -488,6 +510,14 @@ fun QuickMenu(
                 id = QuickMenuAction.EDIT_CONTROLS,
                 icon = Icons.Default.Edit,
                 labelResId = R.string.edit_controls,
+                accentColor = PluviaTheme.colors.accentPurple,
+            )
+        )
+        add(
+            QuickMenuItem(
+                id = QuickMenuAction.CONTROL_PROFILES,
+                icon = Icons.Default.Gamepad,
+                labelResId = R.string.control_profiles,
                 accentColor = PluviaTheme.colors.accentPurple,
             )
         )
@@ -534,6 +564,9 @@ fun QuickMenu(
     // broken D8 codegen path).
     val inviteMenu = remember(container?.id) { SteamInviteState.createIfAvailable(container) }
     var showGyroSettingsDialog by rememberSaveable(container?.id) { mutableStateOf(false) }
+    var showControlProfiles by rememberSaveable(container?.id) { mutableStateOf(false) }
+    var lastControllerFocusRequester by remember(container?.id) { mutableStateOf<FocusRequester?>(null) }
+    var controlProfileReturnFocusRequester by remember(container?.id) { mutableStateOf<FocusRequester?>(null) }
     // Owned here, not plumbed through XServerScreen (register limit; see inviteMenu).
     var lsfgPresentMode by remember(container?.id) {
         mutableStateOf(container?.let { app.gamenative.utils.LsfgQuickMenuHelper.presentMode(it) } ?: "mailbox")
@@ -1092,39 +1125,55 @@ fun QuickMenu(
                                         ) {
                                             val gyroEnabled = gyroMenu?.settings?.mode
                                                 ?.let { it != GyroSettings.MODE_DISABLED } == true
+                                            val touchscreenEnabled = isTouchscreenModeActive
+                                            val shooterEnabled = isShooterModeActive
                                             controllerItems.forEachIndexed { index, item ->
                                                 QuickMenuItemRow(
                                                     item = item,
                                                     isActive = if (item.id == QuickMenuAction.GYRO) {
                                                         gyroEnabled
+                                                    } else if (item.id == QuickMenuAction.TOUCHSCREEN_MODE) {
+                                                        touchscreenEnabled
+                                                    } else if (item.id == QuickMenuAction.SHOOTER_MODE) {
+                                                        shooterEnabled
                                                     } else {
                                                         item.id in activeToggleIds
                                                     },
                                                     onClick = {
                                                         if (item.id == QuickMenuAction.GYRO && gyroMenu != null) {
                                                             gyroMenu.setEnabled(!gyroEnabled)
+                                                        } else if (item.id == QuickMenuAction.CONTROL_PROFILES) {
+                                                            controlProfileReturnFocusRequester = lastControllerFocusRequester
+                                                            showControlProfiles = true
                                                         } else if (onItemSelected(item.id)) {
                                                             onDismiss()
                                                         }
                                                     },
                                                     focusRequester = if (index == 0) controllerItemFocusRequester else null,
-                                                    secondaryIcon = if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && isTouchscreenModeActive)
+                                                    onFocused = { lastControllerFocusRequester = it },
+                                                    secondaryIcon = if (item.id == QuickMenuAction.EDIT_PHYSICAL_CONTROLLER)
                                                         Icons.Default.Settings
-                                                    else if (item.id == QuickMenuAction.SHOOTER_MODE && isShooterModeActive)
+                                                    else if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && touchscreenEnabled)
+                                                        Icons.Default.Settings
+                                                    else if (item.id == QuickMenuAction.SHOOTER_MODE && shooterEnabled)
                                                         Icons.Default.Settings
                                                     else if (item.id == QuickMenuAction.GYRO && gyroEnabled)
                                                         Icons.Default.Settings
                                                     else null,
-                                                    secondaryContentDescriptionResId = if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && isTouchscreenModeActive)
+                                                    secondaryContentDescriptionResId = if (item.id == QuickMenuAction.EDIT_PHYSICAL_CONTROLLER)
+                                                        R.string.physical_controller_settings_title
+                                                    else if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && touchscreenEnabled)
                                                         R.string.gesture_settings_title
-                                                    else if (item.id == QuickMenuAction.SHOOTER_MODE && isShooterModeActive)
+                                                    else if (item.id == QuickMenuAction.SHOOTER_MODE && shooterEnabled)
                                                         R.string.shooter_mode_settings_title
                                                     else if (item.id == QuickMenuAction.GYRO && gyroEnabled)
                                                         R.string.gyro_settings_title
                                                     else null,
-                                                    onSecondaryClick = if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && isTouchscreenModeActive)
+                                                    onSecondaryClick = if (item.id == QuickMenuAction.EDIT_PHYSICAL_CONTROLLER)
+                                                        ({ onItemSelected(QuickMenuAction.PHYSICAL_CONTROLLER_SETTINGS) })
+                                                    else if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && touchscreenEnabled)
                                                         onTouchGestureSettingsClick
-                                                    else if (item.id == QuickMenuAction.SHOOTER_MODE && isShooterModeActive)
+                                                    else if (item.id == QuickMenuAction.SHOOTER_MODE && shooterEnabled)
                                                         onShooterModeSettingsClick
                                                     else if (item.id == QuickMenuAction.GYRO && gyroEnabled)
                                                         ({ showGyroSettingsDialog = true })
@@ -1183,12 +1232,50 @@ fun QuickMenu(
         )
     }
 
+    if (showControlProfiles && container != null) {
+        ControlProfileLibraryDialog(
+            container = container,
+            onDismiss = { showControlProfiles = false },
+            onProfileApplied = {
+                // The library deliberately uses a private manager while doing
+                // background I/O. Refresh the live manager on the UI thread only
+                // after the transaction has committed.
+                PluviaApp.inputControlsManager?.reloadProfiles()
+                gyroMenu?.reloadFromContainer()
+                onItemSelected(QuickMenuAction.CONTROL_PROFILE_APPLIED)
+            },
+        )
+    }
+
+    LaunchedEffect(showControlProfiles, isVisible) {
+        val returnFocusRequester = controlProfileReturnFocusRequester
+        if (showControlProfiles || returnFocusRequester == null) return@LaunchedEffect
+        if (!isVisible) {
+            controlProfileReturnFocusRequester = null
+            return@LaunchedEffect
+        }
+        // The library owns a separate window. Let it detach before returning
+        // controller focus to whichever quick-menu control held it before entry.
+        repeat(4) {
+            delay(80)
+            try {
+                if (returnFocusRequester.requestFocus()) {
+                    controlProfileReturnFocusRequester = null
+                    return@LaunchedEffect
+                }
+            } catch (_: IllegalStateException) {
+                // The quick-menu focus target may still be attaching.
+            }
+        }
+        controlProfileReturnFocusRequester = null
+    }
+
     LaunchedEffect(isVisible, selectedTab) {
         onToolsVisibilityChanged(isVisible && selectedTab == QuickMenuTab.TOOLS)
     }
 
     LaunchedEffect(isVisible, gyroMenu) {
-        gyroMenu?.applyToCurrentView()
+        if (isVisible) gyroMenu?.reloadFromContainer()
     }
 
     // Immersive also re-requests content focus on every tab switch (its LB/RB cycling moves
@@ -2787,6 +2874,7 @@ private fun QuickMenuItemRow(
     isActive: Boolean = false,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    onFocused: ((FocusRequester) -> Unit)? = null,
     secondaryIcon: ImageVector? = null,
     secondaryContentDescriptionResId: Int? = null,
     onSecondaryClick: (() -> Unit)? = null,
@@ -2805,12 +2893,14 @@ private fun QuickMenuItemRow(
 
     LaunchedEffect(isFocused, onClick) {
         inputBypass.reportActivate(interactionSource, if (isFocused) onClick else null)
+        if (isFocused) onFocused?.invoke(rowFocusRequester)
     }
     LaunchedEffect(isSecondaryFocused, onSecondaryClick) {
         inputBypass.reportActivate(
             secondaryInteractionSource,
             if (isSecondaryFocused) onSecondaryClick else null,
         )
+        if (isSecondaryFocused) onFocused?.invoke(secondaryFocusRequester)
     }
 
     val accentColor = if (item.accentColor != Color.Unspecified) {

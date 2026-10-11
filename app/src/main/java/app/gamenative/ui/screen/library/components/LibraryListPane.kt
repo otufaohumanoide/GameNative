@@ -53,6 +53,7 @@ import app.gamenative.ui.enums.AppFilter
 import app.gamenative.ui.component.Scrollbar
 import app.gamenative.ui.data.LibraryState
 import app.gamenative.ui.data.statsFor
+import app.gamenative.ui.data.communityCompatibilityFor
 import app.gamenative.ui.enums.PaneType
 import app.gamenative.ui.internal.fakeAppInfo
 import app.gamenative.ui.theme.PluviaTheme
@@ -305,6 +306,7 @@ internal fun LibraryListPane(
                                         },
                                         imageRefreshCounter = state.imageRefreshCounter,
                                         compatibilityStatus = state.compatibilityMap[item.name],
+                                        communityCompatibility = state.communityCompatibilityFor(item),
                                         gameStats = state.statsFor(item),
                                         hasShader = item.appId in shaderEnabledIds,
                                         hasProfileOverrides = item.appId in profileOverrideIds,
