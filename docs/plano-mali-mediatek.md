@@ -604,3 +604,49 @@ python3 tools/mali-f1-ab/f1_ab.py --container STEAM_205910 --seconds 120
 **Nota de convivência:** durante a §11.5 o container e o jogo avaliados foram removidos por
 atividade concorrente no aparelho, e as tarefas do app trocaram de id entre comandos. Rodar A/B
 exige **janela exclusiva** no device — medição de tuning com o aparelho em uso não é confiável.
+
+### 11.7 Segundo A/B — Dragon Ball FighterZ (`STEAM_678950`, 2026-10-11)
+
+Executado com o executor da §11.6 (`--driver Wrapper-gamenative --prewarm-seconds 150
+--seconds 120`), após descobrir que o container do FighterZ usava `graphicsDriver: "Wrapper"` —
+driver cujo blob **não tem o lever** (`wrapper.tzst`, ago/2025: nem
+`WRAPPER_BYPASS_SWAPCHAIN_PLACED` nem `WRAPPER_BCN_ASTC`). Testar ali seria medir uma variável
+que o driver ignora.
+
+**Plumbing:** ok de novo — o env var entregue ao processo Wine foi `0` no prewarm, `0` na perna
+OFF e `1` na perna ON.
+
+**Medição — pernas NÃO comparáveis** (e o executor agora recusa emitir o Δ):
+
+| | OFF | ON |
+|---|---|---|
+| amostras totais / **jogando** | 79 / **44** | 205 / **13** |
+| fps médio | 25.6 | 18.8 |
+| p95 mediano | 206.8 ms | 207.1 ms |
+| gpu% / cpu% | 23.6 / 75.6 | 8.2 / 44.5 |
+
+O jogo **não chegou a um estado estável** dentro da janela (44 e 13 amostras com fps>0 em 120 s;
+p95 ~207 ms ≈ 5 fps de cauda, típico de compilação de shader). Antes da correção da §11.6 o
+script teria impresso "fps −6.8" como se fosse resultado.
+
+**Padrão que se repete — e é a conclusão estratégica:** os **dois** títulos x86 testados são
+**CPU-bound** neste aparelho (CPU ~60–76 % contra GPU ~22–24 %, box64/FEX emulando x86). O F1
+otimiza o **caminho de present**; com a GPU ociosa e a CPU saturada, o custo que ele remove não
+está no caminho crítico. Um A/B de F1 com jogos x86 nesta classe de device tende a ser
+**irresolvível por construção**, não por falta de tentativa.
+
+**O mecanismo continua sem prova, e há uma hipótese forte.** `WRAPPER_LOG_FILE` não produziu
+arquivo — e o diretório **padrão** do próprio wrapper (`/sdcard/wrapper/logs`) também está vazio,
+ou seja, o wrapper não emitiu log nenhum. As strings existem no blob shipado (`WRAPPER_LOG_FILE`,
+`WRAPPER_LOG_LEVEL`, `"Bypassing EXT_map_memory_placed"`, `"Emulating vkAllocateMemory"` — todas
+**presentes**), então a abordagem é viável. Hipótese principal para o lever parecer inerte: em
+`wrapper_device_memory.c:526-537` os `goto fallback` vêm **antes** da checagem do bypass (`:547`);
+se a alocação da imagem de swapchain carrega `IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID` (ou
+FD/export), o código sai por `fallback` **sem tocar no bypass** — o que explicaria ao mesmo tempo
+o log vazio e a ausência de efeito. **Isto é hipótese, não prova**; o teste é ler o log com o
+nível certo.
+
+**Consequência para o plano:** o **F1 desce de prioridade**. Continua correto e opt-in, mas nesta
+classe de device (Mali-G68 + box64) o valor esperado é baixo e o custo de medi-lo é alto. A frente
+que **se provou valiosa** foi a telemetria (I1/I3/I4), que funcionou ao vivo nas duas sessões e é
+o que permitiu diagnosticar tudo isto.

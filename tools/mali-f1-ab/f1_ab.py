@@ -76,9 +76,16 @@ def read_container(serial: str | None, container_id: str) -> dict:
     return json.loads(raw)
 
 
-def patch_config(cfg: dict, bypass: bool, log_path: str) -> dict:
+def patch_config(cfg: dict, bypass: bool, log_path: str, driver: str | None = None) -> dict:
     """Aplica a alavanca do F1 e liga o log do wrapper, preservando o resto."""
     out = json.loads(json.dumps(cfg))  # cópia
+    if driver:
+        # O lever só existe no blob do `wrapper-gamenative`. Verificado por `strings`:
+        # wrapper.tzst (Wrapper / Wrapper-v2 / Wrapper-legacy, ago/2025) NÃO tem
+        # WRAPPER_BYPASS_SWAPCHAIN_PLACED nem WRAPPER_BCN_ASTC — testar com ele seria
+        # medir uma variável que o driver ignora.
+        out["graphicsDriver"] = driver
+
     gdc = out.get("graphicsDriverConfig", "")
     gdc = ",".join(p for p in gdc.split(",") if not p.startswith("bypassSwapchainPlaced="))
     if bypass:
@@ -108,7 +115,7 @@ def app_id_of(container_id: str) -> int:
 
 
 def run_leg(serial: str | None, container_id: str, app_id: int, leg: str,
-            seconds: int, out_dir: str) -> None:
+            seconds: int, out_dir: str, driver: str | None = None) -> None:
     bypass = leg == LEG_ON
     log_path = f"{WRAPPER_LOG_DIR}/wrapper-{leg}.log"
 
@@ -116,7 +123,7 @@ def run_leg(serial: str | None, container_id: str, app_id: int, leg: str,
     shell(serial, "am force-stop app.gamenative", check=False)
     time.sleep(3)
     base = read_container(serial, container_id)
-    write_container(serial, container_id, patch_config(base, bypass, log_path))
+    write_container(serial, container_id, patch_config(base, bypass, log_path, driver))
     time.sleep(1)
 
     shell(serial, "run-as app.gamenative rm -f " + log_path, check=False)
@@ -144,8 +151,13 @@ def run_leg(serial: str | None, container_id: str, app_id: int, leg: str,
         print(f"[{leg}] métricas -> {dest} ({len(data.splitlines())} amostras)")
 
     # mecanismo: o caminho de WSI realmente escolhido pelo wrapper
-    wl = shell(serial, f"cat {log_path}", check=False)
-    if wl.strip():
+    # NB: sem o 2>/dev/null um `cat` de arquivo ausente devolve a PRÓPRIA mensagem de erro como
+    # "conteúdo", e o script reportava sucesso com o log inexistente. Não repetir isso.
+    wl = shell(serial, f"cat {log_path} 2>/dev/null", check=False)
+    if not wl.strip() or "No such file" in wl:
+        print(f"[{leg}] AVISO: o wrapper NÃO criou {log_path}. O mecanismo (qual caminho de WSI "
+              "foi escolhido) ficou SEM PROVA — um 'sem diferença' nesta perna é ambíguo.")
+    else:
         wdest = os.path.join(out_dir, f"wrapper-{leg}.log")
         with open(wdest, "w", encoding="utf-8") as fh:
             fh.write(wl)
@@ -153,9 +165,57 @@ def run_leg(serial: str | None, container_id: str, app_id: int, leg: str,
         emulating = wl.count("Emulating vkAllocateMemory")
         print(f"[{leg}] wrapper: 'Bypassing...swapchain'={bypassing}  "
               f"'Emulating vkAllocateMemory'={emulating}  -> {wdest}")
-    else:
-        print(f"[{leg}] AVISO: log do wrapper vazio em {log_path} "
-              "(o wrapper não escreveu; verifique WRAPPER_LOG_FILE/permissão)")
+        if bypassing == 0 and emulating == 0:
+            print(f"[{leg}] AVISO: o log existe mas não traz nenhuma linha do caminho de "
+                  "memória/WSI — o mecanismo continua sem prova.")
+
+
+def playing_stats(path: str) -> tuple[int, int]:
+    """(amostras totais, amostras 'jogando' = fps > 0)."""
+    total = playing = 0
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            total += 1
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (rec.get("fps") or 0) > 0:
+                playing += 1
+    return total, playing
+
+
+def validate_legs(out_dir: str, min_playing: int) -> bool:
+    """Recusa comparar pernas que não são comparáveis.
+
+    Motivo (plano §11.5/§11.6): o primeiro A/B comparou 763 vs 343 amostras 'jogando' e o segundo
+    44 vs 13 — e o script imprimiu um Δ dos dois jeitos. Um Δ entre pernas inválidas é ruído com
+    aparência de resultado, que é pior que nenhum resultado.
+    """
+    ok = True
+    counts = {}
+    for leg in (LEG_OFF, LEG_ON):
+        p = os.path.join(out_dir, f"leg-{leg}.jsonl")
+        if not os.path.exists(p):
+            print(f"PERNA {leg.upper()} AUSENTE ({p})")
+            ok = False
+            continue
+        total, playing = playing_stats(p)
+        counts[leg] = playing
+        verdict = "ok" if playing >= min_playing else "INVÁLIDA"
+        print(f"perna {leg}: {total} amostras, {playing} jogando (mínimo {min_playing}) -> {verdict}")
+        if playing < min_playing:
+            ok = False
+    if len(counts) == 2:
+        a, b = counts[LEG_OFF], counts[LEG_ON]
+        if a and b and abs(a - b) / max(a, b) > 0.25:
+            print(f"PERNAS ASSIMÉTRICAS: {a} vs {b} amostras jogando (>25% de diferença) — "
+                  "o jogo não ficou no mesmo estado nas duas; Δ não é atribuível ao F1.")
+            ok = False
+    return ok
 
 
 def main() -> int:
@@ -164,6 +224,16 @@ def main() -> int:
     ap.add_argument("--seconds", type=int, default=120,
                     help="duração de CADA perna (igual nas duas; default 120)")
     ap.add_argument("--serial", default=None, help="serial do adb (se houver >1 device)")
+    ap.add_argument("--driver", default=None,
+                    help="força o graphicsDriver nas duas pernas (os levers do F1/H2 só existem "
+                         "no blob do `wrapper-gamenative`; com `Wrapper` a variável é ignorada). "
+                         "Restaurado no fim junto com o resto do .container")
+    ap.add_argument("--prewarm-seconds", type=int, default=0,
+                    help="roda uma vez FORA da medição antes das pernas, para absorver extração de "
+                         "driver/primeiro boot que senão cairia inteiro na perna OFF")
+    ap.add_argument("--min-playing", type=int, default=60,
+                    help="mínimo de amostras com fps>0 em CADA perna para o Δ ser emitido "
+                         "(default 60; abaixo disso a perna é marcada inválida e nada é comparado)")
     ap.add_argument("--out", default="reference/_f1ab", help="diretório de saída")
     ap.add_argument("--dry-run", action="store_true",
                     help="valida a lógica e o device sem escrever/lançar nada")
@@ -175,17 +245,22 @@ def main() -> int:
     cpath = container_path(args.container)
 
     if args.dry_run:
-        sample = {"id": args.container, "graphicsDriverConfig": "vulkanVersion=1.3,version=System",
+        sample = {"id": args.container, "graphicsDriver": "Wrapper",
+                  "graphicsDriverConfig": "vulkanVersion=1.3,version=System",
                   "envVars": "WINEESYNC=1 WRAPPER_LOG_LEVEL=info"}
-        off = patch_config(sample, False, f"{WRAPPER_LOG_DIR}/wrapper-off.log")
-        on = patch_config(sample, True, f"{WRAPPER_LOG_DIR}/wrapper-on.log")
+        off = patch_config(sample, False, f"{WRAPPER_LOG_DIR}/wrapper-off.log", args.driver)
+        on = patch_config(sample, True, f"{WRAPPER_LOG_DIR}/wrapper-on.log", args.driver)
         assert "bypassSwapchainPlaced=1" in on["graphicsDriverConfig"]
         assert "bypassSwapchainPlaced" not in off["graphicsDriverConfig"]
         assert off["envVars"].count("WRAPPER_LOG_LEVEL=") == 1, "duplicou WRAPPER_LOG_LEVEL"
         assert on["envVars"].count("WRAPPER_LOG_FILE=") == 1, "duplicou WRAPPER_LOG_FILE"
+        if args.driver:
+            assert off["graphicsDriver"] == args.driver and on["graphicsDriver"] == args.driver
         print("dry-run OK")
         print("  app id.......:", app_id)
         print("  .container...:", cpath)
+        print("  driver.......:", args.driver or "(mantém o do container) — ATENÇÃO: o lever só "
+              "existe no blob do `wrapper-gamenative`")
         print("  leg OFF cfg..:", off["graphicsDriverConfig"][-40:])
         print("  leg ON  cfg..:", on["graphicsDriverConfig"][-40:])
         print("  log wrapper..:", f"{WRAPPER_LOG_DIR}/wrapper-{{off,on}}.log")
@@ -203,17 +278,31 @@ def main() -> int:
     print(f"backup do .container -> {backup}")
 
     try:
+        if args.prewarm_seconds > 0:
+            # Absorve custos de UMA VEZ só (extração do driver novo, primeiro boot): sem isto
+            # eles caem inteiros na perna OFF e enviesam o A/B — foi o que aconteceu com o
+            # warm-up "Installing Mono..." no primeiro teste manual (§11.5).
+            print(f"[prewarm] rodando {args.prewarm_seconds}s fora da medição "
+                  "(extração de driver / primeiro boot)...")
+            run_leg(args.serial, args.container, app_id, "prewarm",
+                    args.prewarm_seconds, args.out, args.driver)
         for leg in (LEG_OFF, LEG_ON):
-            run_leg(args.serial, args.container, app_id, leg, args.seconds, args.out)
+            run_leg(args.serial, args.container, app_id, leg, args.seconds, args.out, args.driver)
     finally:
         if not args.keep_config:
             write_container(args.serial, args.container, original)
             print("config original restaurada")
 
-    print("\nCompare as duas pernas (fps é secundário sob vsync; olhe GPU% e p95):")
-    print(f"  python3 tools/mali-metrics-report/mali_metrics_report.py "
-          f"{args.out}/leg-{LEG_OFF}.jsonl {args.out}/leg-{LEG_ON}.jsonl")
-    return 0
+    print()
+    if validate_legs(args.out, args.min_playing):
+        print("Compare as duas pernas (sob vsync o fps é secundário; olhe GPU% e p95):")
+        print(f"  python3 tools/mali-metrics-report/mali_metrics_report.py "
+              f"{args.out}/leg-{LEG_OFF}.jsonl {args.out}/leg-{LEG_ON}.jsonl")
+        return 0
+    print("RESULTADO NÃO EMITIDO: as pernas não são comparáveis (ver acima). Ajuste a janela "
+          "(--seconds), garanta a mesma cena e repita — qualquer Δ aqui seria ruído com "
+          "aparência de resultado.")
+    return 2
 
 
 if __name__ == "__main__":
