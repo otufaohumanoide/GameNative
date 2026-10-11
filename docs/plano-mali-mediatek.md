@@ -650,3 +650,65 @@ nível certo.
 classe de device (Mali-G68 + box64) o valor esperado é baixo e o custo de medi-lo é alto. A frente
 que **se provou valiosa** foi a telemetria (I1/I3/I4), que funcionou ao vivo nas duas sessões e é
 o que permitiu diagnosticar tudo isto.
+
+### 11.8 Terceiro A/B — Silksong (`STEAM_1030300`, 2026-10-11): **o F1 é inerte, e agora está provado**
+
+Silksong é o jogo-teste designado do fork (AGENTS.md) e o container já vinha com
+`graphicsDriver: Wrapper-gamenative`, `dxwrapper: dxvk`, `screenSize: 1280x720` — ou seja, os
+levers **existem** neste container. É também o primeiro probe **viável**: o jogo roda a **24,9 fps**
+(bem abaixo do teto de 60 Hz, sem vsync mascarando) e a **GPU satura em ~88 %** no gameplay real.
+
+**Caracterização (sessão de abertura, 296 amostras jogando):** fps 24,9 · p95 41,6 ms · gpu 54,3 % ·
+cpu 77,2 % · headroom **0,97** (encostando no throttle). Em gameplay a GPU vai a ~88 %.
+
+**A/B com pernas válidas** (211 e 252 amostras jogando; 16 % de diferença, dentro do aceitável):
+
+| | OFF | ON |
+|---|---|---|
+| fps médio | 38,9 | 23,0 |
+| p95 mediano | 34,4 ms | 49,9 ms |
+| gpu% / cpu% | 49,0 / 77,4 | 50,1 / 75,4 |
+
+Δ agregado de **−15,8 fps** — que **não é atribuível ao F1**, e a análise por segmento mostra
+por quê:
+
+| | fps início | fps meio | fps fim | GPU início → meio |
+|---|---|---|---|---|
+| OFF | 38,4 | 32,0 | 32,3 | 20 % → 88 % |
+| ON | **39,1** | 30,2 | 28,7 | 17 % → 89 % |
+
+Recém-lançados (mesma cena de menu) as duas pernas dão **38,4 vs 39,1 fps** — idênticas. O Δ
+agregado vem da **mistura menu×gameplay** ser diferente entre as pernas e da **ordem fixa** (a
+perna ON sempre rodou depois, mais quente, com headroom já em 1,08).
+
+**A prova de que o F1 é inerte veio do log do wrapper.** Com `WRAPPER_LOG_FILE` funcionando (91
+linhas, `[info]`), o arquivo é **byte-idêntico entre OFF e ON** — `diff` vazio — e **não contém
+nenhuma** linha de `map_memory_placed`, `Emulating vkAllocateMemory` nem
+`Bypassing EXT_map_memory_placed emulation for swapchain image`. Como o log é escrito no mesmo
+`FILE*` aberto no init e o nível `info` comprovadamente funciona (as linhas de `Faking
+VK_EXT_robustness2`, `GPU Name: Mali-G68`, `Driver Version: 38.1.0` estão lá), a ausência de
+linhas de alocação significa que **o caminho de código que o toggle guarda não é executado**.
+
+Isso fecha a hipótese da §11.7: os `goto fallback` de `wrapper_device_memory.c:530-537` (AHB /
+FD import / export) ocorrem **antes** da checagem do bypass (`:547`), então a alavanca nunca é
+alcançada nesta combinação. **Consequências:**
+
+- O Δ de −15,8 fps era **ruído/deriva**, não F1 — e o A/B-ABBA que eu ia rodar seria
+  desperdício: não se mede uma mudança que comprovadamente não ocorre.
+- **F1 fica encerrado como "inerte nesta classe de device"**, mantido opt-in por não custar nada.
+  Não vira default (não há ganho), e não vale mais esforço de medição.
+- A hipótese da §11.7 deixa de ser hipótese: o log idêntico é evidência direta de que o caminho
+  não é tomado. O que **não** foi provado é *qual* dos três `goto fallback` dispara — isso exigiria
+  instrumentar o wrapper.
+
+**Sobre otimizações para o Silksong:** os dados **não** justificam mudança de código além do que já
+está configurado. O jogo é GPU-bound (88 %) e a configuração já usa o caminho de menor banda
+(`WRAPPER_BCN_ASTC=1` com `WRAPPER_ASTC_BLOCK=8x8`, ou seja transcodificar BCn→ASTC 2 bpp);
+o limitante real é o **térmico** (headroom ~1,0, com o fps caindo de 38→30 dentro da mesma cena) e
+a emulação x86 (CPU 65–77 %), e nenhum dos dois se resolve por configuração sem root. O que já
+entregou valor mensurável foi a **telemetria** — foi ela que tornou este diagnóstico possível.
+
+**Ferramenta endurecida por este teste** (`tools/mali-f1-ab/f1_ab.py`): `--abba` (ordem espelhada
+OFF,ON,ON,OFF para cancelar deriva térmica monotônica), relatório de **segmentos** (início/meio/fim)
+e de **faixas de GPU%** como proxy de cena, e `validate_phases` agregando por condição. Sem isso, o
+Δ de −15,8 fps teria sido reportado como resultado.
