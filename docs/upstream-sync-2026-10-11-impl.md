@@ -102,7 +102,7 @@ Resultado: comportamento do fork (dual-motor + gate) **e** as features novas do 
 
 | Verificação | Resultado |
 |---|---|
-| Arquivos do shader tocados pelo merge? | **Não** — `VulkanLibrashader.cpp/.h`, `renderer/VulkanRenderer.java`, o pacote `app/gamenative/shaders/` e `catalog.json` não aparecem no diff |
+| Arquivos do shader tocados pelo merge? | **Não** — `VulkanLibrashader.cpp/.h`, `renderer/VulkanRenderer.java`, o pacote `app/gamenative/shaders/` (12 arquivos) e o catálogo `app/src/main/assets/retroarch/catalog.json` (6,4 MB, **2.541 presets** — o mesmo número do AGENTS.md; lido em `ShaderCatalog.kt:110`) não aparecem no diff |
 | Pontos de librashader em `VulkanRendererContext.cpp` | **67 → 67** (inalterados); a única mudança vinda do upstream ali é um fix de superfície XR em `enableXrTarget()` |
 | Build do librashader (`app/build.gradle.kts`) | **28 → 28** referências: `cargoBin`, `ndkVersion = "27.3.13750724"`, `copyLibrashaderHeaders` e as tarefas `compileLibrashader*/copyLibrashader*` por ABI |
 | Compilação | `:app:testModernDebugUnitTest` → **BUILD SUCCESSFUL** (compila main Kotlin+Java e o librashader em Rust) |
